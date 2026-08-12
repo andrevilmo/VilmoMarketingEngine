@@ -1,0 +1,40 @@
+---
+description: Architecture and practices for marketplace integrations (ML, Shopee, Shein, Amazon, etc.)
+alwaysApply: true
+---
+
+# Marketplace Integrations
+
+Use an **event-driven architecture** with a **unified domain + adapter layer**. Do not call marketplace APIs directly from core ERP/WMS/PWA logic.
+
+## Architecture
+
+```text
+Core (ERP / WMS / PWA)
+  → Unified DTO / internal domain
+  → Marketplace Gateway (auth, orchestration, retry)
+  → Adapters (MercadoLivre, Shopee, Shein, Amazon, …)
+  → External marketplace APIs
+```
+
+## Required components
+
+1. **Webhook intake:** Acknowledge with `200 OK` in < 200ms; enqueue immediately; never do heavy work in the HTTP handler.
+2. **Message broker:** Decouple intake from processing (RabbitMQ, Kafka, SQS, NATS, etc.) so peaks do not overload DB or hit rate limits.
+3. **Adapter pattern:** One shared interface; one adapter per marketplace that maps internal DTOs ↔ platform payloads.
+   - `publishProduct(ProductDTO)`
+   - `updateStock(SKU, Quantity)`
+   - `fetchOrder(OrderID)`
+4. **Auth / token store:** OAuth2 (or platform keys) with short-lived access tokens; store in Redis with TTL; refresh proactively in background jobs.
+5. **Rate limiting & resilience:** Circuit breaker + rate-limited job queues so workers respect per-IP / App Key limits.
+
+## Development rules
+
+- **Idempotency:** Webhooks may be delivered more than once; dedupe by event/order id before side effects.
+- **Feature flags:** Enable/disable sync per marketplace and per merchant without redeploying.
+- **Flexible mapping:** Persist category/attribute mapping tables (de-para); each platform has its own category tree and required fields.
+- Prefer in-house adapters when deep custom control is required; hubs/iPaaS (Anymarket, Plugg.to, API2Cart, etc.) only when time-to-market outweighs control.
+
+## Target marketplaces (BR / priority)
+
+Mercado Livre, Shopee, Shein, Amazon SP-API, Magalu, Via, AliExpress, Americanas; niche as needed (Dafiti, MadeiraMadeira, Elo7, Nuvemshop/Shopify).
