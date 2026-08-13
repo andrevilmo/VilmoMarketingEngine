@@ -14,22 +14,43 @@ Why this option:
 
 What we still reuse: official SDKs/libraries only (DFe.NET for SEFAZ). Marketplace HTTP clients are ours.
 
-## Canonical model (system of record)
+## Multi-company tenancy (root of every record)
 
-Marketplaces never own product identity. The engine owns:
+The system is for **N companies**. `CompanyId` is the tenant. Catalog, inventory, NF-e, marketplace shops, certificates, idempotency keys, and users never exist in a global bag.
 
 | Concept | Meaning | Identity |
 | --- | --- | --- |
-| `Product` | Sellable item in our catalog | Internal SKU |
-| `ProductIdentifier` | EAN, `cProd` from NF-e, NCM, seller SKU | Typed codes |
-| `InventoryBalance` | Quantity we can sell, per warehouse | `(sku, warehouse)` |
-| `InventoryMovement` | Immutable stock event | `(chaveAcesso, itemIndex, movementKind)` |
-| `Offer` | Price + allocated stock for one channel | `(sku, marketplace, account)` |
-| `Listing` | Remote publication | Marketplace listing id |
-| `SalesOrder` | Normalized order | Internal order id + remote id |
-| `ConnectedAccount` | Authorized seller shop | `(marketplace, remoteShopId)` |
+| `Company` | Legal entity we operate for | Internal id + unique CNPJ |
+| `User` | Person who signs in | Email |
+| `UserCompany` | Membership of a user in a company | `(userId, companyId)` + `CompanyRole` |
+| `CompanyCertificate` | A1 PKCS#12 used for that company's SEFAZ calls | `(companyId, cnpj)` |
 
-Mapping rule: **inbound** marketplace payloads become canonical objects. **Outbound** commands are translated from canonical objects. Adapters never persist marketplace JSON as the source of truth.
+Rules:
+
+- Every mutating API call runs inside a **company context**.
+- Regular users see and change **only** companies they belong to.
+- One platform super user (`admin@vilmomkt.com`) may see and act on **all** companies. That privilege is a `IsPlatformSuperUser` flag seeded for that email, not a string compare scattered in handlers.
+- A user without membership and without super-user flag cannot call business APIs.
+- Super user selects the target company with `X-Company-Id` (or an equivalent claim). Other users may send that header only if they are a member; otherwise `403`.
+
+`CompanyRole` values: `CompanyAdmin`, `Operator`, `Viewer`. No magic numbers.
+
+## Canonical model (system of record)
+
+Marketplaces never own product identity. The engine owns, **always scoped by `CompanyId`**:
+
+| Concept | Meaning | Identity |
+| --- | --- | --- |
+| `Product` | Sellable item in that company's catalog | `(companyId, sku)` |
+| `ProductIdentifier` | EAN, `cProd` from NF-e, NCM, seller SKU | `(companyId, identifierKind, value)` |
+| `InventoryBalance` | Quantity that company can sell, per warehouse | `(companyId, sku, warehouse)` |
+| `InventoryMovement` | Immutable stock event | `(companyId, chaveAcesso, itemIndex, movementKind)` |
+| `Offer` | Price + allocated stock for one channel | `(companyId, sku, marketplace, account)` |
+| `Listing` | Remote publication | `(companyId, marketplace listing id)` |
+| `SalesOrder` | Normalized order | `(companyId, internal order id)` + remote id |
+| `ConnectedAccount` | Authorized seller shop **of that company** | `(companyId, marketplace, remoteShopId)` |
+
+Mapping rule: **inbound** marketplace payloads become canonical objects. **Outbound** commands are translated from canonical objects. Adapters never persist marketplace JSON as the source of truth. Workers always carry `CompanyId` on the message; a consumer must not infer company from a global default.
 
 ## Open/Closed contract
 
@@ -70,58 +91,62 @@ Liskov: every connector must honor the same success/failure semantics (`Result<T
 
 Do not create a `MercadoLivreManager`. Compose the types above.
 
-## Idempotency (mandatory)
+## Idempotency (mandatory, always keyed by company)
 
-Every write that can be retried must be idempotent. Retries are normal (webhooks, SEFAZ timeouts, 429s).
+Every write that can be retried must be idempotent. Retries are normal (webhooks, SEFAZ timeouts, 429s). **Company A and Company B may send the same `Idempotency-Key`.** Those are different operations.
 
 ### HTTP API
 
 - Client sends `Idempotency-Key` (UUIDv4) on every mutating request.
-- Store in Redis: `SET key NX EX 86400` with payload fingerprint + status (`Processing` / `Completed` / `Failed`).
-- Same key + same fingerprint → replay stored response.
-- Same key + different fingerprint → `409 Conflict`.
-- Concurrent same key while `Processing` → `409` with retry-after.
+- Company comes from auth context (`CompanyId`), never from the key itself.
+- Store in Redis: `SET idempotency:{companyId}:{idempotencyKey} NX EX 86400` with payload fingerprint + status (`Processing` / `Completed` / `Failed`).
+- Same company + same key + same fingerprint → replay stored response.
+- Same company + same key + different fingerprint → `409 Conflict`.
+- Same key on another company → independent lock (no collision).
+- Concurrent same company+key while `Processing` → `409` with retry-after.
+- Missing company context → `401`/`403`, do not write a global key.
 
 ### Domain uniqueness (PostgreSQL)
 
 | Operation | Natural key |
 | --- | --- |
-| Ingest NF-e | `chave_acesso` (44 digits) |
-| Stock movement | `(chave_acesso, n_item, movement_kind)` |
-| Connect shop | `(marketplace_code, remote_shop_id)` |
-| Upsert listing | `(connected_account_id, sku)` |
-| Import order | `(marketplace_code, remote_order_id)` |
-| Webhook | `(marketplace_code, event_id)` |
-| Push stock | `(listing_id, stock_version)` or command id |
+| Ingest NF-e | `(company_id, chave_acesso)` |
+| Stock movement | `(company_id, chave_acesso, n_item, movement_kind)` |
+| Connect shop | `(company_id, marketplace_code, remote_shop_id)` |
+| Upsert listing | `(company_id, connected_account_id, sku)` |
+| Import order | `(company_id, marketplace_code, remote_order_id)` |
+| Webhook | `(company_id, marketplace_code, event_id)` |
+| Push stock | `(company_id, listing_id, command_id)` |
+| HTTP idempotency audit | `(company_id, idempotency_key)` |
 
-Redis is the short-window lock. PostgreSQL unique constraints are the source of truth. Never rely on Redis alone for money or stock.
+Redis is the short-window lock. PostgreSQL unique constraints are the source of truth. Never rely on Redis alone for money or stock. Never use a unique index on `chave_acesso` alone.
 
 ### Queue consumers
 
-Redis Streams messages carry `MessageId`. Consumers use `XREADGROUP` and persist processed ids. Duplicate delivery is a no-op.
+Redis Streams messages carry `MessageId` **and** `CompanyId`. Consumers use `XREADGROUP` and persist processed ids as `(company_id, message_id)`. Duplicate delivery is a no-op. A message without `CompanyId` is rejected, not processed under a fallback tenant.
 
 ## Event flow
 
 ```
-Webhook / API command
+Webhook / API command  (CompanyId from auth or ConnectedAccount)
         │
         ▼
    HTTP 200 fast ACK          ← Mercado Livre requires 200 within 500ms
         │
         ▼
-   Redis Stream (command)
+   Redis Stream (command + CompanyId)
         │
         ▼
-   Worker (idempotent handler)
+   Worker (idempotent handler, key = company + operation)
         │
-        ├── Catalog / Inventory (PostgreSQL)
-        └── Outbox row
+        ├── Catalog / Inventory (PostgreSQL, row = that company)
+        └── Outbox row (CompanyId)
                 │
                 ▼
-         Redis Stream (integration)
+         Redis Stream (integration + CompanyId)
                 │
                 ▼
-         Marketplace connector
+         Marketplace connector (that company's shop tokens)
 ```
 
 Webhooks never call marketplace APIs inside the HTTP request. They only validate, enqueue, and return.
@@ -139,9 +164,19 @@ Webhooks never call marketplace APIs inside the HTTP request. They only validate
 
 No existing connector file should change.
 
+## Per-company SEFAZ certificate
+
+Each company has its own A1 certificate bound to **that company's CNPJ**. `vilmo-nfe` loads the cert through `ICompanyCertificateStore.Get(companyId)` and passes it into DFe.NET. There is no process-wide `Nfe__CertificatePath`.
+
+- One company, one active A1 (replace by uploading a new cert; old row is revoked, not edited in place if you need history).
+- SEFAZ calls for company X never use company Y's cert.
+- CNPJ on the certificate must match `Company.Cnpj`.
+- `.pfx` bytes and passwords are secrets (Docker volume + encrypted password). They are not committed to git.
+
 ## What this engine does not do
 
 - It does not scrape storefronts.
 - It does not treat any marketplace as catalog master.
 - It does not update stock inside a webhook handler.
 - It does not embed marketplace ids in domain entities as primary keys.
+- It does not keep a global inventory or a single shared A1 certificate.
