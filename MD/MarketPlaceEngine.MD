@@ -24,6 +24,8 @@ The system is for **N companies**. `CompanyId` is the tenant. Catalog, inventory
 | `User` | Person who signs in | Email |
 | `UserCompany` | Membership of a user in a company | `(userId, companyId)` + `CompanyRole` |
 | `CompanyCertificate` | A1 PKCS#12 used for that company's SEFAZ calls | `(companyId, cnpj)` |
+| `CompanyMarketplaceConfig` | One marketplace enabled for one company | `(companyId, marketplaceCode)` |
+| `MarketplaceParameter` | Config key/value for that connection (client id, shop id, …) | `(configId, parameterKey)` |
 
 Rules:
 
@@ -48,7 +50,9 @@ Marketplaces never own product identity. The engine owns, **always scoped by `Co
 | `Offer` | Price + allocated stock for one channel | `(companyId, sku, marketplace, account)` |
 | `Listing` | Remote publication | `(companyId, marketplace listing id)` |
 | `SalesOrder` | Normalized order | `(companyId, internal order id)` + remote id |
-| `ConnectedAccount` | Authorized seller shop **of that company** | `(companyId, marketplace, remoteShopId)` |
+| `ConnectedAccount` | Authorized seller shop **of that company** (same grain as `CompanyMarketplaceConfig`) | `(companyId, marketplace, remoteShopId)` |
+
+A company has **many marketplaces**. Credentials and shop parameters live in tables, not in `appsettings` or environment variables. See **Company marketplace configuration** below.
 
 Mapping rule: **inbound** marketplace payloads become canonical objects. **Outbound** commands are translated from canonical objects. Adapters never persist marketplace JSON as the source of truth. Workers always carry `CompanyId` on the message; a consumer must not infer company from a global default.
 
@@ -90,6 +94,39 @@ Liskov: every connector must honor the same success/failure semantics (`Result<T
 | `*HttpGateway` | Raw HTTP to that marketplace only |
 
 Do not create a `MercadoLivreManager`. Compose the types above.
+
+## Company marketplace configuration (Postgres + Redis)
+
+Each company can connect to Mercado Livre, Shopee, SHEIN, Magalu, and later channels **at the same time**. Parameters differ per company and per marketplace (client id, partner key, shop id, `site_id`, tokens). They are **not** global.
+
+PostgreSQL is the source of truth. The data almost never changes after setup, so **reads go through Redis**.
+
+| Table | One job |
+| --- | --- |
+| `marketplace` | Catalog of channels (`MercadoLivre`, `Shopee`, `Shein`, `Magalu`) + auth kind |
+| `company_marketplace_config` | This company uses this marketplace (`is_enabled`, remote shop id) |
+| `company_marketplace_parameter` | One parameter row: key, value, `is_secret` |
+
+Unique: `(company_id, marketplace_code)` on config; `(config_id, parameter_key)` on parameters.
+
+`parameter_key` is an explicit enum **owned by the adapter** (`ShopeeParameterKey.PartnerId`, `MercadoLivreParameterKey.ClientId`), not a free-text bag in the domain core. New marketplace = new keys in that adapter, no ALTER on the other three.
+
+Secrets (`ClientSecret`, refresh tokens, SHEIN `secretKey`) are stored encrypted in Postgres (`is_secret = true`). Redis may cache the **resolved config DTO** for that company+marketplace; invalidate on any write.
+
+```
+ICompanyMarketplaceConfigReader.Get(companyId, marketplaceCode)
+        │
+        ▼
+Redis GET marketplace-config:{companyId}:{marketplaceCode}
+        │
+        ├── hit  → return
+        └── miss → Postgres (config + parameters)
+                   Redis SET (no short TTL needed; delete on write)
+```
+
+Writes: Postgres first, then `DEL marketplace-config:{companyId}:{marketplaceCode}`. Never update Redis only.
+
+Connectors receive `CompanyMarketplaceConfig` from this reader. They must not read `IConfiguration["Shopee:PartnerId"]`.
 
 ## Idempotency (mandatory, always keyed by company)
 
@@ -160,7 +197,8 @@ Webhooks never call marketplace APIs inside the HTTP request. They only validate
 5. Add auth callback route `/oauth/<name>/callback` (or HMAC partner flow).
 6. Add webhook route `/webhooks/<name>` that only enqueues.
 7. Add contract tests with recorded HTTP fixtures (no live calls in CI).
-8. Document rate limits, token TTL, and Brazil-specific rules in that project's README.
+8. Insert allowed `parameter_key` values for that adapter (no change to other adapters' keys).
+9. Document rate limits, token TTL, and Brazil-specific rules in that project's README.
 
 No existing connector file should change.
 
@@ -180,3 +218,4 @@ Each company has its own A1 certificate bound to **that company's CNPJ**. `vilmo
 - It does not update stock inside a webhook handler.
 - It does not embed marketplace ids in domain entities as primary keys.
 - It does not keep a global inventory or a single shared A1 certificate.
+- It does not keep marketplace client ids or partner keys in environment variables for each tenant. Those rows live in `company_marketplace_parameter`.

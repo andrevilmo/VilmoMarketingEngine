@@ -32,7 +32,7 @@ KISS: four HTTP clients plus one fiscal SOAP client do not justify eight deploya
 | `vilmo-worker` | Slow marketplace I/O, retries, stock fan-out. |
 | `vilmo-nfe` | DFe.NET, **per-company** A1 certificates, SEFAZ rate limits, SOAP timeouts. Isolated so a SEFAZ outage does not take the API down. |
 | `postgres` | Source of truth. |
-| `redis` | Idempotency keys, token cache, **Redis Streams** as the queue. |
+| `redis` | Idempotency keys, **marketplace-config cache**, **Redis Streams** as the queue. |
 
 One process per marketplace would duplicate auth, idempotency, and outbox. That violates SRP at the *system* level. Marketplace differences live in **adapter projects**, not in extra containers.
 
@@ -148,6 +148,8 @@ The product is multi-company from day one. There is no "default company" fallbac
 | `User` | Email, credentials, `IsPlatformSuperUser` |
 | `UserCompany` | Links a user to a company with `CompanyRole` |
 | `CompanyCertificate` | Active A1 for SEFAZ for that company only |
+| `CompanyMarketplaceConfig` | This company × this marketplace (enabled, shop id) |
+| `CompanyMarketplaceParameter` | Config key/value for that connection (cached in Redis) |
 | `ICompanyContext` | Resolved once per HTTP request / queue message |
 
 `CompanyRole`: `CompanyAdmin`, `Operator`, `Viewer`.
@@ -199,6 +201,42 @@ The host file currently lives under the operator's Downloads folder and is named
 
 If a company has no cert yet: ingest via XML upload still works; DistDFe returns `CertificateNotConfigured` for that company only.
 
+### Company × many marketplaces (config table + Redis cache)
+
+One company sells on several channels at once. Mercado Livre credentials for company A are not Shopee's, and they are not company B's. **All of those parameters live in PostgreSQL.** Adapters never read tenant secrets from `appsettings` or Docker env (env is only for Postgres/Redis URLs, public callback base URL, and bootstrap admin password).
+
+| Table | Columns (intent) |
+| --- | --- |
+| `marketplace` | `code` (`MercadoLivre`, `Shopee`, `Shein`, `Magalu`), `auth_kind`, `is_active` |
+| `company_marketplace_config` | `company_id`, `marketplace_code`, `is_enabled`, `remote_shop_id` |
+| `company_marketplace_parameter` | `config_id`, `parameter_key`, `parameter_value`, `is_secret` |
+
+Uniques: `(company_id, marketplace_code)` and `(config_id, parameter_key)`.
+
+Parameter keys are explicit per adapter (no magic strings in core):
+
+| Marketplace | Typical keys |
+| --- | --- |
+| Mercado Livre | `ClientId`, `ClientSecret`, `AccessToken`, `RefreshToken`, `UserId`, `SiteId` (`MLB`) |
+| Shopee | `PartnerId`, `PartnerKey`, `ShopId`, `AccessToken`, `RefreshToken` |
+| SHEIN | `AppId`, `AppSecret`, `OpenKeyId`, `SecretKey` |
+| Magalu | `ClientId`, `ClientSecret`, `AccessToken`, `RefreshToken`, `Scope` |
+
+Values with `is_secret = true` are encrypted at rest in Postgres.
+
+**Redis cache (config almost never changes):**
+
+- Key: `marketplace-config:{companyId}:{marketplaceCode}`
+- Value: resolved DTO the connector needs (including decrypted secrets in memory only after load)
+- Fill: cache-aside on read (`GET` → miss → Postgres → `SET`)
+- Invalidate: `DEL` that key after any INSERT/UPDATE/DELETE of config or parameters
+- No short TTL required; TTL is optional (e.g. 24h) as a safety net if a delete is missed
+- Do not use Redis as the writer. Postgres commits first.
+
+`ICompanyMarketplaceConfigReader.Get(companyId, marketplaceCode)` is the only way connectors load settings. Missing config → `MarketplaceNotConfigured` for that company+channel; other marketplaces of the same company keep working.
+
+OAuth/token refresh **writes** new `AccessToken` / `RefreshToken` parameter rows (or updates them), then invalidates the Redis key. That is the exception to "config does not change": tokens rotate; shop ids and partner ids do not.
+
 ---
 
 ## 4. Best approach mapped to SOLID and clean code
@@ -209,7 +247,7 @@ If a company has no cert yet: ingest via XML upload still works; DistDFe returns
 | OCP | New marketplace = new project + DI registration. |
 | LSP | All connectors return `Result<T>`; none leak SDK exceptions. |
 | ISP | Small interfaces (`IMarketplaceStockPublisher`), not `IMarketplace`. |
-| DIP | Core depends on `ISefazDocumentFetcher` and `ICompanyCertificateStore`, not `ServicosNFe` or a global PFX path. |
+| DIP | Core depends on `ISefazDocumentFetcher`, `ICompanyCertificateStore`, and `ICompanyMarketplaceConfigReader`, not `ServicosNFe`, a global PFX path, or `IConfiguration` tenant secrets. |
 | Names | `ShopeeStockPublisher`, `ChaveAcesso`, `CompanyId`, `InventoryReceipt`. No `Manager`. |
 | Small functions | HTTP controllers only validate + enqueue. |
 | No magic | `MarketplaceCode.Shopee`, `NfeStatus.Authorized`, `MovementKind.InboundPurchase`. |
@@ -229,7 +267,7 @@ src/
   Vilmo.Catalog.Application/
   Vilmo.Inventory.Domain/
   Vilmo.Inventory.Application/
-  Vilmo.Marketplace.Contracts/    # interfaces + MarketplaceCode
+  Vilmo.Marketplace.Contracts/    # interfaces + MarketplaceCode + parameter key types
   Vilmo.Marketplace.MercadoLivre/
   Vilmo.Marketplace.Shopee/
   Vilmo.Marketplace.Shein/
@@ -258,14 +296,14 @@ Clean architecture per bounded context. Marketplace projects reference Contracts
 
 ```
 services:
-  postgres:     # catalog, inventory, orders, outbox, idempotency audit
-  redis:        # streams + idempotency + token cache
+  postgres:     # catalog, inventory, orders, outbox, company marketplace config
+  redis:        # streams + idempotency + marketplace-config cache
   vilmo-api:    # :8080
   vilmo-worker:
   vilmo-nfe:    # certs: /certs/{cnpj}.pfx (read-only, one file per company)
 ```
 
-API env: connection strings, marketplace app credentials, public base URL for OAuth/webhooks, bootstrap super-user password.
+API env: connection strings, public base URL for OAuth/webhooks, bootstrap super-user password. Per-company marketplace credentials are **table rows**, not env.
 
 NFe env: `Nfe__Environment=Homologation|Production`, `Nfe__CertificatesDirectory=/certs`. Password per CNPJ from secrets / encrypted `company_certificates` rows. No global `Nfe__Cnpj`.
 
@@ -286,18 +324,20 @@ Auth: bearer session/JWT with `user_id`, `is_platform_super_user`, and membershi
 | `POST` | `/companies` | Super user creates a company (CNPJ unique). |
 | `POST` | `/companies/{companyId}/users` | Link a user to that company with a `CompanyRole`. Super user or `CompanyAdmin`. |
 | `POST` | `/companies/{companyId}/certificate` | Upload/replace that company's A1 (multipart + password). Super user or `CompanyAdmin`. |
+| `GET` | `/companies/{companyId}/marketplaces` | List this company's marketplace configs (`is_enabled`, shop id). Secrets omitted. |
+| `PUT` | `/companies/{companyId}/marketplaces/{code}` | Upsert config + parameters for one channel. Writes Postgres, then `DEL` Redis cache. |
 | `POST` | `/nfe/chaves/{chaveAcesso}/ingest` | Validate chave, enqueue fetch with **this company's** cert. Idempotency = `(companyId, chave)`. |
 | `POST` | `/nfe/xml` | Upload XML fallback. Chave from XML must match; emit/dest CNPJ must be compatible with the company CNPJ. |
 | `GET` | `/nfe/chaves/{chaveAcesso}` | Ingestion status for **this company only**. |
 | `GET` | `/products` / `GET /products/{sku}` | Catalog of the active company. |
 | `GET` | `/inventory/{sku}` | On-hand, reserved, available for the active company. |
-| `POST` | `/marketplaces/{code}/connect` | OAuth for **this company's** shop. |
-| `GET` | `/oauth/{code}/callback` | Store tokens on the `ConnectedAccount` of that company. |
+| `POST` | `/marketplaces/{code}/connect` | OAuth for **this company's** shop, using **this company's** table parameters. |
+| `GET` | `/oauth/{code}/callback` | Store tokens as parameters on that company's marketplace config; invalidate Redis. |
 | `POST` | `/webhooks/{code}` | Verify, resolve company from shop/seller id, enqueue, 200. |
 | `POST` | `/listings` | Publish canonical product of this company. |
 | `POST` | `/inventory/{sku}/publish` | Fan-out this company's stock. |
 
-Webhook routes are allowed **without** `Idempotency-Key` and **without** a user JWT; they use marketplace event ids and resolve `CompanyId` from `ConnectedAccount`. If the shop is unknown, ACK 200 and drop (or park) — do not attach to a random company.
+Webhook routes are allowed **without** `Idempotency-Key` and **without** a user JWT; they use marketplace event ids and resolve `CompanyId` from `company_marketplace_config.remote_shop_id`. If the shop is unknown, ACK 200 and drop (or park) — do not attach to a random company.
 
 Row-level rule: `WHERE company_id = @activeCompanyId` on every business query. Super user still must set an active company for writes; list-all is only for `GET /companies` and admin diagnostics.
 
@@ -359,7 +399,8 @@ Reservation: marketplace orders of that company decrement **available** via `res
 | Webhook | PostgreSQL unique | `(company_id, marketplace, event_id)` | forever |
 | Stream | processed table | `(company_id, message_id)` | 7 days |
 | Stock push | command id + remote version | `(company_id, listing_id, command_id)` | 24h Redis + unique command |
-| Token refresh lock | Redis | `lock:token-refresh:{companyId}:{accountId}` | seconds |
+| Token refresh lock | Redis | `lock:token-refresh:{companyId}:{marketplaceCode}` | seconds |
+| Marketplace config cache | Redis | `marketplace-config:{companyId}:{marketplaceCode}` | until write (optional 24h TTL) |
 
 Two companies may reuse the same client `Idempotency-Key`. That is correct. A global Redis key without `companyId` is a bug.
 
@@ -373,8 +414,9 @@ Shopee/SHEIN HMAC failures are not retried blindly; they are `Failed` with a dis
 
 - Users authenticate against our API (not against Mercado Livre). Then they operate inside a company.
 - Seed `admin@vilmomkt.com` as platform super user. Regular users are created and **linked** via `UserCompany`.
-- Marketplace tokens and A1 passwords in PostgreSQL (envelope encryption) or Docker secrets — never appsettings committed, never `.pfx` in git.
-- Token refresh is a worker job per `ConnectedAccount`, with a lock `lock:token-refresh:{companyId}:{accountId}`.
+- Marketplace tokens, partner keys, and A1 passwords in PostgreSQL (envelope encryption) — `company_marketplace_parameter` with `is_secret`. Never appsettings committed, never `.pfx` in git.
+- Hot path reads marketplace config from Redis (`marketplace-config:{companyId}:{code}`); Postgres remains the source of truth.
+- Token refresh is a worker job per company marketplace config, with a lock `lock:token-refresh:{companyId}:{marketplaceCode}`. After refresh, update the parameter row and `DEL` the cache key.
 - Shopee partner key used only inside `ShopeeRequestSigner`.
 - SHEIN `secretKey` treated like a refresh token (long-lived until re-auth).
 - A1 password for CNPJ `68431371000161` lives only in gitignored `.env` / secret store.
@@ -389,8 +431,8 @@ Do not build all four marketplaces in parallel on day one. The engine and NF-e p
 2. **Identity + tenancy** — `Company`, `User`, `UserCompany`, JWT/`X-Company-Id`, seed `admin@vilmomkt.com` + company CNPJ `68431371000161`. Row filters by `company_id`.
 3. **Catalog + inventory domain** — Product, identifiers, movements, balances, uniqueness all include `company_id`.
 4. **NF-e module** — `ChaveAcesso`, XML parse via DFe.NET, CFOP policy vs `Company.Cnpj`, ingest API, XML upload path. `ICompanyCertificateStore` + Zeus fetcher for companies that have an A1 (first tenant included).
-5. **Marketplace contracts + worker** — registry, outbox, commands always carry `CompanyId`.
-6. **Mercado Livre adapter** — OAuth, items, stock (User Product + x-version), `orders_v2` webhook ACK; shop mapped to company.
+5. **Marketplace contracts + worker** — registry, outbox, commands always carry `CompanyId`. `company_marketplace_config` + `company_marketplace_parameter` tables, `ICompanyMarketplaceConfigReader` with Redis cache-aside.
+6. **Mercado Livre adapter** — OAuth using that company's table parameters, items, stock (User Product + x-version), `orders_v2` webhook ACK; shop mapped to company.
 7. **Magalu adapter** — ID Magalu OAuth, SKU / price / stock as three calls, webhooks.
 8. **Shopee adapter** — HMAC signer, Brazil host, stock, push, invoice upload hook (uses that company's stored NF-e XML).
 9. **SHEIN adapter** — signer + skeleton; fill endpoints after Open Platform approval.
@@ -404,7 +446,7 @@ Each step stays shippable. Step 4 already gives "company user reads chave / XML 
 
 - Unit: `ChaveAcesso` DV, CFOP policy, idempotency state machine (`companyId` in the Redis key), translators, authorization (super user vs member).
 - Contract: adapters against recorded HTTP (no live ML/Shopee in CI).
-- Integration: Testcontainers for Postgres + Redis; two companies; ingest a sample `procNFe` XML into A and assert B's inventory is empty; same `Idempotency-Key` on A and B both succeed.
+- Integration: Testcontainers for Postgres + Redis; two companies; ingest a sample `procNFe` XML into A and assert B's inventory is empty; same `Idempotency-Key` on A and B both succeed; company A Shopee `PartnerId` does not leak into company B; config read hits Redis on the second call; `PUT` config deletes the cache key.
 - SEFAZ: optional manual homologation with CNPJ `68431371000161`'s A1; never call production SEFAZ from CI; never check a real `.pfx` into the repo.
 
 ---
