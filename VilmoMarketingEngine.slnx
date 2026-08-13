@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/VilmoMarketingEngine.Api/VilmoMarketingEngine.Api.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/VilmoMarketingEngine.Api.Tests/VilmoMarketingEngine.Api.Tests.csproj" />
+  </Folder>
+</Solution>
