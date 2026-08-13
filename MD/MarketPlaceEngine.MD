@@ -24,8 +24,11 @@ The system is for **N companies**. `CompanyId` is the tenant. Catalog, inventory
 | `User` | Person who signs in | Email |
 | `UserCompany` | Membership of a user in a company | `(userId, companyId)` + `CompanyRole` |
 | `CompanyCertificate` | A1 PKCS#12 used for that company's SEFAZ calls | `(companyId, cnpj)` |
-| `CompanyMarketplaceConfig` | One marketplace enabled for one company | `(companyId, marketplaceCode)` |
-| `MarketplaceParameter` | Config key/value for that connection (client id, shop id, …) | `(configId, parameterKey)` |
+| `CompanyMarketplaceConfig` | One marketplace enabled for one company (app/partner credentials) | `(companyId, marketplaceCode)` |
+| `MarketplaceParameter` | Company-level config key/value | `(configId, parameterKey)` |
+| `UserProfile` | How this user acts in the company | `Vendor`, `CompanyAdmin`, `Operator`, `Viewer` |
+| `users_detail` | Vendor profile shared by all marketplace subaccounts | `(companyId, userId)` |
+| `user_detail_marketplace` | That vendor's **subaccount** on one marketplace (key/value params) | `(companyId, userId, marketplaceCode)` |
 
 Rules:
 
@@ -35,7 +38,7 @@ Rules:
 - A user without membership and without super-user flag cannot call business APIs.
 - Super user selects the target company with `X-Company-Id` (or an equivalent claim). Other users may send that header only if they are a member; otherwise `403`.
 
-`CompanyRole` values: `CompanyAdmin`, `Operator`, `Viewer`. No magic numbers.
+`CompanyRole` / `UserProfile` values: `CompanyAdmin`, `Operator`, `Viewer`, **`Vendor`**. No magic numbers. A vendor is a selling user of that company, not a second tenant.
 
 ## Canonical model (system of record)
 
@@ -47,12 +50,12 @@ Marketplaces never own product identity. The engine owns, **always scoped by `Co
 | `ProductIdentifier` | EAN, `cProd` from NF-e, NCM, seller SKU | `(companyId, identifierKind, value)` |
 | `InventoryBalance` | Quantity that company can sell, per warehouse | `(companyId, sku, warehouse)` |
 | `InventoryMovement` | Immutable stock event | `(companyId, chaveAcesso, itemIndex, movementKind)` |
-| `Offer` | Price + allocated stock for one channel | `(companyId, sku, marketplace, account)` |
-| `Listing` | Remote publication | `(companyId, marketplace listing id)` |
+| `Offer` | Price + allocated stock for one channel | `(companyId, sku, marketplace, vendorSubaccount)` |
+| `Listing` | Remote advertisement published by a vendor subaccount | `(companyId, vendorUserId, marketplace, remoteListingId)` |
 | `SalesOrder` | Normalized order | `(companyId, internal order id)` + remote id |
-| `ConnectedAccount` | Authorized seller shop **of that company** (same grain as `CompanyMarketplaceConfig`) | `(companyId, marketplace, remoteShopId)` |
+| `ConnectedAccount` | Company-level marketplace app config (not the vendor shop) | `(companyId, marketplace)` |
 
-A company has **many marketplaces**. Credentials and shop parameters live in tables, not in `appsettings` or environment variables. See **Company marketplace configuration** below.
+A company has **many marketplaces**. Each marketplace has **many vendor subaccounts**. Company app credentials live in `company_marketplace_*`. Vendor identity lives in `users_detail` + `user_detail_marketplace`. See **Vendors and marketplace subaccounts** below.
 
 Mapping rule: **inbound** marketplace payloads become canonical objects. **Outbound** commands are translated from canonical objects. Adapters never persist marketplace JSON as the source of truth. Workers always carry `CompanyId` on the message; a consumer must not infer company from a global default.
 
@@ -126,7 +129,44 @@ Redis GET marketplace-config:{companyId}:{marketplaceCode}
 
 Writes: Postgres first, then `DEL marketplace-config:{companyId}:{marketplaceCode}`. Never update Redis only.
 
-Connectors receive `CompanyMarketplaceConfig` from this reader. They must not read `IConfiguration["Shopee:PartnerId"]`.
+Connectors receive `CompanyMarketplaceConfig` (app credentials) plus the vendor's `user_detail_marketplace` (subaccount). They must not read `IConfiguration["Shopee:PartnerId"]`.
+
+## Vendors and marketplace subaccounts
+
+Companies have users. Users with profile **`Vendor`** sell. Each marketplace must hold **multiple subaccounts** — one per vendor in that company — not one shared shop for the whole company.
+
+```
+Company
+  └── many Vendors (users + users_detail)
+        └── one subaccount per marketplace (user_detail_marketplace)
+              └── advertisements / listings
+```
+
+| Table | One job |
+| --- | --- |
+| `users_detail` | Data **common to all** marketplace subaccounts of that vendor (legal name, document, phone, address, display name, …) |
+| `user_detail_marketplace` | Data **specific to one marketplace** as parameter key/values (shop id, nickname, tokens, fulfillment flags, …) |
+
+`users_detail` exists only for `UserProfile.Vendor`. Staff profiles do not get this row.
+
+**Create vendor (idempotent, per company):**
+
+1. Insert `User` + `UserCompany` with profile `Vendor`.
+2. Insert `users_detail` unique `(company_id, user_id)`.
+3. For **each enabled** `company_marketplace_config` of that company, insert `user_detail_marketplace` unique `(company_id, user_id, marketplace_code)` with empty/pending parameters.
+4. Retry with the same `Idempotency-Key` + `CompanyId` must not create a second vendor or a second subaccount set.
+
+If a marketplace is enabled on the company **later**, provision a missing `user_detail_marketplace` for every existing vendor of that company (same uniqueness; skip rows that already exist).
+
+**Publish advertisement:**
+
+- Vendor (or company admin acting for that vendor) chooses marketplaces.
+- **Default = all** marketplaces where the company is enabled **and** the vendor has a subaccount.
+- The request may pass an explicit list (`marketplaceCodes`). Empty/omitted list means all.
+- Worker publishes **once per selected marketplace** using that vendor's `user_detail_marketplace` params + the company's app credentials.
+- Listing uniqueness: `(company_id, vendor_user_id, sku, marketplace_code)`.
+
+Vendor marketplace params are also cache-aside in Redis (`vendor-marketplace:{companyId}:{userId}:{marketplaceCode}`), invalidated on write — same pattern as company config.
 
 ## Idempotency (mandatory, always keyed by company)
 
@@ -149,8 +189,10 @@ Every write that can be retried must be idempotent. Retries are normal (webhooks
 | --- | --- |
 | Ingest NF-e | `(company_id, chave_acesso)` |
 | Stock movement | `(company_id, chave_acesso, n_item, movement_kind)` |
-| Connect shop | `(company_id, marketplace_code, remote_shop_id)` |
-| Upsert listing | `(company_id, connected_account_id, sku)` |
+| Connect shop (company app) | `(company_id, marketplace_code)` |
+| Create vendor | `(company_id, user_id)` on `users_detail` |
+| Create vendor subaccount | `(company_id, user_id, marketplace_code)` on `user_detail_marketplace` |
+| Upsert listing | `(company_id, vendor_user_id, sku, marketplace_code)` |
 | Import order | `(company_id, marketplace_code, remote_order_id)` |
 | Webhook | `(company_id, marketplace_code, event_id)` |
 | Push stock | `(company_id, listing_id, command_id)` |
@@ -183,7 +225,7 @@ Webhook / API command  (CompanyId from auth or ConnectedAccount)
          Redis Stream (integration + CompanyId)
                 │
                 ▼
-         Marketplace connector (that company's shop tokens)
+         Marketplace connector (company app creds + vendor subaccount)
 ```
 
 Webhooks never call marketplace APIs inside the HTTP request. They only validate, enqueue, and return.
@@ -197,7 +239,7 @@ Webhooks never call marketplace APIs inside the HTTP request. They only validate
 5. Add auth callback route `/oauth/<name>/callback` (or HMAC partner flow).
 6. Add webhook route `/webhooks/<name>` that only enqueues.
 7. Add contract tests with recorded HTTP fixtures (no live calls in CI).
-8. Insert allowed `parameter_key` values for that adapter (no change to other adapters' keys).
+8. Insert allowed `parameter_key` values for company config **and** for `user_detail_marketplace` (no change to other adapters' keys).
 9. Document rate limits, token TTL, and Brazil-specific rules in that project's README.
 
 No existing connector file should change.
@@ -219,3 +261,4 @@ Each company has its own A1 certificate bound to **that company's CNPJ**. `vilmo
 - It does not embed marketplace ids in domain entities as primary keys.
 - It does not keep a global inventory or a single shared A1 certificate.
 - It does not keep marketplace client ids or partner keys in environment variables for each tenant. Those rows live in `company_marketplace_parameter`.
+- It does not publish advertisements under a shared company shop when a vendor exists. Publish uses that vendor's `user_detail_marketplace` subaccount.

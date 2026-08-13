@@ -10,11 +10,11 @@ Referenced architecture: [MarketPlaceEngine.MD](./MarketPlaceEngine.MD) — **Op
 
 A .NET API, run entirely from Docker Compose, that:
 
-1. Serves **N companies**. Every business record belongs to a `CompanyId`. Users belong to companies. One platform super user sees all.
+1. Serves **N companies**. Every business record belongs to a `CompanyId`. Users belong to companies. Users with profile **`Vendor`** sell through **per-marketplace subaccounts**. One platform super user sees all.
 2. Owns a **per-company** product inventory derived from Brazilian **NF-e** (ingest by **chave de acesso**).
 3. Talks to SEFAZ through [ZeusAutomacao/DFe.NET](https://github.com/ZeusAutomacao/DFe.NET). **Each company has its own A1 certificate** (CNPJ-bound). XML upload remains a fallback.
-4. Publishes catalog, price, and stock, and imports orders, for **Mercado Livre**, **Shopee**, **SHEIN**, and **Magalu**, per company shop.
-5. Accepts a fifth marketplace later by adding a class, not by editing the four existing ones.
+4. Each vendor publishes advertisements to **Mercado Livre**, **Shopee**, **SHEIN**, and **Magalu** using **their** subaccount on each channel (default: all marketplaces).
+5. Accepts a fifth marketplace later by adding a class, not by editing the four existing ones. New channel also gets a `user_detail_marketplace` row for every existing vendor.
 
 Idempotency is always `(CompanyId, key)`. See [MarketPlaceEngine.MD](./MarketPlaceEngine.MD).
 
@@ -32,7 +32,7 @@ KISS: four HTTP clients plus one fiscal SOAP client do not justify eight deploya
 | `vilmo-worker` | Slow marketplace I/O, retries, stock fan-out. |
 | `vilmo-nfe` | DFe.NET, **per-company** A1 certificates, SEFAZ rate limits, SOAP timeouts. Isolated so a SEFAZ outage does not take the API down. |
 | `postgres` | Source of truth. |
-| `redis` | Idempotency keys, **marketplace-config cache**, **Redis Streams** as the queue. |
+| `redis` | Idempotency keys, marketplace-config cache, **vendor-subaccount cache**, **Redis Streams**. |
 
 One process per marketplace would duplicate auth, idempotency, and outbox. That violates SRP at the *system* level. Marketplace differences live in **adapter projects**, not in extra containers.
 
@@ -146,13 +146,17 @@ The product is multi-company from day one. There is no "default company" fallbac
 | --- | --- |
 | `Company` | Legal name, unique CNPJ, status (`Active` / `Disabled`) |
 | `User` | Email, credentials, `IsPlatformSuperUser` |
-| `UserCompany` | Links a user to a company with `CompanyRole` |
+| `UserCompany` | Links a user to a company with `UserProfile` / `CompanyRole` |
 | `CompanyCertificate` | Active A1 for SEFAZ for that company only |
-| `CompanyMarketplaceConfig` | This company × this marketplace (enabled, shop id) |
-| `CompanyMarketplaceParameter` | Config key/value for that connection (cached in Redis) |
+| `CompanyMarketplaceConfig` | This company × this marketplace (app/partner credentials) |
+| `CompanyMarketplaceParameter` | Company-level config key/value (cached in Redis) |
+| `users_detail` | Vendor profile **common to all** marketplace subaccounts |
+| `user_detail_marketplace` | That vendor's subaccount on one marketplace (key/value params) |
 | `ICompanyContext` | Resolved once per HTTP request / queue message |
 
-`CompanyRole`: `CompanyAdmin`, `Operator`, `Viewer`.
+`CompanyRole` / `UserProfile`: `CompanyAdmin`, `Operator`, `Viewer`, **`Vendor`**.
+
+Vendors sell. Each company has many vendors. Each vendor publishes through **their own subaccount** on each marketplace.
 
 Authorization:
 
@@ -237,6 +241,48 @@ Values with `is_secret = true` are encrypted at rest in Postgres.
 
 OAuth/token refresh **writes** new `AccessToken` / `RefreshToken` parameter rows (or updates them), then invalidates the Redis key. That is the exception to "config does not change": tokens rotate; shop ids and partner ids do not.
 
+Company-level rows are **app/partner credentials** (one per company per marketplace). They are not the vendor shop. Vendor shops are `user_detail_marketplace` subaccounts.
+
+### Vendors, `users_detail`, and subaccounts
+
+Many companies. Each company has many users with profile **`Vendor`**. Each marketplace has **many subaccounts** (one per vendor). A vendor publishes the same product to many marketplaces **using their subaccount on each channel**.
+
+| Table | Holds |
+| --- | --- |
+| `users_detail` | Common vendor data reused on every marketplace: legal name, document (CPF/CNPJ), phone, address, display name, default description, photos references. One row per vendor. Unique `(company_id, user_id)`. Only when profile is `Vendor`. |
+| `user_detail_marketplace` | Marketplace-specific subaccount as **parameter key/values** (`ShopId`, `AccessToken`, `Nickname`, `SellerId`, …, `is_secret` where needed). Unique `(company_id, user_id, marketplace_code)`. |
+
+**Create vendor (must be idempotent per company):**
+
+```
+POST /companies/{companyId}/vendors  + Idempotency-Key
+        │
+        ▼
+User + UserCompany (profile Vendor)
+        │
+        ▼
+users_detail  unique (company_id, user_id)
+        │
+        ▼
+for each enabled company marketplace:
+    user_detail_marketplace  unique (company_id, user_id, marketplace_code)
+```
+
+Retry of the same key in the same company returns the existing vendor and does **not** create extra subaccounts. Same email in another company is a different vendor (different `company_id`).
+
+When a new marketplace is enabled on the company later, insert missing `user_detail_marketplace` rows for every existing vendor (skip if the unique key already exists).
+
+Vendor subaccount params: Redis cache-aside `vendor-marketplace:{companyId}:{userId}:{marketplaceCode}`, `DEL` on write.
+
+**Publish advertisement:**
+
+- Body includes `sku` (or product id) and optional `marketplaceCodes`.
+- **Omitted or empty `marketplaceCodes` = all** enabled company marketplaces where this vendor has a subaccount.
+- Explicit list = only those channels (must belong to the vendor; unknown codes → `400`).
+- Enqueue one command per selected marketplace: `{ companyId, vendorUserId, sku, marketplaceCode }`.
+- Connector uses company app credentials **plus** that vendor's `user_detail_marketplace` parameters.
+- Listing unique `(company_id, vendor_user_id, sku, marketplace_code)` so a retry does not double-publish.
+
 ---
 
 ## 4. Best approach mapped to SOLID and clean code
@@ -248,9 +294,9 @@ OAuth/token refresh **writes** new `AccessToken` / `RefreshToken` parameter rows
 | LSP | All connectors return `Result<T>`; none leak SDK exceptions. |
 | ISP | Small interfaces (`IMarketplaceStockPublisher`), not `IMarketplace`. |
 | DIP | Core depends on `ISefazDocumentFetcher`, `ICompanyCertificateStore`, and `ICompanyMarketplaceConfigReader`, not `ServicosNFe`, a global PFX path, or `IConfiguration` tenant secrets. |
-| Names | `ShopeeStockPublisher`, `ChaveAcesso`, `CompanyId`, `InventoryReceipt`. No `Manager`. |
+| Names | `ShopeeStockPublisher`, `ChaveAcesso`, `CompanyId`, `VendorUserId`, `users_detail`. No `Manager`. |
 | Small functions | HTTP controllers only validate + enqueue. |
-| No magic | `MarketplaceCode.Shopee`, `NfeStatus.Authorized`, `MovementKind.InboundPurchase`. |
+| No magic | `MarketplaceCode.Shopee`, `UserProfile.Vendor`, `NfeStatus.Authorized`, `MovementKind.InboundPurchase`. |
 | KISS | Three app containers, Redis Streams, modular monolith solution. |
 
 ---
@@ -260,7 +306,7 @@ OAuth/token refresh **writes** new `AccessToken` / `RefreshToken` parameter rows
 ```
 VilmoMarketingEngine.sln
 src/
-  Vilmo.Identity.Domain/          # Company, User, UserCompany, CompanyRole
+  Vilmo.Identity.Domain/          # Company, User, UserCompany, Vendor, users_detail
   Vilmo.Identity.Application/
   Vilmo.BuildingBlocks/          # Result, Idempotency (company-scoped), Redis Streams, time
   Vilmo.Catalog.Domain/
@@ -296,7 +342,7 @@ Clean architecture per bounded context. Marketplace projects reference Contracts
 
 ```
 services:
-  postgres:     # catalog, inventory, orders, outbox, company marketplace config
+  postgres:     # catalog, inventory, orders, company config, users_detail, vendor subaccounts
   redis:        # streams + idempotency + marketplace-config cache
   vilmo-api:    # :8080
   vilmo-worker:
@@ -322,7 +368,11 @@ Auth: bearer session/JWT with `user_id`, `is_platform_super_user`, and membershi
 | `POST` | `/auth/login` | Issue token. Super user may omit company; others need membership. |
 | `GET` | `/companies` | Super user: all. Others: memberships only. |
 | `POST` | `/companies` | Super user creates a company (CNPJ unique). |
-| `POST` | `/companies/{companyId}/users` | Link a user to that company with a `CompanyRole`. Super user or `CompanyAdmin`. |
+| `POST` | `/companies/{companyId}/users` | Link a staff user to that company with a `CompanyRole`. Super user or `CompanyAdmin`. |
+| `POST` | `/companies/{companyId}/vendors` | Create vendor user + `users_detail` + one `user_detail_marketplace` per enabled marketplace. Idempotent per company. |
+| `GET` | `/companies/{companyId}/vendors/{userId}` | Vendor + common detail + subaccounts (secrets omitted). |
+| `PUT` | `/companies/{companyId}/vendors/{userId}/detail` | Update `users_detail` (common fields). |
+| `PUT` | `/companies/{companyId}/vendors/{userId}/marketplaces/{code}` | Upsert `user_detail_marketplace` parameters; `DEL` Redis vendor cache. |
 | `POST` | `/companies/{companyId}/certificate` | Upload/replace that company's A1 (multipart + password). Super user or `CompanyAdmin`. |
 | `GET` | `/companies/{companyId}/marketplaces` | List this company's marketplace configs (`is_enabled`, shop id). Secrets omitted. |
 | `PUT` | `/companies/{companyId}/marketplaces/{code}` | Upsert config + parameters for one channel. Writes Postgres, then `DEL` Redis cache. |
@@ -333,11 +383,12 @@ Auth: bearer session/JWT with `user_id`, `is_platform_super_user`, and membershi
 | `GET` | `/inventory/{sku}` | On-hand, reserved, available for the active company. |
 | `POST` | `/marketplaces/{code}/connect` | OAuth for **this company's** shop, using **this company's** table parameters. |
 | `GET` | `/oauth/{code}/callback` | Store tokens as parameters on that company's marketplace config; invalidate Redis. |
-| `POST` | `/webhooks/{code}` | Verify, resolve company from shop/seller id, enqueue, 200. |
-| `POST` | `/listings` | Publish canonical product of this company. |
-| `POST` | `/inventory/{sku}/publish` | Fan-out this company's stock. |
+| `POST` | `/webhooks/{code}` | Verify, resolve company **and vendor** from subaccount shop/seller id, enqueue, 200. |
+| `POST` | `/advertisements` | Vendor publishes a product. `marketplaceCodes` optional; **default all**. One listing per selected marketplace using that vendor's subaccount. |
+| `POST` | `/listings` | Same as `/advertisements` (alias). |
+| `POST` | `/inventory/{sku}/publish` | Fan-out this vendor's stock on selected marketplaces (default all). |
 
-Webhook routes are allowed **without** `Idempotency-Key` and **without** a user JWT; they use marketplace event ids and resolve `CompanyId` from `company_marketplace_config.remote_shop_id`. If the shop is unknown, ACK 200 and drop (or park) — do not attach to a random company.
+Webhook routes are allowed **without** `Idempotency-Key` and **without** a user JWT; they use marketplace event ids and resolve `CompanyId` + vendor from `user_detail_marketplace` (shop/seller parameter). If the subaccount is unknown, ACK 200 and drop (or park) — do not attach to a random company or vendor.
 
 Row-level rule: `WHERE company_id = @activeCompanyId` on every business query. Super user still must set an active company for writes; list-all is only for `GET /companies` and admin diagnostics.
 
@@ -399,8 +450,12 @@ Reservation: marketplace orders of that company decrement **available** via `res
 | Webhook | PostgreSQL unique | `(company_id, marketplace, event_id)` | forever |
 | Stream | processed table | `(company_id, message_id)` | 7 days |
 | Stock push | command id + remote version | `(company_id, listing_id, command_id)` | 24h Redis + unique command |
-| Token refresh lock | Redis | `lock:token-refresh:{companyId}:{marketplaceCode}` | seconds |
+| Create vendor | PostgreSQL unique | `(company_id, user_id)` on `users_detail` | forever |
+| Vendor subaccount | PostgreSQL unique | `(company_id, user_id, marketplace_code)` on `user_detail_marketplace` | forever |
+| Publish advertisement | PostgreSQL unique | `(company_id, vendor_user_id, sku, marketplace_code)` | forever |
+| Token refresh lock | Redis | `lock:token-refresh:{companyId}:{userId}:{marketplaceCode}` | seconds |
 | Marketplace config cache | Redis | `marketplace-config:{companyId}:{marketplaceCode}` | until write (optional 24h TTL) |
+| Vendor subaccount cache | Redis | `vendor-marketplace:{companyId}:{userId}:{marketplaceCode}` | until write (optional 24h TTL) |
 
 Two companies may reuse the same client `Idempotency-Key`. That is correct. A global Redis key without `companyId` is a bug.
 
@@ -414,9 +469,9 @@ Shopee/SHEIN HMAC failures are not retried blindly; they are `Failed` with a dis
 
 - Users authenticate against our API (not against Mercado Livre). Then they operate inside a company.
 - Seed `admin@vilmomkt.com` as platform super user. Regular users are created and **linked** via `UserCompany`.
-- Marketplace tokens, partner keys, and A1 passwords in PostgreSQL (envelope encryption) — `company_marketplace_parameter` with `is_secret`. Never appsettings committed, never `.pfx` in git.
-- Hot path reads marketplace config from Redis (`marketplace-config:{companyId}:{code}`); Postgres remains the source of truth.
-- Token refresh is a worker job per company marketplace config, with a lock `lock:token-refresh:{companyId}:{marketplaceCode}`. After refresh, update the parameter row and `DEL` the cache key.
+- Marketplace tokens, partner keys, and A1 passwords in PostgreSQL (envelope encryption) — company rows in `company_marketplace_parameter`; vendor subaccount secrets in `user_detail_marketplace` with `is_secret`. Never appsettings committed, never `.pfx` in git.
+- Hot path reads company config from Redis (`marketplace-config:{companyId}:{code}`) and vendor subaccounts from `vendor-marketplace:{companyId}:{userId}:{code}`; Postgres remains the source of truth.
+- Token refresh is a worker job per **vendor subaccount**, with a lock `lock:token-refresh:{companyId}:{userId}:{marketplaceCode}`. After refresh, update the parameter row and `DEL` the cache key.
 - Shopee partner key used only inside `ShopeeRequestSigner`.
 - SHEIN `secretKey` treated like a refresh token (long-lived until re-auth).
 - A1 password for CNPJ `68431371000161` lives only in gitignored `.env` / secret store.
@@ -428,11 +483,11 @@ Shopee/SHEIN HMAC failures are not retried blindly; they are `Failed` with a dis
 Do not build all four marketplaces in parallel on day one. The engine and NF-e path must exist first, or adapters will invent their own catalog.
 
 1. **Foundation** — solution, Docker Compose (postgres + redis + empty API), BuildingBlocks (Result, company-scoped idempotency, streams), health checks.
-2. **Identity + tenancy** — `Company`, `User`, `UserCompany`, JWT/`X-Company-Id`, seed `admin@vilmomkt.com` + company CNPJ `68431371000161`. Row filters by `company_id`.
+2. **Identity + tenancy** — `Company`, `User`, `UserCompany`, JWT/`X-Company-Id`, seed `admin@vilmomkt.com` + company CNPJ `68431371000161`. Row filters by `company_id`. `UserProfile.Vendor`, `users_detail`, `user_detail_marketplace`; creating a vendor provisions one subaccount per enabled marketplace (idempotent per company).
 3. **Catalog + inventory domain** — Product, identifiers, movements, balances, uniqueness all include `company_id`.
 4. **NF-e module** — `ChaveAcesso`, XML parse via DFe.NET, CFOP policy vs `Company.Cnpj`, ingest API, XML upload path. `ICompanyCertificateStore` + Zeus fetcher for companies that have an A1 (first tenant included).
-5. **Marketplace contracts + worker** — registry, outbox, commands always carry `CompanyId`. `company_marketplace_config` + `company_marketplace_parameter` tables, `ICompanyMarketplaceConfigReader` with Redis cache-aside.
-6. **Mercado Livre adapter** — OAuth using that company's table parameters, items, stock (User Product + x-version), `orders_v2` webhook ACK; shop mapped to company.
+5. **Marketplace contracts + worker** — registry, outbox, commands always carry `CompanyId` **and** `VendorUserId`. `company_marketplace_config` + `company_marketplace_parameter` tables, `ICompanyMarketplaceConfigReader` with Redis cache-aside. Advertisement publish: `marketplaceCodes` default all.
+6. **Mercado Livre adapter** — OAuth using company app parameters + vendor subaccount, items, stock (User Product + x-version), `orders_v2` webhook ACK; shop mapped to vendor `user_detail_marketplace`.
 7. **Magalu adapter** — ID Magalu OAuth, SKU / price / stock as three calls, webhooks.
 8. **Shopee adapter** — HMAC signer, Brazil host, stock, push, invoice upload hook (uses that company's stored NF-e XML).
 9. **SHEIN adapter** — signer + skeleton; fill endpoints after Open Platform approval.
@@ -446,7 +501,7 @@ Each step stays shippable. Step 4 already gives "company user reads chave / XML 
 
 - Unit: `ChaveAcesso` DV, CFOP policy, idempotency state machine (`companyId` in the Redis key), translators, authorization (super user vs member).
 - Contract: adapters against recorded HTTP (no live ML/Shopee in CI).
-- Integration: Testcontainers for Postgres + Redis; two companies; ingest a sample `procNFe` XML into A and assert B's inventory is empty; same `Idempotency-Key` on A and B both succeed; company A Shopee `PartnerId` does not leak into company B; config read hits Redis on the second call; `PUT` config deletes the cache key.
+- Integration: Testcontainers for Postgres + Redis; two companies; ingest a sample `procNFe` XML into A and assert B's inventory is empty; same `Idempotency-Key` on A and B both succeed; company A Shopee `PartnerId` does not leak into company B; config read hits Redis on the second call; `PUT` config deletes the cache key; creating a vendor twice with the same key does not duplicate `user_detail_marketplace`; publish with omitted `marketplaceCodes` fans out to all vendor subaccounts.
 - SEFAZ: optional manual homologation with CNPJ `68431371000161`'s A1; never call production SEFAZ from CI; never check a real `.pfx` into the repo.
 
 ---
@@ -459,7 +514,7 @@ Each step stays shippable. Step 4 already gives "company user reads chave / XML 
 - Shopee Brazil invoice upload is a separate pipeline from inbound inventory NF-e.
 - Missing `company_id` on a unique index or Redis key will mix tenants. Treat that as a release blocker.
 - DFe.NET SOAP clients historically assume Windows cert stores; Linux A1 load must be proven in homologation **per certificate**, starting with CNPJ `68431371000161`.
-- Magalu seller login must be the store (PJ) or scopes fail in ways that look like bugs.
+- Creating a vendor without enabled company marketplaces yields `users_detail` and zero subaccounts; enabling a marketplace later must backfill `user_detail_marketplace` for every vendor.
 
 ---
 
@@ -475,4 +530,4 @@ Each step stays shippable. Step 4 already gives "company user reads chave / XML 
 
 ## 15. What "done" looks like for the first vertical
 
-Docker Compose up → login as `admin@vilmomkt.com` (sees all companies) → active company CNPJ `68431371000161` → `POST /nfe/xml` or ingest by chave using that company's A1 → product rows + inventory **only** for that company → a second company cannot read those products even with the same `Idempotency-Key` → connect one Mercado Livre test shop **to that company** → `POST /inventory/{sku}/publish` updates remote stock → a test purchase webhook reserves stock without double-counting on retry.
+Docker Compose up → login as `admin@vilmomkt.com` (sees all companies) → active company CNPJ `68431371000161` → create a **vendor** (`POST /vendors`, idempotent) → `users_detail` plus one `user_detail_marketplace` per enabled marketplace → `POST /nfe/xml` or ingest by chave using that company's A1 → product rows + inventory **only** for that company → vendor `POST /advertisements` with omitted `marketplaceCodes` publishes to **all** that vendor's subaccounts → explicit `marketplaceCodes: ["Shopee"]` publishes only Shopee → retry of the same `Idempotency-Key` in that company does not create a second vendor or a second listing → a second company cannot read those products even with the same key → webhook for a Shopee shop maps to that vendor's subaccount, not a shared company shop.
