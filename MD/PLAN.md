@@ -497,6 +497,7 @@ Shopee/SHEIN HMAC failures are not retried blindly; they are `Failed` with a dis
 - HMAC signing goes through `HmacSha256AuthProtocol` (used by Shopee and SHEIN seed data). Partner keys stay in parameter rows.
 - SHEIN `secretKey` is a vendor/company parameter (`is_secret`), treated like a long-lived token until re-auth.
 - A1 password for CNPJ `68431371000161` lives only in gitignored `.env` / secret store.
+- AWS Console (to publish this project later): root email `admin@vilmomkt.com`. Password is **not** in git (gitignored `.secrets/`). MFA is required; when AWS login is needed, **stop and ask the operator to enter the MFA code**. Do not attempt MFA bypass.
 
 ---
 
@@ -546,7 +547,7 @@ Each step stays shippable. Step 5 already gives "company user reads chave / XML 
 - Emission of NF-e (we ingest and, later, upload XML to Shopee; we do not become an issuer in v1).
 - Pricing intelligence / ads.
 - Multi-tenant **billing / SaaS metering** (multi-**company** data isolation is in scope).
-- Amazon, Americanas, TikTok Shop: add as `marketplace` rows at runtime (no new C# project). A new **auth protocol** not in the compiled pack still needs a small code change.
+- One C# project per marketplace, or a `MarketplaceCode` enum that requires a rebuild to add Amazon.
 - Metronic React / Next.js apps as the production UI (HTML is the default).
 - RabbitMQ, Kubernetes, Kafka.
 
