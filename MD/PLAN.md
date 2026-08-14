@@ -2,7 +2,7 @@
 
 This is the build plan only. No application code, Docker images, or certificates are created until a later task explicitly asks to implement.
 
-Referenced architecture: [MarketPlaceEngine.MD](./MarketPlaceEngine.MD) — **Opção A (in-house)** + **idempotency**.
+Referenced architecture: [MarketPlaceEngine.MD](./MarketPlaceEngine.MD) — **Opção A (in-house)** + **idempotency**. Default UI: [UI.md](./UI.md) (Metronic 9.5.0 HTML).
 
 ---
 
@@ -14,7 +14,7 @@ A .NET API, run entirely from Docker Compose, that:
 2. Owns a **per-company** product inventory derived from Brazilian **NF-e** (ingest by **chave de acesso**).
 3. Talks to SEFAZ through [ZeusAutomacao/DFe.NET](https://github.com/ZeusAutomacao/DFe.NET). **Each company has its own A1 certificate** (CNPJ-bound). XML upload remains a fallback.
 4. Each vendor publishes advertisements to **Mercado Livre**, **Shopee**, **SHEIN**, and **Magalu** using **their** subaccount on each channel (default: all marketplaces).
-5. Accepts a fifth marketplace later by adding a class, not by editing the four existing ones. New channel also gets a `user_detail_marketplace` row for every existing vendor.
+6. Ships a **Metronic 9.5.0 HTML** admin UI (default templates from `template-metronic/.../metronic-v9.5.0/`). See [UI.md](./UI.md).
 
 Idempotency is always `(CompanyId, key)`. See [MarketPlaceEngine.MD](./MarketPlaceEngine.MD).
 
@@ -29,6 +29,7 @@ KISS: four HTTP clients plus one fiscal SOAP client do not justify eight deploya
 | Deployable | Why it exists |
 | --- | --- |
 | `vilmo-api` | Public HTTP: commands, OAuth callbacks, webhook ACK. Must answer fast. |
+| `vilmo-web` | Metronic HTML UI. Proxies `/api` to `vilmo-api`. |
 | `vilmo-worker` | Slow marketplace I/O, retries, stock fan-out. |
 | `vilmo-nfe` | DFe.NET, **per-company** A1 certificates, SEFAZ rate limits, SOAP timeouts. Isolated so a SEFAZ outage does not take the API down. |
 | `postgres` | Source of truth. |
@@ -322,6 +323,7 @@ src/
   Vilmo.Nfe.Application/
   Vilmo.Nfe.Zeus/                 # ISefazDocumentFetcher → DFe.NET
   Vilmo.Api/                      # ASP.NET Core
+  Vilmo.Web/                      # Metronic HTML (layout-1 + demo1 page slice)
   Vilmo.Worker/                   # marketplace + inventory consumers
   Vilmo.Nfe.Worker/               # SEFAZ / XML parse / movements
 tests/
@@ -332,6 +334,7 @@ deploy/
   api.Dockerfile
   worker.Dockerfile
   nfe.Dockerfile
+  web.Dockerfile
 ```
 
 Clean architecture per bounded context. Marketplace projects reference Contracts + HTTP; they do not reference Inventory domain types directly — they consume integration commands (`PublishStock`, `ImportOrder`).
@@ -345,6 +348,7 @@ services:
   postgres:     # catalog, inventory, orders, company config, users_detail, vendor subaccounts
   redis:        # streams + idempotency + marketplace-config cache
   vilmo-api:    # :8080
+  vilmo-web:    # :8081 Metronic HTML; /api → vilmo-api
   vilmo-worker:
   vilmo-nfe:    # certs: /certs/{cnpj}.pfx (read-only, one file per company)
 ```
@@ -354,6 +358,16 @@ API env: connection strings, public base URL for OAuth/webhooks, bootstrap super
 NFe env: `Nfe__Environment=Homologation|Production`, `Nfe__CertificatesDirectory=/certs`. Password per CNPJ from secrets / encrypted `company_certificates` rows. No global `Nfe__Cnpj`.
 
 No `.pfx` in git. Compose mounts a host certs directory that is gitignored. First company file inside the container: `/certs/68431371000161.pfx`.
+
+### Default UI (Metronic 9.5.0 HTML)
+
+Full investigation and screen map: [UI.md](./UI.md).
+
+- Source kit on `master`: `template-metronic/themeforest-p1yvR6ry-metronic-responsive-admin-dashboard-template/metronic-v9.5.0/`.
+- Runtime uses **HTML only**: starter **layout-1** + **demo1** page patterns (sign-in branded, members datatable, settings, integrations).
+- Inventory / products / orders **information architecture** comes from the React concept `store-inventory`, rebuilt as HTML tables — do not run the Vite/Next apps.
+- `vilmo-web` copies a **slice** of assets + mapped pages. It does not ship all 10 demos or the React packages.
+- Sidebar: Dashboard, NF-e / Inventory, Products, Advertisements, Orders, Vendors, Marketplaces, Settings (+ Companies for super user).
 
 ---
 
@@ -484,14 +498,15 @@ Do not build all four marketplaces in parallel on day one. The engine and NF-e p
 
 1. **Foundation** — solution, Docker Compose (postgres + redis + empty API), BuildingBlocks (Result, company-scoped idempotency, streams), health checks.
 2. **Identity + tenancy** — `Company`, `User`, `UserCompany`, JWT/`X-Company-Id`, seed `admin@vilmomkt.com` + company CNPJ `68431371000161`. Row filters by `company_id`. `UserProfile.Vendor`, `users_detail`, `user_detail_marketplace`; creating a vendor provisions one subaccount per enabled marketplace (idempotent per company).
-3. **Catalog + inventory domain** — Product, identifiers, movements, balances, uniqueness all include `company_id`.
-4. **NF-e module** — `ChaveAcesso`, XML parse via DFe.NET, CFOP policy vs `Company.Cnpj`, ingest API, XML upload path. `ICompanyCertificateStore` + Zeus fetcher for companies that have an A1 (first tenant included).
-5. **Marketplace contracts + worker** — registry, outbox, commands always carry `CompanyId` **and** `VendorUserId`. `company_marketplace_config` + `company_marketplace_parameter` tables, `ICompanyMarketplaceConfigReader` with Redis cache-aside. Advertisement publish: `marketplaceCodes` default all.
-6. **Mercado Livre adapter** — OAuth using company app parameters + vendor subaccount, items, stock (User Product + x-version), `orders_v2` webhook ACK; shop mapped to vendor `user_detail_marketplace`.
-7. **Magalu adapter** — ID Magalu OAuth, SKU / price / stock as three calls, webhooks.
-8. **Shopee adapter** — HMAC signer, Brazil host, stock, push, invoice upload hook (uses that company's stored NF-e XML).
-9. **SHEIN adapter** — signer + skeleton; fill endpoints after Open Platform approval.
-10. **Hardening** — Polly per host, 429 budgets, contract tests, structured logs, no secrets in logs, tenancy tests (company A cannot read company B).
+3. **Metronic UI shell** — `vilmo-web` from HTML starter layout-1 + demo1 sign-in and members datatable, proxied to the API. Company switcher for super user. See [UI.md](./UI.md).
+4. **Catalog + inventory domain** — Product, identifiers, movements, balances, uniqueness all include `company_id`.
+5. **NF-e module** — `ChaveAcesso`, XML parse via DFe.NET, CFOP policy vs `Company.Cnpj`, ingest API, XML upload path. `ICompanyCertificateStore` + Zeus fetcher for companies that have an A1 (first tenant included). HTML ingest form (chave + Dropzone XML).
+6. **Marketplace contracts + worker** — registry, outbox, commands always carry `CompanyId` **and** `VendorUserId`. `company_marketplace_config` + `company_marketplace_parameter` tables, `ICompanyMarketplaceConfigReader` with Redis cache-aside. Advertisement publish: `marketplaceCodes` default all.
+7. **Mercado Livre adapter** — OAuth using company app parameters + vendor subaccount, items, stock (User Product + x-version), `orders_v2` webhook ACK; shop mapped to vendor `user_detail_marketplace`.
+8. **Magalu adapter** — ID Magalu OAuth, SKU / price / stock as three calls, webhooks.
+9. **Shopee adapter** — HMAC signer, Brazil host, stock, push, invoice upload hook (uses that company's stored NF-e XML).
+10. **SHEIN adapter** — signer + skeleton; fill endpoints after Open Platform approval.
+11. **Hardening** — Polly per host, 429 budgets, contract tests, structured logs, no secrets in logs, tenancy tests (company A cannot read company B).
 
 Each step stays shippable. Step 4 already gives "company user reads chave / XML → that company's inventory".
 
@@ -515,6 +530,7 @@ Each step stays shippable. Step 4 already gives "company user reads chave / XML 
 - Missing `company_id` on a unique index or Redis key will mix tenants. Treat that as a release blocker.
 - DFe.NET SOAP clients historically assume Windows cert stores; Linux A1 load must be proven in homologation **per certificate**, starting with CNPJ `68431371000161`.
 - Creating a vendor without enabled company marketplaces yields `users_detail` and zero subaccounts; enabling a marketplace later must backfill `user_detail_marketplace` for every vendor.
+- Copying the entire Metronic tree into the web image will bloat deploys and mix 10 duplicate demos. Copy only layout-1 + demo1 mapped pages + `dist/assets`.
 
 ---
 
@@ -524,10 +540,11 @@ Each step stays shippable. Step 4 already gives "company user reads chave / XML 
 - Pricing intelligence / ads.
 - Multi-tenant **billing / SaaS metering** (multi-**company** data isolation is in scope).
 - Amazon, Americanas, TikTok Shop (the engine is ready; adapters are not).
+- Metronic React / Next.js apps as the production UI (HTML is the default).
 - RabbitMQ, Kubernetes, Kafka.
 
 ---
 
 ## 15. What "done" looks like for the first vertical
 
-Docker Compose up → login as `admin@vilmomkt.com` (sees all companies) → active company CNPJ `68431371000161` → create a **vendor** (`POST /vendors`, idempotent) → `users_detail` plus one `user_detail_marketplace` per enabled marketplace → `POST /nfe/xml` or ingest by chave using that company's A1 → product rows + inventory **only** for that company → vendor `POST /advertisements` with omitted `marketplaceCodes` publishes to **all** that vendor's subaccounts → explicit `marketplaceCodes: ["Shopee"]` publishes only Shopee → retry of the same `Idempotency-Key` in that company does not create a second vendor or a second listing → a second company cannot read those products even with the same key → webhook for a Shopee shop maps to that vendor's subaccount, not a shared company shop.
+Docker Compose up → open `vilmo-web` Metronic sign-in (`demo1` branded) as `admin@vilmomkt.com` (sees all companies) → switch to company CNPJ `68431371000161` → create a **vendor** from the members datatable (`POST /vendors`, idempotent) → `users_detail` plus one `user_detail_marketplace` per enabled marketplace → ingest NF-e from the inventory form (chave or XML Dropzone) using that company's A1 → product rows + inventory **only** for that company → vendor publishes an advertisement with omitted `marketplaceCodes` to **all** subaccounts → explicit Shopee-only publish → retry of the same `Idempotency-Key` in that company does not create a second vendor or a second listing → a second company cannot see those products.

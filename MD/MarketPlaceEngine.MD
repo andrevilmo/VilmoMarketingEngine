@@ -262,3 +262,4 @@ Each company has its own A1 certificate bound to **that company's CNPJ**. `vilmo
 - It does not keep a global inventory or a single shared A1 certificate.
 - It does not keep marketplace client ids or partner keys in environment variables for each tenant. Those rows live in `company_marketplace_parameter`.
 - It does not publish advertisements under a shared company shop when a vendor exists. Publish uses that vendor's `user_detail_marketplace` subaccount.
+- It does not ship all Metronic demos or the React/Next packages as the running UI. HTML layout-1 + demo1 mapped pages only.
