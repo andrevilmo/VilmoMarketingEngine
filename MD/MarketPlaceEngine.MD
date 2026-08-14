@@ -1,6 +1,6 @@
 # Marketplace Engine — Opção A: Construção Própria (In-House)
 
-This document is the architectural contract for Vilmo's marketplace layer. New marketplaces are added by **writing a new adapter**, never by editing existing adapters or the core domain.
+This document is the architectural contract for Vilmo's marketplace layer. New marketplaces are **rows in PostgreSQL**, not a new enum, project, or deploy. The running API loads the definition from the database (cached in Redis) and executes it with a generic HTTP engine.
 
 ## Decision
 
@@ -9,7 +9,7 @@ This document is the architectural contract for Vilmo's marketplace layer. New m
 Why this option:
 
 - Inventory is born from Brazilian NF-e, not from a marketplace. An aggregator would invert that ownership.
-- Each marketplace has incompatible auth, catalog, and stock models. A thin in-house adapter is cheaper to keep correct than a black-box mapping we cannot change.
+- Auth, catalog, and stock **shapes** differ per channel. Those differences live in **marketplace definition tables** (URLs, auth protocol, parameter keys, JSON mappings), not in compiled C# per brand.
 - Idempotency, CFOP-based stock movements, and A1 certificate handling are domain rules, not generic "sync SKU" calls.
 
 What we still reuse: official SDKs/libraries only (DFe.NET for SEFAZ). Marketplace HTTP clients are ours.
@@ -57,46 +57,44 @@ Marketplaces never own product identity. The engine owns, **always scoped by `Co
 
 A company has **many marketplaces**. Each marketplace has **many vendor subaccounts**. Company app credentials live in `company_marketplace_*`. Vendor identity lives in `users_detail` + `user_detail_marketplace`. See **Vendors and marketplace subaccounts** below.
 
-Mapping rule: **inbound** marketplace payloads become canonical objects. **Outbound** commands are translated from canonical objects. Adapters never persist marketplace JSON as the source of truth. Workers always carry `CompanyId` on the message; a consumer must not infer company from a global default.
+Mapping rule: **inbound** marketplace payloads become canonical objects via **stored JSON mappings**. **Outbound** commands are rendered from templates in the same tables. The engine never persists marketplace JSON as the source of truth. Workers always carry `CompanyId` and a **string** `marketplace_code` (from the `marketplace` table). A consumer must not infer company from a global default, and must not `switch` on marketplace names in C#.
 
-## Open/Closed contract
+## Data-driven marketplaces (no rebuild)
 
-Core depends on abstractions. A new marketplace is a new class in a new project.
+There is **no** `MarketplaceCode` enum. The code is a string primary key: `MercadoLivre`, `Shopee`, `Shein`, `Magalu`, later `Amazon`. Adding a channel is an INSERT (admin UI or SQL), then Redis `DEL`. The process is not rebuilt, no new project, no DI registration.
 
-```
-IMarketplaceConnector          // one marketplace, one implementation
-IMarketplaceAuthorization      // OAuth / HMAC / partner-key flows
-IMarketplaceCatalogTranslator  // Product/Offer ↔ remote listing
-IMarketplaceStockPublisher     // push InventoryBalance to remote
-IMarketplaceOrderImporter      // remote order → SalesOrder
-IMarketplaceWebhookNormalizer  // remote event → MarketplaceEvent
-IMarketplaceInvoiceUploader    // optional; Brazil NF-e XML where required
-```
-
-Registration is discovery, not a switch:
-
-```
-IMarketplaceConnectorRegistry.Resolve(MarketplaceCode)
-```
-
-`MarketplaceCode` is an enum (`MercadoLivre`, `Shopee`, `Shein`, `Magalu`). Adding Amazon later means a new enum value, a new project, and a DI registration. Existing connectors stay closed.
-
-Interface segregation: connectors that cannot upload invoices implement only the interfaces they support. Do not force SHEIN to implement `IMarketplaceInvoiceUploader` if that API is unused.
-
-Liskov: every connector must honor the same success/failure semantics (`Result<T>`), the same idempotency contract, and the same timeout/retry policy surface. A connector must not throw marketplace-specific exceptions through the core.
-
-## Connector responsibilities (single job each)
+What the binary contains (stable, few):
 
 | Type | One job |
 | --- | --- |
-| `*AuthorizationClient` | Exchange codes, refresh tokens, sign requests |
-| `*CatalogTranslator` | Map fields and category attributes |
-| `*StockPublisher` | Push quantity (and version headers when required) |
-| `*OrderImporter` | Fetch and normalize one order |
-| `*WebhookNormalizer` | Parse + verify signature, emit `MarketplaceEvent` |
-| `*HttpGateway` | Raw HTTP to that marketplace only |
+| `IAuthProtocol` | Sign or attach credentials. Seeded implementations: `OAuth2AuthorizationCode`, `HmacSha256`, `BearerToken`, `ApiKeyHeader` |
+| `IMarketplaceOperationExecutor` | Run one canonical operation (`PublishListing`, `UpdateStock`, `UpdatePrice`, `FetchOrder`, `UploadInvoice`, `VerifyWebhook`) using a binding row |
+| `IJsonMappingEngine` | Apply stored request/response mappings (JSON templates + JSONPath) |
+| `IMarketplaceDefinitionReader` | Load definition from Redis/Postgres by `marketplace_code` |
 
-Do not create a `MercadoLivreManager`. Compose the types above.
+What is **data** (no compile):
+
+| Table | One job |
+| --- | --- |
+| `marketplace` | `code` (string PK), display name, `base_url`, `auth_protocol_code`, `is_active` |
+| `marketplace_parameter_definition` | Allowed keys for company vs vendor (`ClientId`, `PartnerKey`, …), `is_secret` |
+| `marketplace_operation_binding` | Canonical operation → HTTP method, path template, headers, body template, response mapping, timeout |
+| `marketplace_webhook_binding` | How to read event id / shop id / resource from the payload |
+
+`auth_protocol_code` must match a protocol **already compiled**. OAuth2 and HMAC cover Mercado Livre, Magalu, Shopee, and SHEIN. A future channel that needs a **new protocol** (for example AWS SigV4) is the only case that needs a code change — that change is a new `IAuthProtocol` class, not a marketplace project.
+
+Generic HTTP routes, one pair for every code in the table:
+
+- `GET /oauth/{marketplaceCode}/callback`
+- `POST /webhooks/{marketplaceCode}`
+
+Unknown `marketplaceCode` → `404`. No per-brand controllers.
+
+Parameter keys are rows in `marketplace_parameter_definition`, not C# enums. A write with an unknown key for that code → `400`. New marketplace = new definition rows, no ALTER of other channels.
+
+Liskov: every protocol and the executor return `Result<T>`. Timeouts, retries, and idempotency are the same for every `marketplace_code`.
+
+Do not create `MercadoLivreConnector` or `ShopeeStockPublisher`. The four launch channels are **seed fixtures** of the tables above.
 
 ## Company marketplace configuration (Postgres + Redis)
 
@@ -106,13 +104,15 @@ PostgreSQL is the source of truth. The data almost never changes after setup, so
 
 | Table | One job |
 | --- | --- |
-| `marketplace` | Catalog of channels (`MercadoLivre`, `Shopee`, `Shein`, `Magalu`) + auth kind |
-| `company_marketplace_config` | This company uses this marketplace (`is_enabled`, remote shop id) |
+| `marketplace` | Channel catalog: string `code`, `auth_protocol_code`, `base_url`, `is_active` |
+| `marketplace_parameter_definition` | Keys allowed for that code (company or vendor scope) |
+| `marketplace_operation_binding` | How to call PublishListing / UpdateStock / … for that code |
+| `company_marketplace_config` | This company uses this `marketplace_code` (`is_enabled`) |
 | `company_marketplace_parameter` | One parameter row: key, value, `is_secret` |
 
-Unique: `(company_id, marketplace_code)` on config; `(config_id, parameter_key)` on parameters.
+Unique: `(company_id, marketplace_code)` on config; `(config_id, parameter_key)` on parameters; `marketplace.code` is the only identity of a channel.
 
-`parameter_key` is an explicit enum **owned by the adapter** (`ShopeeParameterKey.PartnerId`, `MercadoLivreParameterKey.ClientId`), not a free-text bag in the domain core. New marketplace = new keys in that adapter, no ALTER on the other three.
+`parameter_key` must exist in `marketplace_parameter_definition` for that code. Keys are data. Mercado Livre may have `ClientId` + `SiteId`; Shopee may have `PartnerId` + `PartnerKey`. Amazon later adds its own keys in new rows.
 
 Secrets (`ClientSecret`, refresh tokens, SHEIN `secretKey`) are stored encrypted in Postgres (`is_secret = true`). Redis may cache the **resolved config DTO** for that company+marketplace; invalidate on any write.
 
@@ -129,7 +129,7 @@ Redis GET marketplace-config:{companyId}:{marketplaceCode}
 
 Writes: Postgres first, then `DEL marketplace-config:{companyId}:{marketplaceCode}`. Never update Redis only.
 
-Connectors receive `CompanyMarketplaceConfig` (app credentials) plus the vendor's `user_detail_marketplace` (subaccount). They must not read `IConfiguration["Shopee:PartnerId"]`.
+Connectors receive `CompanyMarketplaceConfig` (app credentials) plus the vendor's `user_detail_marketplace` (subaccount). They must not read `IConfiguration["Shopee:PartnerId"]`. The executor looks up bindings by `marketplace_code` string.
 
 ## Vendors and marketplace subaccounts
 
@@ -225,24 +225,27 @@ Webhook / API command  (CompanyId from auth or ConnectedAccount)
          Redis Stream (integration + CompanyId)
                 │
                 ▼
-         Marketplace connector (company app creds + vendor subaccount)
+         Generic executor (definition + company creds + vendor subaccount)
 ```
 
 Webhooks never call marketplace APIs inside the HTTP request. They only validate, enqueue, and return.
 
-## Adding a marketplace (checklist)
+## Adding a marketplace (no rebuild)
 
-1. Create `src/Vilmo.Marketplace.<Name>/`.
-2. Implement the interfaces the channel actually supports.
-3. Register in DI: `services.AddMarketplace<Name>Connector()`.
-4. Add `MarketplaceCode.<Name>`.
-5. Add auth callback route `/oauth/<name>/callback` (or HMAC partner flow).
-6. Add webhook route `/webhooks/<name>` that only enqueues.
-7. Add contract tests with recorded HTTP fixtures (no live calls in CI).
-8. Insert allowed `parameter_key` values for company config **and** for `user_detail_marketplace` (no change to other adapters' keys).
-9. Document rate limits, token TTL, and Brazil-specific rules in that project's README.
+Super user (or SQL seed). Idempotent per `code`.
 
-No existing connector file should change.
+1. `POST /marketplaces` with `code`, name, `base_url`, `auth_protocol_code` (must already exist: `OAuth2AuthorizationCode`, `HmacSha256`, `BearerToken`, `ApiKeyHeader`).
+2. Insert `marketplace_parameter_definition` rows (company + vendor keys).
+3. Insert `marketplace_operation_binding` rows for the operations this channel supports. Unsupported operations stay absent; the executor returns `OperationNotBound` for that code only.
+4. Insert `marketplace_webhook_binding` if the channel pushes events.
+5. `DEL` Redis keys `marketplace-definition:{code}`.
+6. Companies enable it: `PUT /companies/{id}/marketplaces/{code}` → backfill `user_detail_marketplace` for existing vendors.
+
+OAuth callback and webhook URLs are already `/{marketplaceCode}/…`. No new route, no new container, no new project.
+
+If the channel needs an auth protocol that is not compiled yet, add **one** `IAuthProtocol` class and redeploy **once**. That is a protocol extension, not a marketplace project.
+
+Do not add `MarketplaceCode.Amazon` to C#. Do not add `Vilmo.Marketplace.Amazon`.
 
 ## Per-company SEFAZ certificate
 
@@ -261,5 +264,6 @@ Each company has its own A1 certificate bound to **that company's CNPJ**. `vilmo
 - It does not embed marketplace ids in domain entities as primary keys.
 - It does not keep a global inventory or a single shared A1 certificate.
 - It does not keep marketplace client ids or partner keys in environment variables for each tenant. Those rows live in `company_marketplace_parameter`.
+- It does not compile one C# project per marketplace or use a `MarketplaceCode` enum. Channels are table rows.
 - It does not publish advertisements under a shared company shop when a vendor exists. Publish uses that vendor's `user_detail_marketplace` subaccount.
 - It does not ship all Metronic demos or the React/Next packages as the running UI. HTML layout-1 + demo1 mapped pages only.

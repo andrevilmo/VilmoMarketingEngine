@@ -14,6 +14,7 @@ A .NET API, run entirely from Docker Compose, that:
 2. Owns a **per-company** product inventory derived from Brazilian **NF-e** (ingest by **chave de acesso**).
 3. Talks to SEFAZ through [ZeusAutomacao/DFe.NET](https://github.com/ZeusAutomacao/DFe.NET). **Each company has its own A1 certificate** (CNPJ-bound). XML upload remains a fallback.
 4. Each vendor publishes advertisements to **Mercado Livre**, **Shopee**, **SHEIN**, and **Magalu** using **their** subaccount on each channel (default: all marketplaces).
+5. Accepts a fifth marketplace **without a rebuild**: insert a `marketplace` row + bindings + parameter definitions (admin UI). Existing vendors get a `user_detail_marketplace` when the company enables that code.
 6. Ships a **Metronic 9.5.0 HTML** admin UI (default templates from `template-metronic/.../metronic-v9.5.0/`). See [UI.md](./UI.md).
 
 Idempotency is always `(CompanyId, key)`. See [MarketPlaceEngine.MD](./MarketPlaceEngine.MD).
@@ -35,7 +36,7 @@ KISS: four HTTP clients plus one fiscal SOAP client do not justify eight deploya
 | `postgres` | Source of truth. |
 | `redis` | Idempotency keys, marketplace-config cache, **vendor-subaccount cache**, **Redis Streams**. |
 
-One process per marketplace would duplicate auth, idempotency, and outbox. That violates SRP at the *system* level. Marketplace differences live in **adapter projects**, not in extra containers.
+One process per marketplace would duplicate auth, idempotency, and outbox. That violates SRP at the *system* level. Marketplace differences live in **definition tables**, not in extra containers or extra C# projects.
 
 Redis is enough as the queue for this scope. Do not add RabbitMQ until stream lag or multi-consumer topology actually hurts. Redis also already covers `SET NX EX` for HTTP idempotency.
 
@@ -54,7 +55,7 @@ Redis is enough as the queue for this scope. Do not add RabbitMQ until stream la
 | Fulfillment stock | https://developers.mercadolivre.com.br/pt_br/envio-de-produto/envios-fulfillment |
 | Platform hygiene / 429 | https://developers.mercadolivre.com.br/pt_br/envio-de-produto/boas-praticas-para-usar-a-plataforma |
 
-Facts the adapter must encode:
+Facts the **seed definition** (table rows) must encode:
 
 - Brazil `site_id` = `MLB`. Auth URL for Brazil: `https://auth.mercadolivre.com.br/authorization`. Token: `POST https://api.mercadolibre.com/oauth/token`. Access token ~6 hours; refresh with `offline_access`.
 - REST + Bearer token. Publish via `POST /items`. Stock is **not** a single field: User Products + `x-version` optimistic concurrency; `PUT .../stock/type/seller_warehouse` when `warehouse_management` is on; fulfillment uses inventory ids.
@@ -73,7 +74,7 @@ Facts the adapter must encode:
 | Brazil NF-e upload | https://open.shopee.com/developer-guide/382 |
 | Upload invoice API | https://open.shopee.com/documents/v2/v2.order.upload_invoice_doc?module=94&type=1 |
 
-Facts the adapter must encode:
+Facts the **seed definition** (table rows) must encode:
 
 - Brazil live base: `https://openplatform.shopee.com.br/api/v2/`.
 - Every call: `partner_id`, `timestamp`, HMAC-SHA256 `sign`, plus `access_token` + `shop_id` for shop APIs. Access token **4 hours**, refresh **30 days**.
@@ -91,12 +92,12 @@ Partner eligibility for Brazil is gated (registered business + recent orders). S
 | Signature helper | https://open.sheincorp.com/documents/system/passwdrule |
 | Production API | `https://openapi.sheincorp.com` |
 
-Facts the adapter must encode:
+Facts the **seed definition** (table rows) must encode:
 
 - Access is **application + review**. Full OpenAPI and webhook schemas sit behind login. First implementation step is an approved Open Platform account, not code.
 - Auth: seller authorization → `get-by-token` using **APP_ID / APP_Secret** to mint `openKeyId` + `secretKey`. Later calls sign with HMAC-SHA256 over `openKeyId`, timestamp, URL path, and a random key; headers `x-lt-openKeyId`, `x-lt-timestamp`, `x-lt-signature`.
 - Documented solution areas: product publish, SHEIN-fulfill orders, seller-fulfill orders (tracking), stock-preparation orders, webhooks.
-- Until the gated catalog is available, the SHEIN adapter is a **skeleton** that implements the same interfaces and fails closed with `MarketplaceCapability.Unavailable`, so Magalu/ML/Shopee are not blocked.
+- Until the gated catalog is available, seed SHEIN with `is_active = false` (or with no operation bindings). Other codes stay usable. Fill SHEIN bindings later via admin UI, without a rebuild.
 
 ### 3.4 Magalu (Magazine Luiza)
 
@@ -108,7 +109,7 @@ Facts the adapter must encode:
 | Products / portfolio | https://developers.magalu.com/docs/apis/products/overview |
 | API catalog | https://developers.magalu.com/docs/apis/ |
 
-Facts the adapter must encode:
+Facts the **seed definition** (table rows) must encode:
 
 - OAuth 2.0 Authorization Code via **ID Magalu**. Token: `POST https://id.magalu.com/oauth/token`. Access ~7200s; refresh token rotation. Seller must log in as **PJ (store)**, not PF.
 - App credentials via ID Magalu CLI (`client_id` / `client_secret`) plus scopes.
@@ -208,24 +209,29 @@ If a company has no cert yet: ingest via XML upload still works; DistDFe returns
 
 ### Company × many marketplaces (config table + Redis cache)
 
-One company sells on several channels at once. Mercado Livre credentials for company A are not Shopee's, and they are not company B's. **All of those parameters live in PostgreSQL.** Adapters never read tenant secrets from `appsettings` or Docker env (env is only for Postgres/Redis URLs, public callback base URL, and bootstrap admin password).
+One company sells on several channels at once. Mercado Livre credentials for company A are not Shopee's, and they are not company B's. **All of those parameters live in PostgreSQL.** The generic executor never reads tenant secrets from `appsettings` or Docker env (env is only for Postgres/Redis URLs, public callback base URL, and bootstrap admin password).
 
 | Table | Columns (intent) |
 | --- | --- |
-| `marketplace` | `code` (`MercadoLivre`, `Shopee`, `Shein`, `Magalu`), `auth_kind`, `is_active` |
-| `company_marketplace_config` | `company_id`, `marketplace_code`, `is_enabled`, `remote_shop_id` |
+| `marketplace` | string `code` PK (not a C# enum), `auth_protocol_code`, `base_url`, `is_active` |
+| `marketplace_parameter_definition` | allowed keys per code, scope (`company` / `vendor`), `is_secret` |
+| `marketplace_operation_binding` | canonical operation → HTTP call + JSON mapping |
+| `marketplace_webhook_binding` | how to parse event id / shop id from the payload |
+| `company_marketplace_config` | `company_id`, `marketplace_code`, `is_enabled` |
 | `company_marketplace_parameter` | `config_id`, `parameter_key`, `parameter_value`, `is_secret` |
 
-Uniques: `(company_id, marketplace_code)` and `(config_id, parameter_key)`.
+Uniques: `marketplace.code`; `(company_id, marketplace_code)`; `(config_id, parameter_key)`.
 
-Parameter keys are explicit per adapter (no magic strings in core):
+Launch **seed data** (SQL fixtures, not C# projects): `MercadoLivre`, `Shopee`, `Shein`, `Magalu`. Typical keys remain data:
 
-| Marketplace | Typical keys |
+| `marketplace.code` | Typical parameter keys |
 | --- | --- |
-| Mercado Livre | `ClientId`, `ClientSecret`, `AccessToken`, `RefreshToken`, `UserId`, `SiteId` (`MLB`) |
-| Shopee | `PartnerId`, `PartnerKey`, `ShopId`, `AccessToken`, `RefreshToken` |
-| SHEIN | `AppId`, `AppSecret`, `OpenKeyId`, `SecretKey` |
-| Magalu | `ClientId`, `ClientSecret`, `AccessToken`, `RefreshToken`, `Scope` |
+| `MercadoLivre` | `ClientId`, `ClientSecret`, `AccessToken`, `RefreshToken`, `UserId`, `SiteId` (`MLB`) |
+| `Shopee` | `PartnerId`, `PartnerKey`, `ShopId`, `AccessToken`, `RefreshToken` |
+| `Shein` | `AppId`, `AppSecret`, `OpenKeyId`, `SecretKey` |
+| `Magalu` | `ClientId`, `ClientSecret`, `AccessToken`, `RefreshToken`, `Scope` |
+
+Amazon later is another `code` + keys + bindings. No enum, no new project.
 
 Values with `is_secret = true` are encrypted at rest in Postgres.
 
@@ -234,11 +240,12 @@ Values with `is_secret = true` are encrypted at rest in Postgres.
 - Key: `marketplace-config:{companyId}:{marketplaceCode}`
 - Value: resolved DTO the connector needs (including decrypted secrets in memory only after load)
 - Fill: cache-aside on read (`GET` → miss → Postgres → `SET`)
+- Also cache `marketplace-definition:{code}` (bindings + parameter definitions); `DEL` when a super user updates the catalog
 - Invalidate: `DEL` that key after any INSERT/UPDATE/DELETE of config or parameters
 - No short TTL required; TTL is optional (e.g. 24h) as a safety net if a delete is missed
 - Do not use Redis as the writer. Postgres commits first.
 
-`ICompanyMarketplaceConfigReader.Get(companyId, marketplaceCode)` is the only way connectors load settings. Missing config → `MarketplaceNotConfigured` for that company+channel; other marketplaces of the same company keep working.
+`ICompanyMarketplaceConfigReader.Get(companyId, marketplaceCode)` and `IMarketplaceDefinitionReader.Get(marketplaceCode)` are the only way the executor loads settings. Missing config → `MarketplaceNotConfigured` for that company+channel; other codes of the same company keep working. Unknown `marketplace_code` → `404`/`400`, never a compile-time enum miss.
 
 OAuth/token refresh **writes** new `AccessToken` / `RefreshToken` parameter rows (or updates them), then invalidates the Redis key. That is the exception to "config does not change": tokens rotate; shop ids and partner ids do not.
 
@@ -281,7 +288,7 @@ Vendor subaccount params: Redis cache-aside `vendor-marketplace:{companyId}:{use
 - **Omitted or empty `marketplaceCodes` = all** enabled company marketplaces where this vendor has a subaccount.
 - Explicit list = only those channels (must belong to the vendor; unknown codes → `400`).
 - Enqueue one command per selected marketplace: `{ companyId, vendorUserId, sku, marketplaceCode }`.
-- Connector uses company app credentials **plus** that vendor's `user_detail_marketplace` parameters.
+- Connector uses company app credentials **plus** that vendor's `user_detail_marketplace` parameters, executed through the **generic** binding for that `marketplace_code`.
 - Listing unique `(company_id, vendor_user_id, sku, marketplace_code)` so a retry does not double-publish.
 
 ---
@@ -290,14 +297,14 @@ Vendor subaccount params: Redis cache-aside `vendor-marketplace:{companyId}:{use
 
 | Principle | How it shows up |
 | --- | --- |
-| SRP | One class publishes stock; another signs Shopee; another parses NF-e `det/prod`. |
-| OCP | New marketplace = new project + DI registration. |
-| LSP | All connectors return `Result<T>`; none leak SDK exceptions. |
-| ISP | Small interfaces (`IMarketplaceStockPublisher`), not `IMarketplace`. |
-| DIP | Core depends on `ISefazDocumentFetcher`, `ICompanyCertificateStore`, and `ICompanyMarketplaceConfigReader`, not `ServicosNFe`, a global PFX path, or `IConfiguration` tenant secrets. |
-| Names | `ShopeeStockPublisher`, `ChaveAcesso`, `CompanyId`, `VendorUserId`, `users_detail`. No `Manager`. |
+| SRP | One class executes HTTP bindings; another signs HMAC; another parses NF-e `det/prod`. |
+| OCP | New marketplace = new **table rows**. New **auth protocol** (rare) = new `IAuthProtocol` class. |
+| LSP | All protocols and the executor return `Result<T>`; none leak HTTP SDK exceptions. |
+| ISP | Small interfaces (`IAuthProtocol`, `IMarketplaceOperationExecutor`), not `IMarketplace`. |
+| DIP | Core depends on `IMarketplaceDefinitionReader` and `IAuthProtocol`, not `MercadoLivreClient`. |
+| Names | `HmacSha256AuthProtocol`, `ChaveAcesso`, `CompanyId`, `VendorUserId`, `users_detail`. No `Manager`. |
 | Small functions | HTTP controllers only validate + enqueue. |
-| No magic | `MarketplaceCode.Shopee`, `UserProfile.Vendor`, `NfeStatus.Authorized`, `MovementKind.InboundPurchase`. |
+| No magic | `marketplace.code` strings from the table, `AuthProtocolCode.HmacSha256`, `UserProfile.Vendor`, `NfeStatus.Authorized`. |
 | KISS | Three app containers, Redis Streams, modular monolith solution. |
 
 ---
@@ -314,11 +321,8 @@ src/
   Vilmo.Catalog.Application/
   Vilmo.Inventory.Domain/
   Vilmo.Inventory.Application/
-  Vilmo.Marketplace.Contracts/    # interfaces + MarketplaceCode + parameter key types
-  Vilmo.Marketplace.MercadoLivre/
-  Vilmo.Marketplace.Shopee/
-  Vilmo.Marketplace.Shein/
-  Vilmo.Marketplace.Magalu/
+  Vilmo.Marketplace.Engine/       # generic executor, auth protocols, JSON mappings
+  Vilmo.Marketplace.Seed/         # SQL/JSON fixtures for ML, Shopee, SHEIN, Magalu (data only)
   Vilmo.Nfe.Domain/               # ChaveAcesso, NfeDocument, CfopPolicy
   Vilmo.Nfe.Application/
   Vilmo.Nfe.Zeus/                 # ISefazDocumentFetcher → DFe.NET
@@ -390,14 +394,17 @@ Auth: bearer session/JWT with `user_id`, `is_platform_super_user`, and membershi
 | `POST` | `/companies/{companyId}/certificate` | Upload/replace that company's A1 (multipart + password). Super user or `CompanyAdmin`. |
 | `GET` | `/companies/{companyId}/marketplaces` | List this company's marketplace configs (`is_enabled`, shop id). Secrets omitted. |
 | `PUT` | `/companies/{companyId}/marketplaces/{code}` | Upsert config + parameters for one channel. Writes Postgres, then `DEL` Redis cache. |
+| `GET` | `/marketplaces` | List catalog (`marketplace` table). Super user sees inactive too. |
+| `POST` | `/marketplaces` | Super user: insert a new `code` + protocol + bindings. No deploy. Idempotent on `code`. |
+| `PUT` | `/marketplaces/{code}` | Super user: update definition, parameter keys, operation bindings; `DEL marketplace-definition:{code}`. |
 | `POST` | `/nfe/chaves/{chaveAcesso}/ingest` | Validate chave, enqueue fetch with **this company's** cert. Idempotency = `(companyId, chave)`. |
 | `POST` | `/nfe/xml` | Upload XML fallback. Chave from XML must match; emit/dest CNPJ must be compatible with the company CNPJ. |
 | `GET` | `/nfe/chaves/{chaveAcesso}` | Ingestion status for **this company only**. |
 | `GET` | `/products` / `GET /products/{sku}` | Catalog of the active company. |
 | `GET` | `/inventory/{sku}` | On-hand, reserved, available for the active company. |
-| `POST` | `/marketplaces/{code}/connect` | OAuth for **this company's** shop, using **this company's** table parameters. |
-| `GET` | `/oauth/{code}/callback` | Store tokens as parameters on that company's marketplace config; invalidate Redis. |
-| `POST` | `/webhooks/{code}` | Verify, resolve company **and vendor** from subaccount shop/seller id, enqueue, 200. |
+| `POST` | `/marketplaces/{code}/connect` | Start OAuth/HMAC for **this company's** shop; `{code}` is the table PK, not an enum. |
+| `GET` | `/oauth/{code}/callback` | Store tokens as parameters; invalidate Redis. Same route for every future code. |
+| `POST` | `/webhooks/{code}` | Verify using that code's `marketplace_webhook_binding`, resolve company **and vendor**, enqueue, 200. |
 | `POST` | `/advertisements` | Vendor publishes a product. `marketplaceCodes` optional; **default all**. One listing per selected marketplace using that vendor's subaccount. |
 | `POST` | `/listings` | Same as `/advertisements` (alias). |
 | `POST` | `/inventory/{sku}/publish` | Fan-out this vendor's stock on selected marketplaces (default all). |
@@ -469,6 +476,7 @@ Reservation: marketplace orders of that company decrement **available** via `res
 | Publish advertisement | PostgreSQL unique | `(company_id, vendor_user_id, sku, marketplace_code)` | forever |
 | Token refresh lock | Redis | `lock:token-refresh:{companyId}:{userId}:{marketplaceCode}` | seconds |
 | Marketplace config cache | Redis | `marketplace-config:{companyId}:{marketplaceCode}` | until write (optional 24h TTL) |
+| Marketplace definition cache | Redis | `marketplace-definition:{code}` | until super-user update |
 | Vendor subaccount cache | Redis | `vendor-marketplace:{companyId}:{userId}:{marketplaceCode}` | until write (optional 24h TTL) |
 
 Two companies may reuse the same client `Idempotency-Key`. That is correct. A global Redis key without `companyId` is a bug.
@@ -486,37 +494,35 @@ Shopee/SHEIN HMAC failures are not retried blindly; they are `Failed` with a dis
 - Marketplace tokens, partner keys, and A1 passwords in PostgreSQL (envelope encryption) — company rows in `company_marketplace_parameter`; vendor subaccount secrets in `user_detail_marketplace` with `is_secret`. Never appsettings committed, never `.pfx` in git.
 - Hot path reads company config from Redis (`marketplace-config:{companyId}:{code}`) and vendor subaccounts from `vendor-marketplace:{companyId}:{userId}:{code}`; Postgres remains the source of truth.
 - Token refresh is a worker job per **vendor subaccount**, with a lock `lock:token-refresh:{companyId}:{userId}:{marketplaceCode}`. After refresh, update the parameter row and `DEL` the cache key.
-- Shopee partner key used only inside `ShopeeRequestSigner`.
-- SHEIN `secretKey` treated like a refresh token (long-lived until re-auth).
+- HMAC signing goes through `HmacSha256AuthProtocol` (used by Shopee and SHEIN seed data). Partner keys stay in parameter rows.
+- SHEIN `secretKey` is a vendor/company parameter (`is_secret`), treated like a long-lived token until re-auth.
 - A1 password for CNPJ `68431371000161` lives only in gitignored `.env` / secret store.
 
 ---
 
 ## 11. Implementation sequence (when coding starts)
 
-Do not build all four marketplaces in parallel on day one. The engine and NF-e path must exist first, or adapters will invent their own catalog.
+Do not build four C# marketplace projects. Build the **generic engine** first, then seed the four launch definitions as data.
 
 1. **Foundation** — solution, Docker Compose (postgres + redis + empty API), BuildingBlocks (Result, company-scoped idempotency, streams), health checks.
 2. **Identity + tenancy** — `Company`, `User`, `UserCompany`, JWT/`X-Company-Id`, seed `admin@vilmomkt.com` + company CNPJ `68431371000161`. Row filters by `company_id`. `UserProfile.Vendor`, `users_detail`, `user_detail_marketplace`; creating a vendor provisions one subaccount per enabled marketplace (idempotent per company).
 3. **Metronic UI shell** — `vilmo-web` from HTML starter layout-1 + demo1 sign-in and members datatable, proxied to the API. Company switcher for super user. See [UI.md](./UI.md).
 4. **Catalog + inventory domain** — Product, identifiers, movements, balances, uniqueness all include `company_id`.
 5. **NF-e module** — `ChaveAcesso`, XML parse via DFe.NET, CFOP policy vs `Company.Cnpj`, ingest API, XML upload path. `ICompanyCertificateStore` + Zeus fetcher for companies that have an A1 (first tenant included). HTML ingest form (chave + Dropzone XML).
-6. **Marketplace contracts + worker** — registry, outbox, commands always carry `CompanyId` **and** `VendorUserId`. `company_marketplace_config` + `company_marketplace_parameter` tables, `ICompanyMarketplaceConfigReader` with Redis cache-aside. Advertisement publish: `marketplaceCodes` default all.
-7. **Mercado Livre adapter** — OAuth using company app parameters + vendor subaccount, items, stock (User Product + x-version), `orders_v2` webhook ACK; shop mapped to vendor `user_detail_marketplace`.
-8. **Magalu adapter** — ID Magalu OAuth, SKU / price / stock as three calls, webhooks.
-9. **Shopee adapter** — HMAC signer, Brazil host, stock, push, invoice upload hook (uses that company's stored NF-e XML).
-10. **SHEIN adapter** — signer + skeleton; fill endpoints after Open Platform approval.
-11. **Hardening** — Polly per host, 429 budgets, contract tests, structured logs, no secrets in logs, tenancy tests (company A cannot read company B).
+6. **Marketplace engine** — `IAuthProtocol` pack (`OAuth2AuthorizationCode`, `HmacSha256`, `BearerToken`, `ApiKeyHeader`), generic HTTP executor, JSON mappings, definition cache. Commands carry `CompanyId`, `VendorUserId`, and string `marketplace_code`. Advertisement publish: `marketplaceCodes` default all.
+7. **Seed four channels** — SQL/JSON fixtures for Mercado Livre, Magalu, Shopee, SHEIN (SHEIN may be `is_active = false` until Open Platform docs). No per-brand class.
+8. **Admin: register marketplace** — `POST /marketplaces` so Amazon (or any code) is added at runtime. Backfill vendor subaccounts when a company enables the new code.
+9. **Hardening** — Polly per host, 429 budgets, contract tests against fixtures, structured logs, no secrets in logs, tenancy tests (company A cannot read company B). Adding a fifth channel in tests is an INSERT, not a new project.
 
-Each step stays shippable. Step 4 already gives "company user reads chave / XML → that company's inventory".
+Each step stays shippable. Step 5 already gives "company user reads chave / XML → that company's inventory".
 
 ---
 
 ## 12. Testing strategy
 
 - Unit: `ChaveAcesso` DV, CFOP policy, idempotency state machine (`companyId` in the Redis key), translators, authorization (super user vs member).
-- Contract: adapters against recorded HTTP (no live ML/Shopee in CI).
-- Integration: Testcontainers for Postgres + Redis; two companies; ingest a sample `procNFe` XML into A and assert B's inventory is empty; same `Idempotency-Key` on A and B both succeed; company A Shopee `PartnerId` does not leak into company B; config read hits Redis on the second call; `PUT` config deletes the cache key; creating a vendor twice with the same key does not duplicate `user_detail_marketplace`; publish with omitted `marketplaceCodes` fans out to all vendor subaccounts.
+- Contract: generic executor against recorded HTTP fixtures keyed by `marketplace_code` (no live ML/Shopee in CI).
+- Integration: Testcontainers for Postgres + Redis; two companies; ingest a sample `procNFe` XML into A and assert B's inventory is empty; same `Idempotency-Key` on A and B both succeed; company A Shopee `PartnerId` does not leak into company B; config read hits Redis on the second call; `PUT` config deletes the cache key; creating a vendor twice with the same key does not duplicate `user_detail_marketplace`; publish with omitted `marketplaceCodes` fans out to all vendor subaccounts; **inserting a fifth `marketplace` row** (no code change) lets a company enable it and provision vendor subaccounts.
 - SEFAZ: optional manual homologation with CNPJ `68431371000161`'s A1; never call production SEFAZ from CI; never check a real `.pfx` into the repo.
 
 ---
@@ -531,6 +537,7 @@ Each step stays shippable. Step 4 already gives "company user reads chave / XML 
 - DFe.NET SOAP clients historically assume Windows cert stores; Linux A1 load must be proven in homologation **per certificate**, starting with CNPJ `68431371000161`.
 - Creating a vendor without enabled company marketplaces yields `users_detail` and zero subaccounts; enabling a marketplace later must backfill `user_detail_marketplace` for every vendor.
 - Copying the entire Metronic tree into the web image will bloat deploys and mix 10 duplicate demos. Copy only layout-1 + demo1 mapped pages + `dist/assets`.
+- A new marketplace whose HTTP API cannot be expressed as URL + JSON templates (binary protocols, proprietary SDKs) still needs an engine extension. That is the exception; OAuth2 + HMAC + JSON covers the four launch channels and typical Amazon SP-API-style REST.
 
 ---
 
@@ -539,7 +546,7 @@ Each step stays shippable. Step 4 already gives "company user reads chave / XML 
 - Emission of NF-e (we ingest and, later, upload XML to Shopee; we do not become an issuer in v1).
 - Pricing intelligence / ads.
 - Multi-tenant **billing / SaaS metering** (multi-**company** data isolation is in scope).
-- Amazon, Americanas, TikTok Shop (the engine is ready; adapters are not).
+- Amazon, Americanas, TikTok Shop: add as `marketplace` rows at runtime (no new C# project). A new **auth protocol** not in the compiled pack still needs a small code change.
 - Metronic React / Next.js apps as the production UI (HTML is the default).
 - RabbitMQ, Kubernetes, Kafka.
 

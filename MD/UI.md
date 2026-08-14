@@ -50,6 +50,7 @@ Do not serve the 10GB-class template tree from Docker. `vilmo-web` is a small st
 | Vendor marketplace subaccount | `demo1/account/api-keys.html` + settings form | `user_detail_marketplace` key/values. Secrets masked. |
 | Roles / permissions | `demo1/account/members/roles.html`, `permissions-toggle.html` | `UserProfile` / `CompanyRole`. |
 | Company marketplace config | `demo1/account/integrations.html` | `company_marketplace_config` + parameters. |
+| Register marketplace (super user) | integrations + settings form | `POST /marketplaces` — new `code` at runtime, no deploy. |
 | A1 certificate | settings form + Dropzone | `POST /companies/{id}/certificate`. |
 | Products | store-inventory **Product List / Details / Create** (HTML tables from demo1 members datatable + store-client `product-details.html` for the detail chrome) | Company catalog. |
 | Inventory | store-inventory **All Stock / Current / Inbound / Outbound** | NF-e movements. Inbound = purchase CFOP; outbound = sale CFOP. |
