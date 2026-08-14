@@ -1,0 +1,935 @@
+@import 'vanilla-calendar-pro/styles/layout.css';
+
+/* ============================================
+   Date Picker Theme Customization
+   ============================================
+   100% replica of vanilla-calendar-pro styles with all selectors
+   bound to CSS variables for complete customization.
+*/
+
+:root {
+	/* ============================================
+	   Calendar Container
+	   ============================================ */
+	--vc-calendar-bg: var(--popover);
+	--vc-calendar-text: var(--foreground);
+	--vc-calendar-border: var(--border);
+	--vc-calendar-radius: 0.75rem;
+	--vc-calendar-padding: 1rem;
+	--vc-calendar-min-width: 272px;
+	--vc-calendar-opacity: 1;
+	--vc-calendar-transition-duration: 0.15s;
+	/* Shadow applied via @apply shadow-md shadow-[rgba(0,0,0,0.05)] */
+	--vc-calendar-input-margin-bottom: 0.25rem;
+	--vc-calendar-input-margin-top: -0.25rem;
+	--vc-calendar-hidden-opacity: 0;
+
+	/* ============================================
+	   Focus Ring
+	   ============================================ */
+	--vc-focus-color: var(--primary);
+	--vc-focus-radius: 0.5rem;
+	--vc-focus-offset: -1px;
+	--vc-focus-width: 1px;
+
+	/* ============================================
+	   Controls (Top Navigation Bar)
+	   ============================================ */
+	--vc-controls-padding-x: 1rem;
+	--vc-controls-padding-top: 1.25rem;
+	--vc-controls-z-index: 20;
+
+	/* ============================================
+	   Arrow Navigation
+	   ============================================ */
+	--vc-arrow-size: 1rem;
+	--vc-arrow-bg: transparent;
+	--vc-arrow-opacity: 0.5;
+	--vc-arrow-opacity-hover: 1;
+
+	/* ============================================
+	   Grid & Column
+	   ============================================ */
+	--vc-grid-gap: 1.75rem;
+	--vc-grid-hidden-opacity: 0.3;
+	--vc-column-min-width: 240px;
+
+	/* ============================================
+	   Header (Month/Year Title)
+	   ============================================ */
+	--vc-header-margin-bottom: 0.75rem;
+	--vc-header-content-padding-x: 1rem;
+	--vc-header-text: var(--foreground);
+	--vc-header-text-hover: var(--muted-foreground);
+	--vc-header-text-disabled: var(--muted-foreground);
+	--vc-header-font-size: 1rem;
+	--vc-header-font-weight: 700;
+	--vc-header-line-height: 1.5rem;
+	--vc-header-btn-radius: 0.25rem;
+	--vc-header-btn-padding: 0.25rem;
+
+	/* ============================================
+	   Month/Year Picker Grid
+	   ============================================ */
+	--vc-picker-bg: var(--popover);
+	--vc-picker-text: var(--muted-foreground);
+	--vc-picker-bg-hover: var(--accent);
+	--vc-picker-text-disabled: var(--muted-foreground);
+	--vc-picker-selected-bg: var(--primary);
+	--vc-picker-selected-text: var(--primary-foreground);
+	--vc-picker-font-size: 0.75rem;
+	--vc-picker-font-weight: 600;
+	--vc-picker-line-height: 1rem;
+	--vc-picker-height: 2.5rem;
+	--vc-picker-radius: 0.5rem;
+	--vc-picker-padding: 0.25rem;
+	--vc-picker-column-gap: 0.25rem;
+	--vc-picker-row-gap: 1rem;
+
+	/* ============================================
+	   Week Numbers
+	   ============================================ */
+	--vc-week-numbers-text: var(--muted-foreground);
+	--vc-week-numbers-text-hover: var(--foreground);
+	--vc-week-numbers-font-size: 0.75rem;
+	--vc-week-numbers-font-weight: 700;
+	--vc-week-numbers-line-height: 1rem;
+	--vc-week-numbers-title-margin-bottom: 0.5rem;
+	--vc-week-numbers-content-row-gap: 0.25rem;
+	--vc-week-number-min-size: 1.875rem;
+	--vc-week-number-font-weight: 600;
+
+	/* ============================================
+	   Week Days (Headers)
+	   ============================================ */
+	--vc-weekday-text: var(--muted-foreground);
+	--vc-weekday-text-hover: var(--foreground);
+	--vc-weekday-off-text: var(--muted-foreground);
+	--vc-weekday-off-text-hover: var(--foreground);
+	--vc-weekday-font-size: 0.75rem;
+	--vc-weekday-font-weight: 700;
+	--vc-weekday-line-height: 1rem;
+	--vc-weekday-min-width: 1.875rem;
+	--vc-week-margin-bottom: 0.5rem;
+
+	/* ============================================
+	   Dates Container
+	   ============================================ */
+	--vc-dates-disabled-cursor: default;
+
+	/* ============================================
+	   Date Cells - Default
+	   ============================================ */
+	--vc-date-bg: var(--popover);
+	--vc-date-text: var(--foreground);
+	--vc-date-bg-hover: var(--accent);
+	--vc-date-text-hover: var(--foreground);
+	--vc-date-font-size: 0.75rem;
+	--vc-date-font-weight: 400;
+	--vc-date-line-height: 1rem;
+	--vc-date-min-size: 1.875rem;
+	--vc-date-radius: 0.5rem;
+	--vc-date-padding-y: 0.125rem;
+	--vc-date-transition-duration: 75ms;
+	--vc-date-transition-timing: cubic-bezier(0.4, 0, 0.2, 1);
+
+	/* ============================================
+	   Date Cells - Today
+	   ============================================ */
+	--vc-today-bg: var(--accent);
+	--vc-today-text: var(--primary);
+	--vc-today-font-weight: 700;
+
+	/* ============================================
+	   Date Cells - Selected (First/Last/Single)
+	   ============================================ */
+	--vc-selected-bg: var(--primary);
+	--vc-selected-text: var(--primary-foreground);
+
+	/* ============================================
+	   Date Cells - Selected Range (Middle)
+	   ============================================ */
+	--vc-range-bg: var(--accent);
+	--vc-range-text: var(--primary);
+
+	/* ============================================
+	   Date Cells - Hover Range
+	   ============================================ */
+	--vc-hover-bg: var(--accent);
+	--vc-hover-edge-bg: var(--accent);
+
+	/* ============================================
+	   Date Cells - Disabled
+	   ============================================ */
+	--vc-disabled-text: var(--muted-foreground);
+	--vc-disabled-opacity: 1;
+
+	/* ============================================
+	   Date Cells - Outside Month (Prev/Next)
+	   ============================================ */
+	--vc-outside-text: var(--muted-foreground);
+	--vc-outside-bg: var(--popover);
+
+	/* ============================================
+	   Date Cells - Weekend/Holiday
+	   By default same as regular dates. Use .vc-highlight-weekends to enable.
+	   ============================================ */
+	--vc-weekend-text: var(--muted-foreground);
+	--vc-weekend-bg: var(--popover);
+	--vc-weekend-bg-hover: var(--accent);
+	--vc-weekend-selected-bg: var(--primary);
+	--vc-weekend-selected-text: var(--primary-foreground);
+	--vc-weekend-range-bg: var(--accent);
+	--vc-weekend-range-text: var(--muted-foreground);
+	--vc-weekend-outside-text: var(--muted-foreground);
+	--vc-weekend-outside-bg: var(--popover);
+	--vc-weekend-today-text: var(--primary);
+
+	/* ============================================
+	   Date Popup (Tooltip on Date)
+	   ============================================ */
+	--vc-popup-bg: var(--popover);
+	--vc-popup-text: var(--foreground);
+	/* Shadow applied via @apply shadow-md shadow-[rgba(0,0,0,0.05)] */
+	--vc-popup-radius: 0.5rem;
+	--vc-popup-padding: 0.25rem 0.5rem;
+	--vc-popup-font-size: 0.75rem;
+	--vc-popup-font-weight: 400;
+	--vc-popup-line-height: 1rem;
+	--vc-popup-min-width: 5rem;
+	--vc-popup-max-width: 9rem;
+	--vc-popup-z-index: 20;
+	--vc-popup-transition-duration: 75ms;
+
+	/* ============================================
+	   Date Range Tooltip
+	   ============================================ */
+	--vc-tooltip-bg: var(--accent);
+	--vc-tooltip-text: var(--muted-foreground);
+	/* Shadow applied via @apply shadow-sm shadow-[rgba(0,0,0,0.05)] */
+	--vc-tooltip-radius: 0.375rem;
+	--vc-tooltip-padding: 0.25rem 0.5rem;
+	--vc-tooltip-font-size: 0.75rem;
+	--vc-tooltip-font-weight: 400;
+	--vc-tooltip-line-height: 1rem;
+	--vc-tooltip-max-width: 9rem;
+	--vc-tooltip-z-index: 30;
+
+	/* ============================================
+	   Time Picker Container
+	   ============================================ */
+	--vc-time-border: var(--border);
+	--vc-time-text: var(--foreground);
+	--vc-time-gap: 0.75rem;
+	--vc-time-margin-top: 0.75rem;
+	--vc-time-padding-top: 0.75rem;
+
+	/* Time Input (Hour/Minute) */
+	--vc-time-input-bg: var(--popover);
+	--vc-time-input-bg-hover: var(--accent);
+	--vc-time-input-bg-focus: var(--accent);
+	--vc-time-input-text: var(--foreground);
+	--vc-time-input-font-size: 1rem;
+	--vc-time-input-font-weight: 500;
+	--vc-time-input-line-height: 1.125rem;
+	--vc-time-input-radius: 0.25rem;
+	--vc-time-input-padding: 0.125rem;
+	--vc-time-input-width: 1.75rem;
+	--vc-time-hour-margin-right: 0.35rem;
+
+	/* Time Keeping (AM/PM Toggle) */
+	--vc-time-keeping-text: var(--muted-foreground);
+	--vc-time-keeping-bg-hover: var(--accent);
+	--vc-time-keeping-font-size: 0.69rem;
+	--vc-time-keeping-radius: 0.25rem;
+	--vc-time-keeping-width: 22px;
+	--vc-time-keeping-margin-left: 1px;
+	--vc-time-keeping-margin-top: 0.25rem;
+
+	/* Time Range Slider */
+	--vc-time-range-bg: var(--popover);
+	--vc-time-range-track-bg: var(--border);
+	--vc-time-range-thumb-bg: var(--popover);
+	--vc-time-range-thumb-border: var(--border);
+	--vc-time-range-thumb-border-hover: var(--muted-foreground);
+	--vc-time-range-thumb-border-focus: var(--primary);
+	--vc-time-range-thumb-radius: 0.25rem;
+	--vc-time-range-thumb-width: 0.75rem;
+	--vc-time-range-thumb-height: 1rem;
+	--vc-time-range-marker-bg: var(--border);
+	--vc-time-range-marker-height: 0.5rem;
+	--vc-time-range-marker-width: 1px;
+}
+
+/* ============================================
+   LIGHT THEME OVERRIDES
+   ============================================ */
+
+/* Calendar Container - Base */
+[data-vc-theme=light].vc {
+	background-color: var(--vc-calendar-bg);
+	color: var(--vc-calendar-text);
+}
+
+[data-vc-theme=light].vc[data-vc=calendar] {
+	background-color: var(--vc-calendar-bg);
+	color: var(--vc-calendar-text);
+	border: 1px solid var(--vc-calendar-border);
+	border-radius: var(--vc-calendar-radius);
+}
+
+/* Calendar Container - Input Mode (Dropdown) */
+[data-vc-theme=light].vc[data-vc-input]{
+	@apply shadow-md shadow-[rgba(0,0,0,0.05)];
+	background-color: var(--vc-calendar-bg);
+	border: 1px solid var(--vc-calendar-border);
+	border-radius: var(--vc-calendar-radius);
+	z-index: 100;
+}
+
+/* Focus Styles */
+[data-vc-theme=light].vc [tabindex="0"]:focus-visible,
+[data-vc-theme=light].vc button:focus-visible,
+[data-vc-theme=light].vc:focus-visible {
+	outline-color: var(--vc-focus-color);
+	border-radius: var(--vc-focus-radius);
+	outline-offset: var(--vc-focus-offset);
+	outline-width: var(--vc-focus-width);
+}
+
+/* ============================================
+   Arrow Navigation
+   ============================================ */
+
+[data-vc-theme=light] .vc-arrow {
+	background-color: var(--vc-arrow-bg);
+	opacity: var(--vc-arrow-opacity);
+	transition: opacity 0.2s ease-in-out;
+
+	&:before {
+		background-size: 80%;
+		background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0iIzBmMTcyYSIgZD0iTTEyIDE2Yy0uMyAwLS41LS4xLS43LS4zbC02LTZjLS40LS40LS40LTEgMC0xLjRzMS0uNCAxLjQgMGw1LjMgNS4zIDUuMy01LjNjLjQtLjQgMS0uNCAxLjQgMHMuNCAxIDAgMS40bC02IDZjLS4yLjItLjQuMy0uNy4zIi8+PC9zdmc+");
+	}
+
+	&:focus,
+	&:hover {
+		opacity: var(--vc-arrow-opacity-hover);
+	}
+}
+
+.dark {
+	[data-vc-theme=light] .vc-arrow {
+		opacity: 1;
+
+		&:focus,
+		&:hover {
+			opacity: 1;
+		}
+	}
+}
+
+.dark [data-vc-theme=light] .vc-arrow:before {
+	background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0iI2ZmZiIgZD0iTTEyIDE2Yy0uMyAwLS41LS4xLS43LS4zbC02LTZjLS40LS40LS40LTEgMC0xLjRzMS0uNCAxLjQgMGw1LjMgNS4zIDUuMy01LjNjLjQtLjQgMS0uNCAxLjQgMHMuNCAxIDAgMS40bC02IDZjLS4yLjItLjQuMy0uNy4zIi8+PC9zdmc+");
+}
+
+/* ============================================
+   Header (Month/Year Title)
+   ============================================ */
+
+[data-vc-theme=light] .vc-header__content,
+[data-vc-theme=light] .vc-month,
+[data-vc-theme=light] .vc-year {
+	color: var(--vc-header-text);
+}
+
+[data-vc-theme=light] .vc-month:disabled,
+[data-vc-theme=light] .vc-year:disabled {
+	color: var(--vc-header-text-disabled);
+}
+
+@media (hover:hover) and (pointer:fine) {
+	[data-vc-theme=light] .vc-month:hover,
+	[data-vc-theme=light] .vc-year:hover {
+		color: var(--vc-header-text-hover);
+	}
+}
+
+/* ============================================
+   Month/Year Picker Grid
+   ============================================ */
+
+[data-vc-theme=light] .vc-months__month,
+[data-vc-theme=light] .vc-years__year {
+	background-color: var(--vc-picker-bg);
+	color: var(--vc-picker-text);
+}
+
+[data-vc-theme=light] .vc-months__month:disabled,
+[data-vc-theme=light] .vc-years__year:disabled {
+	color: var(--vc-picker-text-disabled);
+}
+
+@media (hover:hover) and (pointer:fine) {
+	[data-vc-theme=light] .vc-months__month:hover,
+	[data-vc-theme=light] .vc-years__year:hover {
+		background-color: var(--vc-picker-bg-hover);
+	}
+
+	[data-vc-theme=light] .vc-months__month:hover:disabled,
+	[data-vc-theme=light] .vc-years__year:hover:disabled {
+		color: var(--vc-picker-text-disabled);
+	}
+}
+
+[data-vc-theme=light] .vc-months__month[data-vc-months-month-selected],
+[data-vc-theme=light] .vc-years__year[data-vc-years-year-selected] {
+	background-color: var(--vc-picker-selected-bg);
+	color: var(--vc-picker-selected-text);
+}
+
+@media (hover:hover) and (pointer:fine) {
+	[data-vc-theme=light] .vc-months__month[data-vc-months-month-selected]:hover,
+	[data-vc-theme=light] .vc-years__year[data-vc-years-year-selected]:hover {
+		background-color: var(--vc-picker-selected-bg);
+		color: var(--vc-picker-selected-text);
+	}
+}
+
+/* ============================================
+   Week Numbers
+   ============================================ */
+
+[data-vc-theme=light] .vc-week-number,
+[data-vc-theme=light] .vc-week-numbers__title {
+	color: var(--vc-week-numbers-text);
+}
+
+@media (hover:hover) and (pointer:fine) {
+	[data-vc-theme=light] .vc-week-number:hover {
+		color: var(--vc-week-numbers-text-hover);
+	}
+}
+
+/* ============================================
+   Week Days (Headers)
+   ============================================ */
+
+[data-vc-theme=light] .vc-week__day {
+	color: var(--vc-weekday-text);
+}
+
+@media (hover:hover) and (pointer:fine) {
+	[data-vc-theme=light] button.vc-week__day:hover {
+		color: var(--vc-weekday-text-hover);
+	}
+}
+
+/* Week Day Off (Weekend Headers) */
+[data-vc-theme=light] .vc-week__day[data-vc-week-day-off] {
+	color: var(--vc-weekday-off-text);
+}
+
+@media (hover:hover) and (pointer:fine) {
+	[data-vc-theme=light] button.vc-week__day[data-vc-week-day-off]:hover {
+		color: var(--vc-weekday-off-text-hover);
+	}
+}
+
+/* ============================================
+   Date Cells - Default
+   ============================================ */
+
+[data-vc-theme=light] .vc-date__btn {
+	background-color: var(--vc-date-bg);
+	color: var(--vc-date-text);
+}
+
+@media (hover:hover) and (pointer:fine) {
+	[data-vc-theme=light] .vc-date__btn:hover {
+		background-color: var(--vc-date-bg-hover);
+	}
+}
+
+/* ============================================
+   Date Cells - Today
+   ============================================ */
+
+[data-vc-theme=light] .vc-date[data-vc-date-today] .vc-date__btn {
+	background-color: var(--vc-today-bg);
+	color: var(--vc-today-text);
+}
+
+@media (hover:hover) and (pointer:fine) {
+	[data-vc-theme=light] .vc-date[data-vc-date-today] .vc-date__btn:hover {
+		color: var(--vc-today-text);
+	}
+}
+
+[data-vc-theme=light] .vc-date[data-vc-date-today][data-vc-date-month=next] .vc-date__btn,
+[data-vc-theme=light] .vc-date[data-vc-date-today][data-vc-date-month=prev] .vc-date__btn {
+	color: var(--vc-outside-text);
+}
+
+/* ============================================
+   Date Cells - Outside Month (Prev/Next)
+   ============================================ */
+
+[data-vc-theme=light] .vc-date[data-vc-date-month=next] .vc-date__btn,
+[data-vc-theme=light] .vc-date[data-vc-date-month=prev] .vc-date__btn {
+	color: var(--vc-outside-text);
+}
+
+/* ============================================
+   Date Cells - Disabled
+   ============================================ */
+
+[data-vc-theme=light] .vc-date[data-vc-date-disabled] .vc-date__btn {
+	color: var(--vc-disabled-text);
+}
+
+/* ============================================
+   Date Cells - Hover Range
+   ============================================ */
+
+[data-vc-theme=light] .vc-date[data-vc-date-hover] .vc-date__btn {
+	background-color: var(--vc-hover-bg);
+}
+
+[data-vc-theme=light] .vc-date[data-vc-date-hover=first] .vc-date__btn,
+[data-vc-theme=light] .vc-date[data-vc-date-hover=last] .vc-date__btn {
+	background-color: var(--vc-hover-edge-bg);
+}
+
+@media (hover:hover) and (pointer:fine) {
+	[data-vc-theme=light] .vc-date[data-vc-date-hover=first] .vc-date__btn:hover,
+	[data-vc-theme=light] .vc-date[data-vc-date-hover=last] .vc-date__btn:hover {
+		background-color: var(--vc-hover-edge-bg);
+	}
+}
+
+/* ============================================
+   Date Cells - Weekend/Holiday
+   ============================================ */
+
+[data-vc-theme=light] .vc-date[data-vc-date-holiday] .vc-date__btn,
+[data-vc-theme=light] .vc-date[data-vc-date-weekend] .vc-date__btn {
+	color: var(--vc-weekend-text);
+}
+
+@media (hover:hover) and (pointer:fine) {
+	[data-vc-theme=light] .vc-date[data-vc-date-holiday] .vc-date__btn:hover,
+	[data-vc-theme=light] .vc-date[data-vc-date-weekend] .vc-date__btn:hover {
+		background-color: var(--vc-weekend-bg-hover);
+	}
+}
+
+[data-vc-theme=light] .vc-date[data-vc-date-holiday][data-vc-date-hover] .vc-date__btn,
+[data-vc-theme=light] .vc-date[data-vc-date-weekend][data-vc-date-hover] .vc-date__btn {
+	background-color: var(--vc-weekend-bg-hover);
+}
+
+[data-vc-theme=light] .vc-date[data-vc-date-holiday][data-vc-date-hover=first] .vc-date__btn,
+[data-vc-theme=light] .vc-date[data-vc-date-holiday][data-vc-date-hover=last] .vc-date__btn,
+[data-vc-theme=light] .vc-date[data-vc-date-weekend][data-vc-date-hover=first] .vc-date__btn,
+[data-vc-theme=light] .vc-date[data-vc-date-weekend][data-vc-date-hover=last] .vc-date__btn {
+	background-color: var(--vc-hover-edge-bg);
+}
+
+@media (hover:hover) and (pointer:fine) {
+	[data-vc-theme=light] .vc-date[data-vc-date-holiday][data-vc-date-hover=first] .vc-date__btn:hover,
+	[data-vc-theme=light] .vc-date[data-vc-date-holiday][data-vc-date-hover=last] .vc-date__btn:hover,
+	[data-vc-theme=light] .vc-date[data-vc-date-weekend][data-vc-date-hover=first] .vc-date__btn:hover,
+	[data-vc-theme=light] .vc-date[data-vc-date-weekend][data-vc-date-hover=last] .vc-date__btn:hover {
+		background-color: var(--vc-hover-edge-bg);
+	}
+}
+
+[data-vc-theme=light] .vc-date[data-vc-date-holiday][data-vc-date-disabled] .vc-date__btn,
+[data-vc-theme=light] .vc-date[data-vc-date-weekend][data-vc-date-disabled] .vc-date__btn {
+	color: var(--vc-disabled-text);
+}
+
+[data-vc-theme=light] .vc-date[data-vc-date-holiday][data-vc-date-today] .vc-date__btn,
+[data-vc-theme=light] .vc-date[data-vc-date-weekend][data-vc-date-today] .vc-date__btn {
+	color: var(--vc-weekend-today-text);
+}
+
+[data-vc-theme=light] .vc-date[data-vc-date-holiday][data-vc-date-today][data-vc-date-disabled] .vc-date__btn,
+[data-vc-theme=light] .vc-date[data-vc-date-weekend][data-vc-date-today][data-vc-date-disabled] .vc-date__btn {
+	color: var(--vc-disabled-text);
+}
+
+/* Weekend/Holiday - Outside Month */
+[data-vc-theme=light] .vc-date[data-vc-date-holiday][data-vc-date-month=next] .vc-date__btn,
+[data-vc-theme=light] .vc-date[data-vc-date-holiday][data-vc-date-month=prev] .vc-date__btn,
+[data-vc-theme=light] .vc-date[data-vc-date-weekend][data-vc-date-month=next] .vc-date__btn,
+[data-vc-theme=light] .vc-date[data-vc-date-weekend][data-vc-date-month=prev] .vc-date__btn {
+	background-color: var(--vc-weekend-outside-bg);
+	color: var(--vc-weekend-outside-text);
+}
+
+@media (hover:hover) and (pointer:fine) {
+	[data-vc-theme=light] .vc-date[data-vc-date-holiday][data-vc-date-month=next] .vc-date__btn:hover,
+	[data-vc-theme=light] .vc-date[data-vc-date-holiday][data-vc-date-month=prev] .vc-date__btn:hover,
+	[data-vc-theme=light] .vc-date[data-vc-date-weekend][data-vc-date-month=next] .vc-date__btn:hover,
+	[data-vc-theme=light] .vc-date[data-vc-date-weekend][data-vc-date-month=prev] .vc-date__btn:hover {
+		background-color: var(--vc-date-bg-hover);
+	}
+}
+
+[data-vc-theme=light] .vc-date[data-vc-date-holiday][data-vc-date-hover][data-vc-date-month=next] .vc-date__btn,
+[data-vc-theme=light] .vc-date[data-vc-date-holiday][data-vc-date-hover][data-vc-date-month=prev] .vc-date__btn,
+[data-vc-theme=light] .vc-date[data-vc-date-weekend][data-vc-date-hover][data-vc-date-month=next] .vc-date__btn,
+[data-vc-theme=light] .vc-date[data-vc-date-weekend][data-vc-date-hover][data-vc-date-month=prev] .vc-date__btn {
+	background-color: var(--vc-hover-bg);
+}
+
+[data-vc-theme=light] .vc-date[data-vc-date-holiday][data-vc-date-today][data-vc-date-month=next] .vc-date__btn,
+[data-vc-theme=light] .vc-date[data-vc-date-holiday][data-vc-date-today][data-vc-date-month=prev] .vc-date__btn,
+[data-vc-theme=light] .vc-date[data-vc-date-weekend][data-vc-date-today][data-vc-date-month=next] .vc-date__btn,
+[data-vc-theme=light] .vc-date[data-vc-date-weekend][data-vc-date-today][data-vc-date-month=prev] .vc-date__btn {
+	color: var(--vc-outside-text);
+}
+
+[data-vc-theme=light] .vc-date[data-vc-date-holiday][data-vc-date-disabled][data-vc-date-month=next] .vc-date__btn,
+[data-vc-theme=light] .vc-date[data-vc-date-holiday][data-vc-date-disabled][data-vc-date-month=prev] .vc-date__btn,
+[data-vc-theme=light] .vc-date[data-vc-date-weekend][data-vc-date-disabled][data-vc-date-month=next] .vc-date__btn,
+[data-vc-theme=light] .vc-date[data-vc-date-weekend][data-vc-date-disabled][data-vc-date-month=prev] .vc-date__btn {
+	color: var(--vc-disabled-text);
+}
+
+/* Weekend/Holiday - Selected */
+[data-vc-theme=light] .vc-date[data-vc-date-holiday][data-vc-date-selected] .vc-date__btn,
+[data-vc-theme=light] .vc-date[data-vc-date-weekend][data-vc-date-selected] .vc-date__btn {
+	background-color: var(--vc-weekend-selected-bg);
+	color: var(--vc-weekend-selected-text);
+}
+
+@media (hover:hover) and (pointer:fine) {
+	[data-vc-theme=light] .vc-date[data-vc-date-holiday][data-vc-date-selected] .vc-date__btn:hover,
+	[data-vc-theme=light] .vc-date[data-vc-date-weekend][data-vc-date-selected] .vc-date__btn:hover {
+		background-color: var(--vc-weekend-selected-bg);
+		color: var(--vc-weekend-selected-text);
+	}
+}
+
+[data-vc-theme=light] .vc-date[data-vc-date-holiday][data-vc-date-selected][data-vc-date-month=next] .vc-date__btn,
+[data-vc-theme=light] .vc-date[data-vc-date-holiday][data-vc-date-selected][data-vc-date-month=prev] .vc-date__btn,
+[data-vc-theme=light] .vc-date[data-vc-date-weekend][data-vc-date-selected][data-vc-date-month=next] .vc-date__btn,
+[data-vc-theme=light] .vc-date[data-vc-date-weekend][data-vc-date-selected][data-vc-date-month=prev] .vc-date__btn {
+	background-color: var(--vc-hover-edge-bg);
+	color: var(--vc-outside-text);
+}
+
+@media (hover:hover) and (pointer:fine) {
+	[data-vc-theme=light] .vc-date[data-vc-date-holiday][data-vc-date-selected][data-vc-date-month=next] .vc-date__btn:hover,
+	[data-vc-theme=light] .vc-date[data-vc-date-holiday][data-vc-date-selected][data-vc-date-month=prev] .vc-date__btn:hover,
+	[data-vc-theme=light] .vc-date[data-vc-date-weekend][data-vc-date-selected][data-vc-date-month=next] .vc-date__btn:hover,
+	[data-vc-theme=light] .vc-date[data-vc-date-weekend][data-vc-date-selected][data-vc-date-month=prev] .vc-date__btn:hover {
+		background-color: var(--vc-hover-edge-bg);
+		color: var(--vc-outside-text);
+	}
+}
+
+/* Weekend/Holiday - Range Middle */
+[data-vc-theme=light] .vc-date[data-vc-date-selected=middle][data-vc-date-holiday][data-vc-date-selected] .vc-date__btn,
+[data-vc-theme=light] .vc-date[data-vc-date-selected=middle][data-vc-date-weekend][data-vc-date-selected] .vc-date__btn {
+	background-color: var(--vc-weekend-range-bg);
+	color: var(--vc-weekend-range-text);
+}
+
+@media (hover:hover) and (pointer:fine) {
+	[data-vc-theme=light] .vc-date[data-vc-date-selected=middle][data-vc-date-holiday][data-vc-date-selected] .vc-date__btn:hover,
+	[data-vc-theme=light] .vc-date[data-vc-date-selected=middle][data-vc-date-weekend][data-vc-date-selected] .vc-date__btn:hover {
+		background-color: var(--vc-weekend-range-bg);
+		color: var(--vc-weekend-range-text);
+	}
+}
+
+[data-vc-theme=light] .vc-date[data-vc-date-selected=middle][data-vc-date-holiday][data-vc-date-month=next][data-vc-date-selected] .vc-date__btn,
+[data-vc-theme=light] .vc-date[data-vc-date-selected=middle][data-vc-date-holiday][data-vc-date-month=prev][data-vc-date-selected] .vc-date__btn,
+[data-vc-theme=light] .vc-date[data-vc-date-selected=middle][data-vc-date-weekend][data-vc-date-month=next][data-vc-date-selected] .vc-date__btn,
+[data-vc-theme=light] .vc-date[data-vc-date-selected=middle][data-vc-date-weekend][data-vc-date-month=prev][data-vc-date-selected] .vc-date__btn {
+	background-color: var(--vc-hover-edge-bg);
+	color: var(--vc-outside-text);
+}
+
+@media (hover:hover) and (pointer:fine) {
+	[data-vc-theme=light] .vc-date[data-vc-date-selected=middle][data-vc-date-holiday][data-vc-date-month=next][data-vc-date-selected] .vc-date__btn:hover,
+	[data-vc-theme=light] .vc-date[data-vc-date-selected=middle][data-vc-date-holiday][data-vc-date-month=prev][data-vc-date-selected] .vc-date__btn:hover,
+	[data-vc-theme=light] .vc-date[data-vc-date-selected=middle][data-vc-date-weekend][data-vc-date-month=next][data-vc-date-selected] .vc-date__btn:hover,
+	[data-vc-theme=light] .vc-date[data-vc-date-selected=middle][data-vc-date-weekend][data-vc-date-month=prev][data-vc-date-selected] .vc-date__btn:hover {
+		background-color: var(--vc-hover-edge-bg);
+		color: var(--vc-outside-text);
+	}
+}
+
+/* ============================================
+   Date Cells - Selected Range (Middle)
+   ============================================ */
+
+[data-vc-theme=light] .vc-date[data-vc-date-selected=middle][data-vc-date-selected] .vc-date__btn {
+	background-color: var(--vc-range-bg);
+	color: var(--vc-range-text);
+}
+
+@media (hover:hover) and (pointer:fine) {
+	[data-vc-theme=light] .vc-date[data-vc-date-selected=middle][data-vc-date-selected] .vc-date__btn:hover {
+		background-color: var(--vc-range-bg);
+		color: var(--vc-range-text);
+	}
+}
+
+[data-vc-theme=light] .vc-date[data-vc-date-selected=middle][data-vc-date-month=next][data-vc-date-selected] .vc-date__btn,
+[data-vc-theme=light] .vc-date[data-vc-date-selected=middle][data-vc-date-month=prev][data-vc-date-selected] .vc-date__btn {
+	background-color: var(--vc-hover-edge-bg);
+	color: var(--vc-outside-text);
+}
+
+@media (hover:hover) and (pointer:fine) {
+	[data-vc-theme=light] .vc-date[data-vc-date-selected=middle][data-vc-date-month=next][data-vc-date-selected] .vc-date__btn:hover,
+	[data-vc-theme=light] .vc-date[data-vc-date-selected=middle][data-vc-date-month=prev][data-vc-date-selected] .vc-date__btn:hover {
+		background-color: var(--vc-hover-edge-bg);
+		color: var(--vc-outside-text);
+	}
+}
+
+/* ============================================
+   Date Cells - Selected (First/Last/Single)
+   ============================================ */
+
+[data-vc-theme=light] .vc-date[data-vc-date-selected] .vc-date__btn {
+	background-color: var(--vc-selected-bg);
+	color: var(--vc-selected-text);
+}
+
+@media (hover:hover) and (pointer:fine) {
+	[data-vc-theme=light] .vc-date[data-vc-date-selected] .vc-date__btn:hover {
+		background-color: var(--vc-selected-bg);
+		color: var(--vc-selected-text);
+	}
+}
+
+[data-vc-theme=light] .vc-date[data-vc-date-selected][data-vc-date-month=next] .vc-date__btn,
+[data-vc-theme=light] .vc-date[data-vc-date-selected][data-vc-date-month=prev] .vc-date__btn {
+	background-color: var(--vc-hover-edge-bg);
+	color: var(--vc-outside-text);
+}
+
+@media (hover:hover) and (pointer:fine) {
+	[data-vc-theme=light] .vc-date[data-vc-date-selected][data-vc-date-month=next] .vc-date__btn:hover,
+	[data-vc-theme=light] .vc-date[data-vc-date-selected][data-vc-date-month=prev] .vc-date__btn:hover {
+		background-color: var(--vc-hover-edge-bg);
+		color: var(--vc-outside-text);
+	}
+}
+
+/* ============================================
+   Date Popup
+   ============================================ */
+
+[data-vc-theme=light] .vc-date__popup {
+	background-color: var(--vc-popup-bg);
+	color: var(--vc-popup-text);
+	@apply shadow-md shadow-[rgba(0,0,0,0.05)];
+}
+
+/* ============================================
+   Date Range Tooltip
+   ============================================ */
+
+[data-vc-theme=light] .vc-date-range-tooltip {
+	background-color: var(--vc-tooltip-bg);
+	color: var(--vc-tooltip-text);
+	@apply shadow-sm shadow-[rgba(0,0,0,0.05)];
+}
+
+/* ============================================
+   Time Picker
+   ============================================ */
+
+[data-vc-theme=light] .vc-time {
+	border-color: var(--vc-time-border);
+}
+
+[data-vc-theme=light] .vc-time__hour:after,
+[data-vc-theme=light] .vc-time__minute:after {
+	color: var(--vc-time-text);
+}
+
+[data-vc-theme=light] .vc-time__hour input,
+[data-vc-theme=light] .vc-time__minute input {
+	background-color: var(--vc-time-input-bg);
+	color: var(--vc-time-input-text);
+}
+
+[data-vc-theme=light] .vc-time__hour input:focus-visible,
+[data-vc-theme=light] .vc-time__minute input:focus-visible {
+	outline-color: var(--vc-focus-color);
+}
+
+@media (hover:hover) and (pointer:fine) {
+	[data-vc-theme=light] .vc-time__hour input:hover,
+	[data-vc-theme=light] .vc-time__minute input:hover {
+		background-color: var(--vc-time-input-bg-hover);
+	}
+}
+
+[data-vc-theme=light] .vc-time__hour input[data-vc-input-focus],
+[data-vc-theme=light] .vc-time__minute input[data-vc-input-focus] {
+	background-color: var(--vc-time-input-bg-focus);
+}
+
+/* Time Keeping (AM/PM) */
+[data-vc-theme=light] .vc-time__keeping {
+	color: var(--vc-time-keeping-text);
+}
+
+[data-vc-theme=light] .vc-time__keeping:focus-visible {
+	outline-color: var(--vc-focus-color);
+}
+
+@media (hover:hover) and (pointer:fine) {
+	[data-vc-theme=light] .vc-time__keeping:hover {
+		background-color: var(--vc-time-keeping-bg-hover);
+	}
+}
+
+/* Time Range Slider */
+[data-vc-theme=light] .vc-time__range input {
+	background-color: var(--vc-time-range-bg);
+}
+
+[data-vc-theme=light] .vc-time__range:after,
+[data-vc-theme=light] .vc-time__range:before {
+	background-color: var(--vc-time-range-marker-bg);
+}
+
+[data-vc-theme=light] .vc-time__range:hover input::-webkit-slider-thumb {
+	border-color: var(--vc-time-range-thumb-border-hover);
+}
+
+[data-vc-theme=light] .vc-time__range:hover input::-moz-range-thumb {
+	border-color: var(--vc-time-range-thumb-border-hover);
+}
+
+[data-vc-theme=light] .vc-time__range input:focus-visible::-webkit-slider-thumb {
+	border-color: var(--vc-time-range-thumb-border-focus);
+}
+
+[data-vc-theme=light] .vc-time__range input:focus-visible::-moz-range-thumb {
+	border-color: var(--vc-time-range-thumb-border-focus);
+}
+
+[data-vc-theme=light] .vc-time__range input::-webkit-slider-thumb {
+	border-color: var(--vc-time-range-thumb-border);
+	background-color: var(--vc-time-range-thumb-bg);
+}
+
+[data-vc-theme=light] .vc-time__range input::-moz-range-thumb {
+	border-color: var(--vc-time-range-thumb-border);
+	background-color: var(--vc-time-range-thumb-bg);
+}
+
+[data-vc-theme=light] .vc-time__range input::-webkit-slider-runnable-track {
+	background-color: var(--vc-time-range-track-bg);
+}
+
+[data-vc-theme=light] .vc-time__range input::-moz-range-track {
+	background-color: var(--vc-time-range-track-bg);
+}
+
+/* ============================================
+   STRUCTURAL OVERRIDES (Both Themes)
+   ============================================ */
+
+/* Week Numbers Title */
+[data-vc-week-numbers=title] {
+	@apply mt-[0.85rem];
+	@apply leading-[0.55];
+}
+
+/* Month/Year Header */
+[data-vc=month], [data-vc=year] {
+	@apply text-sm;
+	@apply font-medium;
+}
+
+/* Week Days */
+[data-vc-week-day] {
+	@apply text-sm;
+	@apply font-medium;
+}
+
+/* Date Cells */
+[data-vc=date] {
+	@apply text-sm;
+	@apply font-normal;
+}
+
+/* Time Input */
+[data-vc=time] {
+	margin: 0;
+	border: 0;
+}
+
+[data-vc-time=keeping] {
+	margin: 0;
+}
+
+[data-vc-time-input=hour] input,
+[data-vc-time-input=minute] input {
+	@apply text-sm;
+	@apply font-medium;
+	outline: none !important;
+	border: none !important;
+}
+
+/* ============================================
+   Highlight Weekends Variant
+   Add class "vc-highlight-weekends" to enable
+   ============================================ */
+
+.vc-highlight-weekends {
+	--vc-weekday-off-text: var(--destructive);
+	--vc-weekday-off-text-hover: var(--destructive);
+	--vc-weekend-text: var(--destructive);
+	--vc-weekend-bg-hover: color-mix(in srgb, var(--destructive) 10%, transparent);
+	--vc-weekend-selected-bg: var(--destructive);
+	--vc-weekend-selected-text: white;
+	--vc-weekend-range-bg: color-mix(in srgb, var(--destructive) 70%, transparent);
+	--vc-weekend-range-text: white;
+	--vc-weekend-today-text: var(--destructive);
+}
+
+/* ============================================
+   Action Buttons Container
+   ============================================ */
+
+/* ============================================
+   Presets panel (Today, Yesterday, This week, etc.)
+   ============================================ */
+.kt-date-picker-presets {
+	@apply flex flex-wrap gap-1;
+	@apply p-2;
+	@apply bg-[var(--vc-calendar-bg)];
+}
+
+.kt-date-picker-preset-btn {
+	@apply text-left;
+	@apply text-[var(--vc-calendar-text)];
+	@apply hover:bg-[var(--vc-date-bg-hover)];
+	@apply hover:text-[var(--vc-date-text-hover)];
+	@apply rounded-[var(--vc-date-radius)];
+	@apply transition-colors duration-75;
+}
+
+.vc-actions {
+	@apply flex;
+	@apply items-center;
+	@apply justify-end;
+	@apply gap-2;
+	@apply mt-1;
+	@apply pt-2.5;
+	@apply border-t border-border;
+}
