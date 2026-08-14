@@ -1,49 +1,269 @@
-A integração com marketplaces (Mercado Livre, Shopee, Shein, Amazon, etc.) possui desafios bastante específicos: **diferentes estratégias de autenticação (OAuth2, App Keys), esquemas de dados heterogêneos, limites de requisições rígidos (Rate Limits) e alto volume de notificações via Webhooks**.
-Por esses motivos, a melhor abordagem é uma **Arquitetura Event-Driven (Guiada a Eventos) com Camada de Abstração/Adaptação**.
----
-### 1. Visão Geral da Arquitetura Recomendada
-```text
-[ Core System (Seu ERP / WMS / PWA) ]
-                │
-                ▼
-      ┌──────────────────┐
-      │ Unified DTO / IP │  (Domínio Interno Único)
-      └─────────┬────────┘
-                │
-                ▼
-   ┌────────────────────────┐
-   │ Marketplace Gateway/   │  (Orquestração, Auth, Retry Policy)
-   │     Adapter Layer      │
-   └──────┬──────┬───┬──────┘
-          │      │   │
-     ┌────┴─┐ ┌──┴─┐ └────────┬────────┐
-     │ ML   │ │Sho-│          │ SHEIN  │  (Adaptares Específicos)
-     │Adapt.│ │pee │          │ Adapt. │
-     └──┬───┘ └──┬─┘          └───┬────┘
-        │        │                │
-        ▼        ▼                ▼
-   [Mercado] [Shopee]          [SHEIN]
-     Livre     Open API       Open Platform
+# Marketplace Engine — Opção A: Construção Própria (In-House)
 
-     #### Opções em Nichos Específicos:
-* **Dafiti / Kanui / Tricae:** Focado no nicho de moda e calçados.
-* **MadeiraMadeira:** Especializado em móveis e decoração.
-* **Elo7:** Focado em artesanato, produtos personalizados e DIY.
-* **Nuvemshop / Shopify:** Para criar integrações também com plataformas de e-commerce e ecossistemas próprios de lojistas.
----
-### 3. Fazer Internamente ou Usar um Hub de Integração (iPaaS)?
-Dependendo da maturidade da equipe, vale comparar duas opções de implementação:
-#### Opção A: Construção Própria (In-House)
-* **Indicado se:** O core da sua empresa é software de e-commerce / ERP e você precisa de controle absoluto, taxas zero por transação e integrações profundas e customizadas.
-* **Desafio:** Manutenção contínua de contratos de API. Marketplaces alteram regras de rotulagem, campos obrigatórios e fluxos de frete com frequência.
-#### Opção B: Uso de Hubs ou Unificadores de API
-Se você quer acelerar o *Time-to-Market*, pode integrar através de uma plataforma intermédia:
-* **Hubs Nacionais / Locais:** Anymarket, Plugg.to, Lexos Hub, Bling (API do próprio ERP).
-* **APIs Unificadas de E-commerce (iPaaS / Unified APIs):**
-* **API2Cart:** API unificada internacional para mais de 70 e-commerces/marketplaces (incluindo Shopee, Amazon, Shopify, WooCommerce).
-* **Rithum (antiga ChannelAdvisor):** Plataforma global para enterprise.
----
-### Resumo das Melhores Práticas de Desenvolvimento
-1. **Idempotência:** Trate webhooks de forma idempotente. A Shopee ou Mercado Livre podem enviar o mesmo webhook de "Pedido Pago" duas vezes.
-2. **Canary / Feature Flags:** Permita ativar ou desativar a sincronização de um marketplace por lojista sem precisar derrubar o sistema.
-3. **Mapeamento Flexível de Categorias e Atributos:** Cada plataforma tem sua árvore de categorias (ex: no Mercado Livre uma camiseta é `MLA-1234`, na Shein/Shopee exige campos específicos como `Gênero` ou `Material`). Seu banco precisa de tabelas de de-para (*Mapping Rules*).
+This document is the architectural contract for Vilmo's marketplace layer. New marketplaces are **rows in PostgreSQL**, not a new enum, project, or deploy. The running API loads the definition from the database (cached in Redis) and executes it with a generic HTTP engine.
+
+## Decision
+
+**Opção A — In-House.** We own the canonical catalog, inventory, orders, and the anti-corruption layer that talks to each marketplace. We do **not** route through a third-party aggregator (API2Cart, Plugg.to, Tiny, Bling as the system of record).
+
+Why this option:
+
+- Inventory is born from Brazilian NF-e, not from a marketplace. An aggregator would invert that ownership.
+- Auth, catalog, and stock **shapes** differ per channel. Those differences live in **marketplace definition tables** (URLs, auth protocol, parameter keys, JSON mappings), not in compiled C# per brand.
+- Idempotency, CFOP-based stock movements, and A1 certificate handling are domain rules, not generic "sync SKU" calls.
+
+What we still reuse: official SDKs/libraries only (DFe.NET for SEFAZ). Marketplace HTTP clients are ours.
+
+## Multi-company tenancy (root of every record)
+
+The system is for **N companies**. `CompanyId` is the tenant. Catalog, inventory, NF-e, marketplace shops, certificates, idempotency keys, and users never exist in a global bag.
+
+| Concept | Meaning | Identity |
+| --- | --- | --- |
+| `Company` | Legal entity we operate for | Internal id + unique CNPJ |
+| `User` | Person who signs in | Email |
+| `UserCompany` | Membership of a user in a company | `(userId, companyId)` + `CompanyRole` |
+| `CompanyCertificate` | A1 PKCS#12 used for that company's SEFAZ calls | `(companyId, cnpj)` |
+| `CompanyMarketplaceConfig` | One marketplace enabled for one company (app/partner credentials) | `(companyId, marketplaceCode)` |
+| `MarketplaceParameter` | Company-level config key/value | `(configId, parameterKey)` |
+| `UserProfile` | How this user acts in the company | `Vendor`, `CompanyAdmin`, `Operator`, `Viewer` |
+| `users_detail` | Vendor profile shared by all marketplace subaccounts | `(companyId, userId)` |
+| `user_detail_marketplace` | That vendor's **subaccount** on one marketplace (key/value params) | `(companyId, userId, marketplaceCode)` |
+
+Rules:
+
+- Every mutating API call runs inside a **company context**.
+- Regular users see and change **only** companies they belong to.
+- One platform super user (`admin@vilmomkt.com`) may see and act on **all** companies. That privilege is a `IsPlatformSuperUser` flag seeded for that email, not a string compare scattered in handlers.
+- A user without membership and without super-user flag cannot call business APIs.
+- Super user selects the target company with `X-Company-Id` (or an equivalent claim). Other users may send that header only if they are a member; otherwise `403`.
+
+`CompanyRole` / `UserProfile` values: `CompanyAdmin`, `Operator`, `Viewer`, **`Vendor`**. No magic numbers. A vendor is a selling user of that company, not a second tenant.
+
+## Canonical model (system of record)
+
+Marketplaces never own product identity. The engine owns, **always scoped by `CompanyId`**:
+
+| Concept | Meaning | Identity |
+| --- | --- | --- |
+| `Product` | Sellable item in that company's catalog | `(companyId, sku)` |
+| `ProductIdentifier` | EAN, `cProd` from NF-e, NCM, seller SKU | `(companyId, identifierKind, value)` |
+| `InventoryBalance` | Quantity that company can sell, per warehouse | `(companyId, sku, warehouse)` |
+| `InventoryMovement` | Immutable stock event | `(companyId, chaveAcesso, itemIndex, movementKind)` |
+| `Offer` | Price + allocated stock for one channel | `(companyId, sku, marketplace, vendorSubaccount)` |
+| `Listing` | Remote advertisement published by a vendor subaccount | `(companyId, vendorUserId, marketplace, remoteListingId)` |
+| `SalesOrder` | Normalized order | `(companyId, internal order id)` + remote id |
+| `ConnectedAccount` | Company-level marketplace app config (not the vendor shop) | `(companyId, marketplace)` |
+
+A company has **many marketplaces**. Each marketplace has **many vendor subaccounts**. Company app credentials live in `company_marketplace_*`. Vendor identity lives in `users_detail` + `user_detail_marketplace`. See **Vendors and marketplace subaccounts** below.
+
+Mapping rule: **inbound** marketplace payloads become canonical objects via **stored JSON mappings**. **Outbound** commands are rendered from templates in the same tables. The engine never persists marketplace JSON as the source of truth. Workers always carry `CompanyId` and a **string** `marketplace_code` (from the `marketplace` table). A consumer must not infer company from a global default, and must not `switch` on marketplace names in C#.
+
+## Data-driven marketplaces (no rebuild)
+
+There is **no** `MarketplaceCode` enum. The code is a string primary key: `MercadoLivre`, `Shopee`, `Shein`, `Magalu`, later `Amazon`. Adding a channel is an INSERT (admin UI or SQL), then Redis `DEL`. The process is not rebuilt, no new project, no DI registration.
+
+What the binary contains (stable, few):
+
+| Type | One job |
+| --- | --- |
+| `IAuthProtocol` | Sign or attach credentials. Seeded implementations: `OAuth2AuthorizationCode`, `HmacSha256`, `BearerToken`, `ApiKeyHeader` |
+| `IMarketplaceOperationExecutor` | Run one canonical operation (`PublishListing`, `UpdateStock`, `UpdatePrice`, `FetchOrder`, `UploadInvoice`, `VerifyWebhook`) using a binding row |
+| `IJsonMappingEngine` | Apply stored request/response mappings (JSON templates + JSONPath) |
+| `IMarketplaceDefinitionReader` | Load definition from Redis/Postgres by `marketplace_code` |
+
+What is **data** (no compile):
+
+| Table | One job |
+| --- | --- |
+| `marketplace` | `code` (string PK), display name, `base_url`, `auth_protocol_code`, `is_active` |
+| `marketplace_parameter_definition` | Allowed keys for company vs vendor (`ClientId`, `PartnerKey`, …), `is_secret` |
+| `marketplace_operation_binding` | Canonical operation → HTTP method, path template, headers, body template, response mapping, timeout |
+| `marketplace_webhook_binding` | How to read event id / shop id / resource from the payload |
+
+`auth_protocol_code` must match a protocol **already compiled**. OAuth2 and HMAC cover Mercado Livre, Magalu, Shopee, and SHEIN. A future channel that needs a **new protocol** (for example AWS SigV4) is the only case that needs a code change — that change is a new `IAuthProtocol` class, not a marketplace project.
+
+Generic HTTP routes, one pair for every code in the table:
+
+- `GET /oauth/{marketplaceCode}/callback`
+- `POST /webhooks/{marketplaceCode}`
+
+Unknown `marketplaceCode` → `404`. No per-brand controllers.
+
+Parameter keys are rows in `marketplace_parameter_definition`, not C# enums. A write with an unknown key for that code → `400`. New marketplace = new definition rows, no ALTER of other channels.
+
+Liskov: every protocol and the executor return `Result<T>`. Timeouts, retries, and idempotency are the same for every `marketplace_code`.
+
+Do not create `MercadoLivreConnector` or `ShopeeStockPublisher`. The four launch channels are **seed fixtures** of the tables above.
+
+## Company marketplace configuration (Postgres + Redis)
+
+Each company can connect to Mercado Livre, Shopee, SHEIN, Magalu, and later channels **at the same time**. Parameters differ per company and per marketplace (client id, partner key, shop id, `site_id`, tokens). They are **not** global.
+
+PostgreSQL is the source of truth. The data almost never changes after setup, so **reads go through Redis**.
+
+| Table | One job |
+| --- | --- |
+| `marketplace` | Channel catalog: string `code`, `auth_protocol_code`, `base_url`, `is_active` |
+| `marketplace_parameter_definition` | Keys allowed for that code (company or vendor scope) |
+| `marketplace_operation_binding` | How to call PublishListing / UpdateStock / … for that code |
+| `company_marketplace_config` | This company uses this `marketplace_code` (`is_enabled`) |
+| `company_marketplace_parameter` | One parameter row: key, value, `is_secret` |
+
+Unique: `(company_id, marketplace_code)` on config; `(config_id, parameter_key)` on parameters; `marketplace.code` is the only identity of a channel.
+
+`parameter_key` must exist in `marketplace_parameter_definition` for that code. Keys are data. Mercado Livre may have `ClientId` + `SiteId`; Shopee may have `PartnerId` + `PartnerKey`. Amazon later adds its own keys in new rows.
+
+Secrets (`ClientSecret`, refresh tokens, SHEIN `secretKey`) are stored encrypted in Postgres (`is_secret = true`). Redis may cache the **resolved config DTO** for that company+marketplace; invalidate on any write.
+
+```
+ICompanyMarketplaceConfigReader.Get(companyId, marketplaceCode)
+        │
+        ▼
+Redis GET marketplace-config:{companyId}:{marketplaceCode}
+        │
+        ├── hit  → return
+        └── miss → Postgres (config + parameters)
+                   Redis SET (no short TTL needed; delete on write)
+```
+
+Writes: Postgres first, then `DEL marketplace-config:{companyId}:{marketplaceCode}`. Never update Redis only.
+
+Connectors receive `CompanyMarketplaceConfig` (app credentials) plus the vendor's `user_detail_marketplace` (subaccount). They must not read `IConfiguration["Shopee:PartnerId"]`. The executor looks up bindings by `marketplace_code` string.
+
+## Vendors and marketplace subaccounts
+
+Companies have users. Users with profile **`Vendor`** sell. Each marketplace must hold **multiple subaccounts** — one per vendor in that company — not one shared shop for the whole company.
+
+```
+Company
+  └── many Vendors (users + users_detail)
+        └── one subaccount per marketplace (user_detail_marketplace)
+              └── advertisements / listings
+```
+
+| Table | One job |
+| --- | --- |
+| `users_detail` | Data **common to all** marketplace subaccounts of that vendor (legal name, document, phone, address, display name, …) |
+| `user_detail_marketplace` | Data **specific to one marketplace** as parameter key/values (shop id, nickname, tokens, fulfillment flags, …) |
+
+`users_detail` exists only for `UserProfile.Vendor`. Staff profiles do not get this row.
+
+**Create vendor (idempotent, per company):**
+
+1. Insert `User` + `UserCompany` with profile `Vendor`.
+2. Insert `users_detail` unique `(company_id, user_id)`.
+3. For **each enabled** `company_marketplace_config` of that company, insert `user_detail_marketplace` unique `(company_id, user_id, marketplace_code)` with empty/pending parameters.
+4. Retry with the same `Idempotency-Key` + `CompanyId` must not create a second vendor or a second subaccount set.
+
+If a marketplace is enabled on the company **later**, provision a missing `user_detail_marketplace` for every existing vendor of that company (same uniqueness; skip rows that already exist).
+
+**Publish advertisement:**
+
+- Vendor (or company admin acting for that vendor) chooses marketplaces.
+- **Default = all** marketplaces where the company is enabled **and** the vendor has a subaccount.
+- The request may pass an explicit list (`marketplaceCodes`). Empty/omitted list means all.
+- Worker publishes **once per selected marketplace** using that vendor's `user_detail_marketplace` params + the company's app credentials.
+- Listing uniqueness: `(company_id, vendor_user_id, sku, marketplace_code)`.
+
+Vendor marketplace params are also cache-aside in Redis (`vendor-marketplace:{companyId}:{userId}:{marketplaceCode}`), invalidated on write — same pattern as company config.
+
+## Idempotency (mandatory, always keyed by company)
+
+Every write that can be retried must be idempotent. Retries are normal (webhooks, SEFAZ timeouts, 429s). **Company A and Company B may send the same `Idempotency-Key`.** Those are different operations.
+
+### HTTP API
+
+- Client sends `Idempotency-Key` (UUIDv4) on every mutating request.
+- Company comes from auth context (`CompanyId`), never from the key itself.
+- Store in Redis: `SET idempotency:{companyId}:{idempotencyKey} NX EX 86400` with payload fingerprint + status (`Processing` / `Completed` / `Failed`).
+- Same company + same key + same fingerprint → replay stored response.
+- Same company + same key + different fingerprint → `409 Conflict`.
+- Same key on another company → independent lock (no collision).
+- Concurrent same company+key while `Processing` → `409` with retry-after.
+- Missing company context → `401`/`403`, do not write a global key.
+
+### Domain uniqueness (PostgreSQL)
+
+| Operation | Natural key |
+| --- | --- |
+| Ingest NF-e | `(company_id, chave_acesso)` |
+| Stock movement | `(company_id, chave_acesso, n_item, movement_kind)` |
+| Connect shop (company app) | `(company_id, marketplace_code)` |
+| Create vendor | `(company_id, user_id)` on `users_detail` |
+| Create vendor subaccount | `(company_id, user_id, marketplace_code)` on `user_detail_marketplace` |
+| Upsert listing | `(company_id, vendor_user_id, sku, marketplace_code)` |
+| Import order | `(company_id, marketplace_code, remote_order_id)` |
+| Webhook | `(company_id, marketplace_code, event_id)` |
+| Push stock | `(company_id, listing_id, command_id)` |
+| HTTP idempotency audit | `(company_id, idempotency_key)` |
+
+Redis is the short-window lock. PostgreSQL unique constraints are the source of truth. Never rely on Redis alone for money or stock. Never use a unique index on `chave_acesso` alone.
+
+### Queue consumers
+
+Redis Streams messages carry `MessageId` **and** `CompanyId`. Consumers use `XREADGROUP` and persist processed ids as `(company_id, message_id)`. Duplicate delivery is a no-op. A message without `CompanyId` is rejected, not processed under a fallback tenant.
+
+## Event flow
+
+```
+Webhook / API command  (CompanyId from auth or ConnectedAccount)
+        │
+        ▼
+   HTTP 200 fast ACK          ← Mercado Livre requires 200 within 500ms
+        │
+        ▼
+   Redis Stream (command + CompanyId)
+        │
+        ▼
+   Worker (idempotent handler, key = company + operation)
+        │
+        ├── Catalog / Inventory (PostgreSQL, row = that company)
+        └── Outbox row (CompanyId)
+                │
+                ▼
+         Redis Stream (integration + CompanyId)
+                │
+                ▼
+         Generic executor (definition + company creds + vendor subaccount)
+```
+
+Webhooks never call marketplace APIs inside the HTTP request. They only validate, enqueue, and return.
+
+## Adding a marketplace (no rebuild)
+
+Super user (or SQL seed). Idempotent per `code`.
+
+1. `POST /marketplaces` with `code`, name, `base_url`, `auth_protocol_code` (must already exist: `OAuth2AuthorizationCode`, `HmacSha256`, `BearerToken`, `ApiKeyHeader`).
+2. Insert `marketplace_parameter_definition` rows (company + vendor keys).
+3. Insert `marketplace_operation_binding` rows for the operations this channel supports. Unsupported operations stay absent; the executor returns `OperationNotBound` for that code only.
+4. Insert `marketplace_webhook_binding` if the channel pushes events.
+5. `DEL` Redis keys `marketplace-definition:{code}`.
+6. Companies enable it: `PUT /companies/{id}/marketplaces/{code}` → backfill `user_detail_marketplace` for existing vendors.
+
+OAuth callback and webhook URLs are already `/{marketplaceCode}/…`. No new route, no new container, no new project.
+
+If the channel needs an auth protocol that is not compiled yet, add **one** `IAuthProtocol` class and redeploy **once**. That is a protocol extension, not a marketplace project.
+
+Do not add `MarketplaceCode.Amazon` to C#. Do not add `Vilmo.Marketplace.Amazon`.
+
+## Per-company SEFAZ certificate
+
+Each company has its own A1 certificate bound to **that company's CNPJ**. `vilmo-nfe` loads the cert through `ICompanyCertificateStore.Get(companyId)` and passes it into DFe.NET. There is no process-wide `Nfe__CertificatePath`.
+
+- One company, one active A1 (replace by uploading a new cert; old row is revoked, not edited in place if you need history).
+- SEFAZ calls for company X never use company Y's cert.
+- CNPJ on the certificate must match `Company.Cnpj`.
+- `.pfx` bytes and passwords are secrets (Docker volume + encrypted password). They are not committed to git.
+
+## What this engine does not do
+
+- It does not scrape storefronts.
+- It does not treat any marketplace as catalog master.
+- It does not update stock inside a webhook handler.
+- It does not embed marketplace ids in domain entities as primary keys.
+- It does not keep a global inventory or a single shared A1 certificate.
+- It does not keep marketplace client ids or partner keys in environment variables for each tenant. Those rows live in `company_marketplace_parameter`.
+- It does not compile one C# project per marketplace or use a `MarketplaceCode` enum. Channels are table rows.
+- It does not publish advertisements under a shared company shop when a vendor exists. Publish uses that vendor's `user_detail_marketplace` subaccount.
+- It does not ship all Metronic demos or the React/Next packages as the running UI. HTML layout-1 + demo1 mapped pages only.
