@@ -1,6 +1,6 @@
 # How to create CNPJ accounts for each marketplace
 
-Operator guide for **A VILMO PINHEIRO CARDOSO TECNOLOGIA LTDA** (CNPJ `68431371000161`) and later companies. This is not application code.
+Operator guide for first company **VILMO COMERCIO, REPRESENTACOES E INFORMATICA** (nome fantasia) / **A. VILMO PINHEIRO CARDOSO TECNOLOGIA LTDA** (razão social), CNPJ `68431371000161`. Seed details: [FirstCompany.md](./FirstCompany.md). This is not application code.
 
 There are always **two layers**:
 

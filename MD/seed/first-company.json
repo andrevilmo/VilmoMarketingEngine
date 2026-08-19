@@ -1,0 +1,79 @@
+{
+  "seedKey": "first-company",
+  "source": {
+    "cartaoCnpj": "RFB Comprovante de Inscrição e de Situação Cadastral",
+    "issuedAtBrasilia": "2026-08-07T08:58:35-03:00",
+    "norm": "IN RFB 2119/2022"
+  },
+  "legalName": "A. VILMO PINHEIRO CARDOSO TECNOLOGIA LTDA",
+  "tradeName": "VILMO COMERCIO, REPRESENTACOES E INFORMATICA",
+  "cnpj": "68431371000161",
+  "cnpjFormatted": "68.431.371/0001-61",
+  "branch": "MATRIZ",
+  "openedOn": "2026-08-04",
+  "companySize": "ME",
+  "legalNature": {
+    "code": "206-2",
+    "name": "Sociedade Empresária Limitada"
+  },
+  "registrationStatus": {
+    "status": "ATIVA",
+    "since": "2026-08-04"
+  },
+  "cnaePrimary": {
+    "code": "4781400",
+    "description": "Comércio varejista de artigos do vestuário e acessórios"
+  },
+  "cnaeSecondary": [
+    { "code": "4619200", "description": "Representantes comerciais e agentes do comércio de mercadorias em geral não especializado" },
+    { "code": "4751201", "description": "Comércio varejista especializado de equipamentos e suprimentos de informática" },
+    { "code": "4753900", "description": "Comércio varejista de eletrodomésticos e equipamentos de áudio e vídeo" },
+    { "code": "4757100", "description": "Comércio varejista especializado de peças e acessórios para aparelhos eletroeletrônicos para uso doméstico, exceto informática e comunicação" },
+    { "code": "4759899", "description": "Comércio varejista de outros artigos de uso pessoal e doméstico não especificados anteriormente" },
+    { "code": "4761003", "description": "Comércio varejista de artigos de papelaria" },
+    { "code": "4772500", "description": "Comércio varejista de cosméticos, produtos de perfumaria e de higiene pessoal" },
+    { "code": "4789004", "description": "Comércio varejista de animais vivos e de artigos e alimentos para animais de estimação" },
+    { "code": "6201501", "description": "Desenvolvimento de programas de computador sob encomenda" },
+    { "code": "6204000", "description": "Consultoria em tecnologia da informação" },
+    { "code": "6619302", "description": "Correspondentes de instituições financeiras" }
+  ],
+  "address": {
+    "street": "R VITOR KONDER",
+    "number": "223",
+    "complement": "SALA 1108",
+    "neighborhood": "CENTRO",
+    "city": "FLORIANOPOLIS",
+    "uf": "SC",
+    "cep": "88015400",
+    "cepFormatted": "88015-400",
+    "country": "BR"
+  },
+  "email": "andre.vilmo@gmail.com",
+  "phone": "5180227183",
+  "phoneFormatted": "(51) 8022-7183",
+  "ie": null,
+  "im": null,
+  "nfe": {
+    "emitenteCnpj": "68431371000161",
+    "cUF": "SC",
+    "certificate": {
+      "kind": "A1 e-CNPJ",
+      "containerPath": "/certs/68431371000161.pfx",
+      "hostPathEnv": "COMPANY_68431371000161_A1_HOST_PATH",
+      "passwordEnv": "COMPANY_68431371000161_A1_PASSWORD",
+      "passwordNotInGit": true,
+      "a1SubjectCn": "A VILMO PINHEIRO CARDOSO TECNOLOGIA LTDA:68431371000161",
+      "a1EmailSan": "admin@vilmomkt.com",
+      "validFromUtc": "2026-08-13T17:48:12Z",
+      "validToUtc": "2027-08-13T17:48:12Z",
+      "issuer": "AC CONSULTI RFB"
+    }
+  },
+  "notes": [
+    "Display name in UI: tradeName (VILMO COMERCIO, REPRESENTACOES E INFORMATICA).",
+    "Legal/fiscal/NF-e emitente and A1: legalName + CNPJ.",
+    "Cartão CNPJ uses 'A.' with a dot; A1 CN has no dot. Both refer to this CNPJ.",
+    "IE is not on the cartão CNPJ; fill before production NF-e if SC requires it.",
+    "PFX and password live only in gitignored .secrets / .env. Never commit them."
+  ]
+}

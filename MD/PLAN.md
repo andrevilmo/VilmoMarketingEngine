@@ -2,7 +2,7 @@
 
 This is the build plan only. No application code, Docker images, or certificates are created until a later task explicitly asks to implement.
 
-Referenced architecture: [MarketPlaceEngine.MD](./MarketPlaceEngine.MD) — **Opção A (in-house)** + **idempotency**. Default UI: [UI.md](./UI.md) (Metronic 9.5.0 HTML). CNPJ seller + developer apps: [HowToCreateCnpjMarketplaceAccounts.md](./HowToCreateCnpjMarketplaceAccounts.md). Depth on login roles, sales sync, outbound NF-e, and Correios labels: [USER_STORIES.md](./USER_STORIES.md).
+Referenced architecture: [MarketPlaceEngine.MD](./MarketPlaceEngine.MD) — **Opção A (in-house)** + **idempotency**. Default UI: [UI.md](./UI.md) (Metronic 9.5.0 HTML). CNPJ seller + developer apps: [HowToCreateCnpjMarketplaceAccounts.md](./HowToCreateCnpjMarketplaceAccounts.md). Depth on login roles, sales sync, outbound NF-e, and Correios labels: [USER_STORIES.md](./USER_STORIES.md). First tenant: [FirstCompany.md](./FirstCompany.md).
 
 ---
 
@@ -198,13 +198,21 @@ Do not hard-code the email in application services. Seed it once; authorize via 
 
 ### First company (seed)
 
+Source: RFB cartão CNPJ **CNPJ EMPRESA NOVA** + A1 PKCS#12 for this CNPJ. Full record: [FirstCompany.md](./FirstCompany.md) and [seed/first-company.json](./seed/first-company.json).
+
 | Field | Value |
 | --- | --- |
-| Legal name | A VILMO PINHEIRO CARDOSO TECNOLOGIA LTDA |
+| Nome fantasia (UI) | **VILMO COMERCIO, REPRESENTACOES E INFORMATICA** |
+| Razão social (legal / NF-e / A1) | **A. VILMO PINHEIRO CARDOSO TECNOLOGIA LTDA** |
 | CNPJ | `68431371000161` |
-| A1 | PKCS#12 issued for that CNPJ |
+| Porte / natureza | ME · 206-2 Sociedade Empresária Limitada |
+| Situação | ATIVA (opened 2026-08-04) |
+| CNAE principal | 47.81-4-00 vestuário e acessórios |
+| Address | R VITOR KONDER, 223, SALA 1108, CENTRO, FLORIANÓPOLIS/SC, CEP **88015400** |
+| Contact | andre.vilmo@gmail.com · (51) 8022-7183 |
+| A1 | e-CNPJ A1, CN `…TECNOLOGIA LTDA:68431371000161`, SAN email `admin@vilmomkt.com`, valid 2026-08-13 → 2027-08-13. **File + password only in gitignored `.secrets/`** |
 
-On implement: seed this company, attach the A1 from secrets, and optionally link `admin@vilmomkt.com` as `CompanyAdmin` **in addition to** the platform flag so the same login works without sending `X-Company-Id` when only this company exists.
+On implement: seed this company from `MD/seed/first-company.json`, mount `.secrets/certs/68431371000161.pfx` into `vilmo-nfe` as `/certs/68431371000161.pfx`, and optionally link `admin@vilmomkt.com` as `CompanyAdmin` **in addition to** the platform flag so the same login works without sending `X-Company-Id` when only this company exists. IE is not on the cartão; collect it before production emit if SC requires it.
 
 ### Per-company A1 (SEFAZ)
 
@@ -213,14 +221,14 @@ On implement: seed this company, attach the A1 from secrets, and optionally link
 **Do not commit `.pfx` files or certificate passwords.** The operator already has a local A1 for CNPJ `68431371000161`. When coding starts, map it into the `vilmo-nfe` container as a read-only file named by CNPJ, for example:
 
 ```
-# gitignored .env (example names only)
-COMPANY_68431371000161_A1_HOST_PATH=<absolute-path-to-pfx-on-the-host>
-COMPANY_68431371000161_A1_PASSWORD=<pfx-password>
+# gitignored .env — see .env.example
+COMPANY_68431371000161_A1_HOST_PATH=.secrets/certs/68431371000161.pfx
+COMPANY_68431371000161_A1_PASSWORD_FILE=.secrets/certs/68431371000161.pfx.pass
 ```
 
 Compose mounts the host file to `/certs/68431371000161.pfx` inside `vilmo-nfe`. The database row stores `company_id`, CNPJ, container path, and the password **encrypted**, not plaintext in appsettings.
 
-The host file currently lives under the operator's Downloads folder and is named with the legal name and CNPJ. Docker Compose override (also gitignored) points at that file. **Rotate the PFX password if it was ever pasted into chat or a commit.**
+The host file is the operator A1 for this CNPJ (PKCS#12). Keep it at gitignored `.secrets/certs/68431371000161.pfx`. The original download was named with the razão social and the password in the filename — **never commit that name or the password**. Docker Compose override (also gitignored) points at `.secrets/certs/`. Original PFX uses RC2-40-CBC; OpenSSL 3 / Linux needs `-legacy` or a re-exported AES PFX.
 
 If a company has no cert yet: ingest via XML upload still works; DistDFe returns `CertificateNotConfigured` for that company only.
 
@@ -579,7 +587,7 @@ Shopee/SHEIN HMAC failures are not retried blindly; they are `Failed` with a dis
 - Token refresh is a worker job per **vendor subaccount**, with a lock `lock:token-refresh:{companyId}:{userId}:{marketplaceCode}`. After refresh, update the parameter row and `DEL` the cache key.
 - HMAC signing goes through `HmacSha256AuthProtocol` (used by Shopee and SHEIN seed data). Partner keys stay in parameter rows.
 - SHEIN `secretKey` is a vendor/company parameter (`is_secret`), treated like a long-lived token until re-auth.
-- A1 password for CNPJ `68431371000161` lives only in gitignored `.env` / secret store.
+- A1 password for CNPJ `68431371000161` lives only in gitignored `.env` / `.secrets/` (see [FirstCompany.md](./FirstCompany.md)). Never in git.
 - AWS Console (to publish this project later): root email `admin@vilmomkt.com`. Password is **not** in git (gitignored `.secrets/`). MFA is required; when AWS login is needed, **stop and ask the operator to enter the MFA code**. Do not attempt MFA bypass.
 
 ---
