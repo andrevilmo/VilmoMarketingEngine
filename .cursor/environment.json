@@ -1,0 +1,15 @@
+{
+  "name": "VilmoMarketingEngine",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "user": "ubuntu",
+  "install": "dotnet restore VilmoMarketingEngine.slnx",
+  "terminals": [
+    {
+      "name": "api",
+      "command": "ASPNETCORE_ENVIRONMENT=Development dotnet run --project src/VilmoMarketingEngine.Api --no-launch-profile --urls http://0.0.0.0:5080"
+    }
+  ],
+  "ports": [5080]
+}
