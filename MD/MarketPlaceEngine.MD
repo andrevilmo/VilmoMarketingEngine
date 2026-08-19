@@ -30,6 +30,16 @@ The system is for **N companies**. `CompanyId` is the tenant. Catalog, inventory
 | `users_detail` | Vendor profile shared by all marketplace subaccounts | `(companyId, userId)` |
 | `user_detail_marketplace` | That vendor's **subaccount** on one marketplace (key/value params) | `(companyId, userId, marketplaceCode)` |
 
+Login personas (see [USER_STORIES.md](./USER_STORIES.md)):
+
+| Persona | Who | Visibility |
+| --- | --- | --- |
+| **Admin** | `IsPlatformSuperUser` | **All** companies, users, sales, NF-e, labels |
+| **Company** | `CompanyAdmin` of a CNPJ | **All users of that company** and **all of their sales** |
+| **Vendor user** | `UserProfile.Vendor` | Own marketplace links + **own sales** only |
+
+A vendor **belongs to the company by CNPJ** (`Company.Cnpj` unique). Marketplace links are `user_detail_marketplace` rows under that `company_id`. Sales attach to `vendor_user_id`. Cross-vendor reads inside the same CNPJ are allowed for Company and Admin, not for Vendor.
+
 Rules:
 
 - Every mutating API call runs inside a **company context**.
@@ -52,7 +62,12 @@ Marketplaces never own product identity. The engine owns, **always scoped by `Co
 | `InventoryMovement` | Immutable stock event | `(companyId, chaveAcesso, itemIndex, movementKind)` |
 | `Offer` | Price + allocated stock for one channel | `(companyId, sku, marketplace, vendorSubaccount)` |
 | `Listing` | Remote advertisement published by a vendor subaccount | `(companyId, vendorUserId, marketplace, remoteListingId)` |
-| `SalesOrder` | Normalized order | `(companyId, internal order id)` + remote id |
+| `Sale` | Normalized marketplace order (common columns) | `(companyId, id)` unique remote `(companyId, marketplaceCode, remoteOrderId)` |
+| `SaleItem` | Line of that sale | `(saleId, lineNo)` |
+| `SaleMarketplaceAttribute` | Channel-only field (`field_name`, `field_value`) | `(saleId, fieldName)` |
+| `SaleStatus` | Canonical status shared by all channels | See state machine below |
+| `OutboundNfe` | NF-e de saída for a paid sale (DFe.NET) | `(companyId, saleId)` |
+| `ShipmentLabel` | Correios-format PDF (100×150 or 138×106 mm) | `(saleId, format)` |
 | `ConnectedAccount` | Company-level marketplace app config (not the vendor shop) | `(companyId, marketplace)` |
 
 A company has **many marketplaces**. Each marketplace has **many vendor subaccounts**. Company app credentials live in `company_marketplace_*`. Vendor identity lives in `users_detail` + `user_detail_marketplace`. See **Vendors and marketplace subaccounts** below.
@@ -68,7 +83,7 @@ What the binary contains (stable, few):
 | Type | One job |
 | --- | --- |
 | `IAuthProtocol` | Sign or attach credentials. Seeded implementations: `OAuth2AuthorizationCode`, `HmacSha256`, `BearerToken`, `ApiKeyHeader` |
-| `IMarketplaceOperationExecutor` | Run one canonical operation (`PublishListing`, `UpdateStock`, `UpdatePrice`, `FetchOrder`, `UploadInvoice`, `VerifyWebhook`) using a binding row |
+| `IMarketplaceOperationExecutor` | Run one canonical operation (`PublishListing`, `UpdateStock`, `UpdatePrice`, `FetchOrder`, `UploadInvoice`, `FetchShipmentLabel`, `VerifyWebhook`) using a binding row |
 | `IJsonMappingEngine` | Apply stored request/response mappings (JSON templates + JSONPath) |
 | `IMarketplaceDefinitionReader` | Load definition from Redis/Postgres by `marketplace_code` |
 
@@ -168,6 +183,25 @@ If a marketplace is enabled on the company **later**, provision a missing `user_
 
 Vendor marketplace params are also cache-aside in Redis (`vendor-marketplace:{companyId}:{userId}:{marketplaceCode}`), invalidated on write — same pattern as company config.
 
+## Sales (common + EAV) and canonical status
+
+Webhooks never persist marketplace JSON as the source of truth. `FetchOrder` + stored JSON mappings fill:
+
+1. **`sales`** — buyer, recipient address (CEP 8 digits), amounts, vendor, marketplace code, remote id, `SaleStatus`, tracking, sender snapshot (company CNPJ + address).
+2. **`sale_items`** — sku/qty/price/NCM.
+3. **`sale_marketplace_attributes`** — only what does not belong on the common row (`field_name` / `field_value`). Allowed names: `marketplace_sale_field_definition` (data).
+
+Unique import: `(company_id, marketplace_code, remote_order_id)`. Re-delivery updates attributes and `remote_status`; canonical status follows `marketplace_sale_status_map` **and** the state machine (marketplace “invoice pending” ≠ our NF-e done).
+
+`SaleStatus`: `PendingPayment` → `Paid` → `Invoicing` → `PreparingForDispatch` → `LabelPrinted` → `Shipped` → `Delivered` (+ `InvoiceRejected`, `Cancelled`, `Returning`, `Returned`).
+
+Buttons:
+
+- `Paid` / `InvoiceRejected` → **Emitir NF-e** (`NFeAutorizacao` with sale dest/items, company A1). Success → `PreparingForDispatch`.
+- `PreparingForDispatch` / `LabelPrinted` → **Imprimir etiqueta para envio** (PDF 100×150 mm default, or 138×106 mm). Required: recipient name + full address + CEP; sender name + full address + CEP + CNPJ/CPF; postal service + real tracking barcode. Affix on largest side; do not cover barcode; do not wrap folds.
+
+Visibility: Admin all; Company all sales of the CNPJ; Vendor `WHERE vendor_user_id = me`. Depth: [USER_STORIES.md](./USER_STORIES.md).
+
 ## Idempotency (mandatory, always keyed by company)
 
 Every write that can be retried must be idempotent. Retries are normal (webhooks, SEFAZ timeouts, 429s). **Company A and Company B may send the same `Idempotency-Key`.** Those are different operations.
@@ -193,7 +227,10 @@ Every write that can be retried must be idempotent. Retries are normal (webhooks
 | Create vendor | `(company_id, user_id)` on `users_detail` |
 | Create vendor subaccount | `(company_id, user_id, marketplace_code)` on `user_detail_marketplace` |
 | Upsert listing | `(company_id, vendor_user_id, sku, marketplace_code)` |
-| Import order | `(company_id, marketplace_code, remote_order_id)` |
+| Import sale | `(company_id, marketplace_code, remote_order_id)` |
+| Sale attribute | `(sale_id, field_name)` |
+| Outbound NF-e | `(company_id, sale_id)` |
+| Shipment label | `(sale_id, format)` until regenerated |
 | Webhook | `(company_id, marketplace_code, event_id)` |
 | Push stock | `(company_id, listing_id, command_id)` |
 | HTTP idempotency audit | `(company_id, idempotency_key)` |
@@ -266,4 +303,9 @@ Each company has its own A1 certificate bound to **that company's CNPJ**. `vilmo
 - It does not keep marketplace client ids or partner keys in environment variables for each tenant. Those rows live in `company_marketplace_parameter`.
 - It does not compile one C# project per marketplace or use a `MarketplaceCode` enum. Channels are table rows.
 - It does not publish advertisements under a shared company shop when a vendor exists. Publish uses that vendor's `user_detail_marketplace` subaccount.
+- It does not let a vendor read another vendor's sales in the same CNPJ. Company admin and platform admin may.
+- It does not treat marketplace JSON as the sale source of truth. Common columns + EAV attributes only.
+- It does not move a sale to `PreparingForDispatch` until **our** NF-e is authorized (unless `invoiced_by_marketplace`).
+- It does not print an A4 page as the shipping label. Page box is 100×150 mm or 138×106 mm.
+- It does not invent Correios tracking barcodes.
 - It does not ship all Metronic demos or the React/Next packages as the running UI. HTML layout-1 + demo1 mapped pages only.

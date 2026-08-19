@@ -2,7 +2,7 @@
 
 This is the build plan only. No application code, Docker images, or certificates are created until a later task explicitly asks to implement.
 
-Referenced architecture: [MarketPlaceEngine.MD](./MarketPlaceEngine.MD) — **Opção A (in-house)** + **idempotency**. Default UI: [UI.md](./UI.md) (Metronic 9.5.0 HTML). CNPJ seller + developer apps: [HowToCreateCnpjMarketplaceAccounts.md](./HowToCreateCnpjMarketplaceAccounts.md).
+Referenced architecture: [MarketPlaceEngine.MD](./MarketPlaceEngine.MD) — **Opção A (in-house)** + **idempotency**. Default UI: [UI.md](./UI.md) (Metronic 9.5.0 HTML). CNPJ seller + developer apps: [HowToCreateCnpjMarketplaceAccounts.md](./HowToCreateCnpjMarketplaceAccounts.md). Depth on login roles, sales sync, outbound NF-e, and Correios labels: [USER_STORIES.md](./USER_STORIES.md).
 
 ---
 
@@ -16,8 +16,12 @@ A .NET API, run entirely from Docker Compose, that:
 4. Each vendor publishes advertisements to **Mercado Livre**, **Shopee**, **SHEIN**, and **Magalu** using **their** subaccount on each channel (default: all marketplaces).
 5. Accepts a fifth marketplace **without a rebuild**: insert a `marketplace` row + bindings + parameter definitions (admin UI). Existing vendors get a `user_detail_marketplace` when the company enables that code.
 6. Ships a **Metronic 9.5.0 HTML** admin UI (default templates from `template-metronic/.../metronic-v9.5.0/`). See [UI.md](./UI.md).
+7. Logs users in as **Admin** (see all), **Company** (see all of that CNPJ's users and sales), or **Vendor** (see only own sales and marketplace links).
+8. Keeps marketplace orders in a **common `sales` table** plus **`sale_marketplace_attributes`** (`field_name`, `field_value`) for channel-only data. One **canonical `SaleStatus`** across ML, Shopee, SHEIN, Magalu.
+9. On **Pago**, shows **Emitir nota fiscal eletrônica**: ZeusAutomacao/DFe.NET `NFeAutorizacao` with sale dest/items and the **company** A1. Success → `PreparingForDispatch` (Preparando para envio).
+10. Then shows **Imprimir etiqueta para envio**: PDF **10×15 cm** (or 13.8×10.6 cm) with sender (company CNPJ + address), recipient (name, full address, CEP 8 digits), and postal/tracking data. Affix rules: largest side, do not cover barcode, do not wrap folds.
 
-Idempotency is always `(CompanyId, key)`. See [MarketPlaceEngine.MD](./MarketPlaceEngine.MD).
+Idempotency is always `(CompanyId, key)`. See [MarketPlaceEngine.MD](./MarketPlaceEngine.MD) and [USER_STORIES.md](./USER_STORIES.md).
 
 ---
 
@@ -32,7 +36,7 @@ KISS: four HTTP clients plus one fiscal SOAP client do not justify eight deploya
 | `vilmo-api` | Public HTTP: commands, OAuth callbacks, webhook ACK. Must answer fast. |
 | `vilmo-web` | Metronic HTML UI. Proxies `/api` to `vilmo-api`. |
 | `vilmo-worker` | Slow marketplace I/O, retries, stock fan-out. |
-| `vilmo-nfe` | DFe.NET, **per-company** A1 certificates, SEFAZ rate limits, SOAP timeouts. Isolated so a SEFAZ outage does not take the API down. |
+| `vilmo-nfe` | DFe.NET: DistDFe ingest **and** `NFeAutorizacao` emit, **per-company** A1, SEFAZ rate limits. Isolated so a SEFAZ outage does not take the API down. |
 | `postgres` | Source of truth. |
 | `redis` | Idempotency keys, marketplace-config cache, **vendor-subaccount cache**, **Redis Streams**. |
 
@@ -158,7 +162,15 @@ The product is multi-company from day one. There is no "default company" fallbac
 
 `CompanyRole` / `UserProfile`: `CompanyAdmin`, `Operator`, `Viewer`, **`Vendor`**.
 
-Vendors sell. Each company has many vendors. Each vendor publishes through **their own subaccount** on each marketplace.
+**Login personas (user stories US-01–US-03):**
+
+| Persona | Profile | Sees |
+| --- | --- | --- |
+| Admin | `IsPlatformSuperUser` | All companies, all users, all sales |
+| Company | `CompanyAdmin` | All users of **this CNPJ**, all of their sales |
+| Vendor user | `Vendor` | Own marketplace links + **own sales** only |
+
+Vendors sell. Each company has many vendors. Each vendor is **linked to marketplaces** via `user_detail_marketplace` and **belongs to the company by CNPJ** (`users_detail.company_id` → `Company.Cnpj`). Each vendor publishes through **their own subaccount** on each marketplace and sees only sales attached to that subaccount.
 
 Authorization:
 
@@ -291,6 +303,51 @@ Vendor subaccount params: Redis cache-aside `vendor-marketplace:{companyId}:{use
 - Connector uses company app credentials **plus** that vendor's `user_detail_marketplace` parameters, executed through the **generic** binding for that `marketplace_code`.
 - Listing unique `(company_id, vendor_user_id, sku, marketplace_code)` so a retry does not double-publish.
 
+### Sales: common table + marketplace-specific attributes (US-04, US-05)
+
+Orders are not stored as raw JSON. One **common sale** per remote order, plus EAV rows for fields that exist only on that channel.
+
+| Table | One job |
+| --- | --- |
+| `sales` | Canonical order: company, vendor, `marketplace_code`, remote id, **`SaleStatus`**, money, buyer/recipient address (CEP 8 digits), tracking, FKs to NF-e and label |
+| `sale_items` | Lines: sku, qty, prices, NCM/CFOP hints |
+| `sale_marketplace_attributes` | `(sale_id, field_name, field_value)` — e.g. ML `shipment_id`, Shopee `package_number`. Names from `marketplace_sale_field_definition` |
+| `marketplace_sale_status_map` | Remote status/substatus → canonical `SaleStatus` (data, not a C# switch) |
+
+Unique import key: `(company_id, marketplace_code, remote_order_id)`. Webhooks upsert; they never create a second sale. Vendor scope: `vendor_user_id` from the matching `user_detail_marketplace` shop/seller id.
+
+Canonical statuses (UI in PT): `PendingPayment` (Aguardando pagamento) → `Paid` (Pago) → `Invoicing` → `PreparingForDispatch` (Preparando para envio) → `LabelPrinted` → `Shipped` → `Delivered`, plus `InvoiceRejected`, `Cancelled`, `Returning`, `Returned`.
+
+Marketplace “ready_to_ship / invoice_pending” stays **`Paid` until our NF-e is authorized**. The emit button is what moves the sale to Preparando para envio. Exception: attribute `invoiced_by_marketplace=true` (fulfillment).
+
+### Outbound NF-e from a paid sale (US-06)
+
+Inbound NF-e (chave / XML / DistDFe) still builds **inventory**. A **paid marketplace sale** additionally **emits** a model-55 NF-e de saída with [DFe.NET](https://github.com/ZeusAutomacao/DFe.NET):
+
+1. Guard: status `Paid` or `InvoiceRejected`; dest CEP 8 digits; company A1 present; items have NCM/tax profile.
+2. `POST /sales/{saleId}/nfe` → status `Invoicing` → `vilmo-nfe` builds `NFe.Classes.NFe` from the **common sale** (emit = **company CNPJ**, dest = buyer/recipient, det = `sale_items`).
+3. `ServicosNFe.NFeAutorizacao(lote, IndicadorSincronizacao.Sincrono, nfeList)`.
+4. Authorized (`cStat` 100/150) → store XML + chave, confirm outbound stock movement, status **`PreparingForDispatch`**. Then enqueue `UploadInvoice` to the channel (Shopee `upload_invoice_doc`, ML XML when shipment allows). Upload failure does not roll back the NF-e (chip “XML pendente no marketplace”).
+5. Rejected → `InvoiceRejected`; button stays visible.
+
+Emitente is always the **company CNPJ** (A1). The vendor is the seller of the order, not a second emitente.
+
+### Shipping label (US-07)
+
+When status is `PreparingForDispatch` or `LabelPrinted`, UI shows **Imprimir etiqueta para envio**.
+
+- PDF page **100×150 mm** (default) or **138×106 mm** (13.8×10.6 cm). Not an A4 sheet with a sticker drawing.
+- **Recipient:** full name or razão social; street, number, complement; neighborhood; city + UF; CEP 8 digits.
+- **Sender:** company legal/trade name; full origin address; origin CEP; **CNPJ** (or CPF if PF — Vilmo tenants are CNPJ).
+- **Postal:** carrier/service name, tracking when real, barcode of that tracking (never a fake barcode). NF-e chave in small type.
+- Marketplace logistics: print the channel PDF if `FetchShipmentLabel` returns one; otherwise compose our layout from common sale fields.
+- Placement copy in the UI: largest side of the box; do not cover the barcode; do not wrap edges/folds.
+- Persist `shipment_labels`; first print sets `LabelPrinted`. Reprint allowed.
+
+v1 prints via browser/PDF driver. Correios SIGEP/PLP API can follow; do not invent tracking numbers.
+
+Full field lists, state machine, and API table: [USER_STORIES.md](./USER_STORIES.md).
+
 ---
 
 ## 4. Best approach mapped to SOLID and clean code
@@ -304,7 +361,7 @@ Vendor subaccount params: Redis cache-aside `vendor-marketplace:{companyId}:{use
 | DIP | Core depends on `IMarketplaceDefinitionReader` and `IAuthProtocol`, not `MercadoLivreClient`. |
 | Names | `HmacSha256AuthProtocol`, `ChaveAcesso`, `CompanyId`, `VendorUserId`, `users_detail`. No `Manager`. |
 | Small functions | HTTP controllers only validate + enqueue. |
-| No magic | `marketplace.code` strings from the table, `AuthProtocolCode.HmacSha256`, `UserProfile.Vendor`, `NfeStatus.Authorized`. |
+| No magic | `marketplace.code` strings from the table, `AuthProtocolCode.HmacSha256`, `UserProfile.Vendor`, `SaleStatus.Paid`, `NfeStatus.Authorized`. |
 | KISS | Three app containers, Redis Streams, modular monolith solution. |
 
 ---
@@ -323,13 +380,15 @@ src/
   Vilmo.Inventory.Application/
   Vilmo.Marketplace.Engine/       # generic executor, auth protocols, JSON mappings
   Vilmo.Marketplace.Seed/         # SQL/JSON fixtures for ML, Shopee, SHEIN, Magalu (data only)
-  Vilmo.Nfe.Domain/               # ChaveAcesso, NfeDocument, CfopPolicy
+  Vilmo.Sales.Domain/            # Sale, SaleStatus, attributes, shipment label
+  Vilmo.Sales.Application/
+  Vilmo.Nfe.Domain/               # ChaveAcesso, NfeDocument, CfopPolicy, outbound emit mapping
   Vilmo.Nfe.Application/
   Vilmo.Nfe.Zeus/                 # ISefazDocumentFetcher → DFe.NET
   Vilmo.Api/                      # ASP.NET Core
   Vilmo.Web/                      # Metronic HTML (layout-1 + demo1 page slice)
   Vilmo.Worker/                   # marketplace + inventory consumers
-  Vilmo.Nfe.Worker/               # SEFAZ / XML parse / movements
+  Vilmo.Nfe.Worker/               # SEFAZ ingest + outbound NFeAutorizacao / XML parse / movements
 tests/
   *.Unit / *.Contract
 deploy/
@@ -349,7 +408,7 @@ Clean architecture per bounded context. Marketplace projects reference Contracts
 
 ```
 services:
-  postgres:     # catalog, inventory, orders, company config, users_detail, vendor subaccounts
+  postgres:     # catalog, inventory, sales, sale attributes, company config, users_detail, vendor subaccounts
   redis:        # streams + idempotency + marketplace-config cache
   vilmo-api:    # :8080
   vilmo-web:    # :8081 Metronic HTML; /api → vilmo-api
@@ -371,7 +430,7 @@ Full investigation and screen map: [UI.md](./UI.md).
 - Runtime uses **HTML only**: starter **layout-1** + **demo1** page patterns (sign-in branded, members datatable, settings, integrations).
 - Inventory / products / orders **information architecture** comes from the React concept `store-inventory`, rebuilt as HTML tables — do not run the Vite/Next apps.
 - `vilmo-web` copies a **slice** of assets + mapped pages. It does not ship all 10 demos or the React packages.
-- Sidebar: Dashboard, NF-e / Inventory, Products, Advertisements, Orders, Vendors, Marketplaces, Settings (+ Companies for super user).
+- Sidebar: Dashboard, NF-e / Inventory, Products, Advertisements, **Sales**, Vendors, Marketplaces, Settings (+ Companies for super user). Vendor sidebar: Dashboard, My sales, My advertisements, My marketplaces, Profile. Sale detail: **Emitir NF-e** when `Paid`; **Imprimir etiqueta para envio** when `PreparingForDispatch`.
 
 ---
 
@@ -408,10 +467,17 @@ Auth: bearer session/JWT with `user_id`, `is_platform_super_user`, and membershi
 | `POST` | `/advertisements` | Vendor publishes a product. `marketplaceCodes` optional; **default all**. One listing per selected marketplace using that vendor's subaccount. |
 | `POST` | `/listings` | Same as `/advertisements` (alias). |
 | `POST` | `/inventory/{sku}/publish` | Fan-out this vendor's stock on selected marketplaces (default all). |
+| `GET` | `/sales` | Company/Admin: all sales of the active CNPJ. Vendor: own sales only. Filters: `status`, `marketplace_code`. |
+| `GET` | `/sales/{saleId}` | Common sale + items + EAV attributes (masked). `404` if outside visibility. |
+| `POST` | `/sales/{saleId}/sync` | Enqueue FetchOrder. Admin/Company. |
+| `POST` | `/sales/{saleId}/nfe` | **Emitir NF-e** (Paid / InvoiceRejected). DFe.NET; then `PreparingForDispatch`. |
+| `GET` | `/sales/{saleId}/nfe` | Outbound XML/chave/status. |
+| `POST` | `/sales/{saleId}/label` | **Imprimir etiqueta para envio**. Body `{ "format": "Mm100x150" \| "Mm138x106" }`. |
+| `GET` | `/sales/{saleId}/label.pdf` | Label PDF. |
 
 Webhook routes are allowed **without** `Idempotency-Key` and **without** a user JWT; they use marketplace event ids and resolve `CompanyId` + vendor from `user_detail_marketplace` (shop/seller parameter). If the subaccount is unknown, ACK 200 and drop (or park) — do not attach to a random company or vendor.
 
-Row-level rule: `WHERE company_id = @activeCompanyId` on every business query. Super user still must set an active company for writes; list-all is only for `GET /companies` and admin diagnostics.
+Row-level rule: `WHERE company_id = @activeCompanyId` on every business query. Vendors add `AND vendor_user_id = @me` on sales, listings, and labels. Super user still must set an active company for writes; list-all is only for `GET /companies` and admin diagnostics.
 
 ---
 
@@ -457,7 +523,7 @@ vilmo-nfe
 
 **Do not** apply movements to another company even if the XML CNPJ looks familiar. The authenticated/active `CompanyId` plus a CNPJ match check is required.
 
-Reservation: marketplace orders of that company decrement **available** via `reserved`, not on-hand, until shipment/NF-e de saída confirms.
+Reservation: marketplace sales of that company decrement **available** via `reserved` when status becomes `Paid`, not on-hand, until the **outbound NF-e** (US-06) confirms the movement.
 
 ---
 
@@ -474,6 +540,11 @@ Reservation: marketplace orders of that company decrement **available** via `res
 | Create vendor | PostgreSQL unique | `(company_id, user_id)` on `users_detail` | forever |
 | Vendor subaccount | PostgreSQL unique | `(company_id, user_id, marketplace_code)` on `user_detail_marketplace` | forever |
 | Publish advertisement | PostgreSQL unique | `(company_id, vendor_user_id, sku, marketplace_code)` | forever |
+| Import sale | PostgreSQL unique | `(company_id, marketplace_code, remote_order_id)` | forever |
+| Sale attribute | PostgreSQL unique | `(sale_id, field_name)` | forever |
+| Emit outbound NF-e | PostgreSQL unique | `(company_id, sale_id)` on outbound `nfe_documents` | forever |
+| Emit NF-e lock | Redis | `lock:nfe-emit:{companyId}:{saleId}` | seconds |
+| Shipment label | PostgreSQL unique | `(sale_id, format)` until invalidated | forever |
 | Token refresh lock | Redis | `lock:token-refresh:{companyId}:{userId}:{marketplaceCode}` | seconds |
 | Marketplace config cache | Redis | `marketplace-config:{companyId}:{marketplaceCode}` | until write (optional 24h TTL) |
 | Marketplace definition cache | Redis | `marketplace-definition:{code}` | until super-user update |
@@ -506,24 +577,27 @@ Shopee/SHEIN HMAC failures are not retried blindly; they are `Failed` with a dis
 Do not build four C# marketplace projects. Build the **generic engine** first, then seed the four launch definitions as data.
 
 1. **Foundation** — solution, Docker Compose (postgres + redis + empty API), BuildingBlocks (Result, company-scoped idempotency, streams), health checks.
-2. **Identity + tenancy** — `Company`, `User`, `UserCompany`, JWT/`X-Company-Id`, seed `admin@vilmomkt.com` + company CNPJ `68431371000161`. Row filters by `company_id`. `UserProfile.Vendor`, `users_detail`, `user_detail_marketplace`; creating a vendor provisions one subaccount per enabled marketplace (idempotent per company).
-3. **Metronic UI shell** — `vilmo-web` from HTML starter layout-1 + demo1 sign-in and members datatable, proxied to the API. Company switcher for super user. See [UI.md](./UI.md).
+2. **Identity + tenancy** — `Company`, `User`, `UserCompany`, JWT/`X-Company-Id`, seed `admin@vilmomkt.com` + company CNPJ `68431371000161`. Row filters by `company_id`. Personas: Admin / Company / Vendor (US-01–03). `UserProfile.Vendor`, `users_detail`, `user_detail_marketplace`; creating a vendor provisions one subaccount per enabled marketplace (idempotent per company). Vendor APIs force `vendor_user_id = me` on sales.
+3. **Metronic UI shell** — `vilmo-web` from HTML starter layout-1 + demo1 sign-in and members datatable, proxied to the API. Company switcher for super user. Role-based sidebar. See [UI.md](./UI.md).
 4. **Catalog + inventory domain** — Product, identifiers, movements, balances, uniqueness all include `company_id`.
-5. **NF-e module** — `ChaveAcesso`, XML parse via DFe.NET, CFOP policy vs `Company.Cnpj`, ingest API, XML upload path. `ICompanyCertificateStore` + Zeus fetcher for companies that have an A1 (first tenant included). HTML ingest form (chave + Dropzone XML).
+5. **NF-e ingest module** — `ChaveAcesso`, XML parse via DFe.NET, CFOP policy vs `Company.Cnpj`, ingest API, XML upload path. `ICompanyCertificateStore` + Zeus fetcher for companies that have an A1 (first tenant included). HTML ingest form (chave + Dropzone XML).
 6. **Marketplace engine** — `IAuthProtocol` pack (`OAuth2AuthorizationCode`, `HmacSha256`, `BearerToken`, `ApiKeyHeader`), generic HTTP executor, JSON mappings, definition cache. Commands carry `CompanyId`, `VendorUserId`, and string `marketplace_code`. Advertisement publish: `marketplaceCodes` default all.
-7. **Seed four channels** — SQL/JSON fixtures for Mercado Livre, Magalu, Shopee, SHEIN (SHEIN may be `is_active = false` until Open Platform docs). No per-brand class.
-8. **Admin: register marketplace** — `POST /marketplaces` so Amazon (or any code) is added at runtime. Backfill vendor subaccounts when a company enables the new code.
-9. **Hardening** — Polly per host, 429 budgets, contract tests against fixtures, structured logs, no secrets in logs, tenancy tests (company A cannot read company B). Adding a fifth channel in tests is an INSERT, not a new project.
+7. **Seed four channels** — SQL/JSON fixtures for Mercado Livre, Magalu, Shopee, SHEIN (SHEIN may be `is_active = false` until Open Platform docs). Include `marketplace_sale_field_definition` and `marketplace_sale_status_map`. No per-brand class.
+8. **Sales sync** — `sales` + `sale_items` + `sale_marketplace_attributes`. Webhook → FetchOrder → upsert. Canonical `SaleStatus`. List/detail UI scoped by role.
+9. **Outbound NF-e** — `POST /sales/{id}/nfe`, `NFeAutorizacao`, status `PreparingForDispatch`, upload XML to channel. Button **Emitir NF-e** on Paid.
+10. **Shipping label** — PDF 100×150 (or 138×106), required sender/recipient/postal fields, button **Imprimir etiqueta para envio**.
+11. **Admin: register marketplace** — `POST /marketplaces` so Amazon (or any code) is added at runtime. Backfill vendor subaccounts when a company enables the new code. Status map + EAV field definitions are rows, not a rebuild.
+12. **Hardening** — Polly per host, 429 budgets, contract tests against fixtures, structured logs, no secrets in logs, tenancy tests (company A cannot read company B; vendor A cannot read vendor B sales). Adding a fifth channel in tests is an INSERT, not a new project.
 
-Each step stays shippable. Step 5 already gives "company user reads chave / XML → that company's inventory".
+Each step stays shippable. Step 5 already gives "company user reads chave / XML → that company's inventory". Step 8 gives "vendor sees only his sales". Step 9–10 give the paid → NF-e → label path.
 
 ---
 
 ## 12. Testing strategy
 
-- Unit: `ChaveAcesso` DV, CFOP policy, idempotency state machine (`companyId` in the Redis key), translators, authorization (super user vs member).
-- Contract: generic executor against recorded HTTP fixtures keyed by `marketplace_code` (no live ML/Shopee in CI).
-- Integration: Testcontainers for Postgres + Redis; two companies; ingest a sample `procNFe` XML into A and assert B's inventory is empty; same `Idempotency-Key` on A and B both succeed; company A Shopee `PartnerId` does not leak into company B; config read hits Redis on the second call; `PUT` config deletes the cache key; creating a vendor twice with the same key does not duplicate `user_detail_marketplace`; publish with omitted `marketplaceCodes` fans out to all vendor subaccounts; **inserting a fifth `marketplace` row** (no code change) lets a company enable it and provision vendor subaccounts.
+- Unit: `ChaveAcesso` DV, CFOP policy, idempotency state machine (`companyId` in the Redis key), translators, authorization (admin vs company vs vendor), `SaleStatus` map, CEP 8 digits, label page size.
+- Contract: generic executor against recorded HTTP fixtures keyed by `marketplace_code` (no live ML/Shopee in CI). Sale normalizer fixtures → `sales` + EAV rows.
+- Integration: Testcontainers for Postgres + Redis; two companies; ingest a sample `procNFe` XML into A and assert B's inventory is empty; same `Idempotency-Key` on A and B both succeed; company A Shopee `PartnerId` does not leak into company B; config read hits Redis on the second call; `PUT` config deletes the cache key; creating a vendor twice with the same key does not duplicate `user_detail_marketplace`; publish with omitted `marketplaceCodes` fans out to all vendor subaccounts; **inserting a fifth `marketplace` row** (no code change) lets a company enable it and provision vendor subaccounts; vendor A `GET /sales` does not include vendor B; stub `INfeAuthorizer` emit moves `Paid` → `PreparingForDispatch`; second emit `409`; label PDF 100×150 contains sender CNPJ and recipient CEP.
 - SEFAZ: optional manual homologation with CNPJ `68431371000161`'s A1; never call production SEFAZ from CI; never check a real `.pfx` into the repo.
 
 ---
@@ -533,26 +607,42 @@ Each step stays shippable. Step 5 already gives "company user reads chave / XML 
 - SHEIN docs are gated; estimates for product/stock field mapping are incomplete until approval.
 - DistDFe `consChNFe` is the wrong primary sync at volume; add NSU polling before production traffic.
 - Mercado Livre will disable notifications if the API does work in the request thread.
-- Shopee Brazil invoice upload is a separate pipeline from inbound inventory NF-e.
-- Missing `company_id` on a unique index or Redis key will mix tenants. Treat that as a release blocker.
-- DFe.NET SOAP clients historically assume Windows cert stores; Linux A1 load must be proven in homologation **per certificate**, starting with CNPJ `68431371000161`.
+- Shopee Brazil invoice upload is a separate pipeline from inbound inventory NF-e; it runs **after** our outbound authorization (US-06).
+- Missing `company_id` on a unique index or Redis key will mix tenants. Treat that as a release blocker. Missing `vendor_user_id` on sales lets one vendor see another — also a release blocker.
+- DFe.NET SOAP clients historically assume Windows cert stores; Linux A1 load must be proven in homologation **per certificate**, starting with CNPJ `68431371000161`. Emission (`NFeAutorizacao`) on Linux must be proven in homologation the same way.
 - Creating a vendor without enabled company marketplaces yields `users_detail` and zero subaccounts; enabling a marketplace later must backfill `user_detail_marketplace` for every vendor.
 - Copying the entire Metronic tree into the web image will bloat deploys and mix 10 duplicate demos. Copy only layout-1 + demo1 mapped pages + `dist/assets`.
 - A new marketplace whose HTTP API cannot be expressed as URL + JSON templates (binary protocols, proprietary SDKs) still needs an engine extension. That is the exception; OAuth2 + HMAC + JSON covers the four launch channels and typical Amazon SP-API-style REST.
+- Marketplace logistics PDFs may not be 10×15; if so, still send that official label to the printer (carrier scanning) and keep our layout for `SellerCorreios`.
+- Incomplete recipient address (CEP ≠ 8 digits) must block emit and label, not SEFAZ round-trips.
 
 ---
 
 ## 14. Out of scope for the first build
 
-- Emission of NF-e (we ingest and, later, upload XML to Shopee; we do not become an issuer in v1).
+- NFCe (model 65), CT-e, MDF-e.
+- Full Correios SIGEP/PLP posting ticket in v1 (label **layout** is in scope; purchasing a real PLP tracking code can follow).
+- Auto-print to a named IPP/ZPL printer without the browser.
 - Pricing intelligence / ads.
 - Multi-tenant **billing / SaaS metering** (multi-**company** data isolation is in scope).
 - One C# project per marketplace, or a `MarketplaceCode` enum that requires a rebuild to add Amazon.
 - Metronic React / Next.js apps as the production UI (HTML is the default).
 - RabbitMQ, Kubernetes, Kafka.
 
+Outbound **NF-e de saída** from a paid sale (DFe.NET `NFeAutorizacao`) **is in scope** (US-06). Inbound ingest remains in scope.
+
 ---
 
 ## 15. What "done" looks like for the first vertical
 
-Docker Compose up → open `vilmo-web` Metronic sign-in (`demo1` branded) as `admin@vilmomkt.com` (sees all companies) → switch to company CNPJ `68431371000161` → create a **vendor** from the members datatable (`POST /vendors`, idempotent) → `users_detail` plus one `user_detail_marketplace` per enabled marketplace → ingest NF-e from the inventory form (chave or XML Dropzone) using that company's A1 → product rows + inventory **only** for that company → vendor publishes an advertisement with omitted `marketplaceCodes` to **all** subaccounts → explicit Shopee-only publish → retry of the same `Idempotency-Key` in that company does not create a second vendor or a second listing → a second company cannot see those products.
+Docker Compose up → open `vilmo-web` Metronic sign-in (`demo1` branded):
+
+1. **Admin** `admin@vilmomkt.com` sees all companies → switches to CNPJ `68431371000161`.
+2. **Company** admin of that CNPJ creates a **vendor** (`POST /vendors`, idempotent) → `users_detail` plus one `user_detail_marketplace` per enabled marketplace. Company sees **all** users and **all** sales of this CNPJ.
+3. Vendor logs in and sees **only** his sales and his marketplace links.
+4. Ingest NF-e (chave or XML) using that company's A1 → inventory **only** for that company.
+5. Vendor publishes an advertisement (default all channels).
+6. Webhook/import creates a **common sale** + EAV attributes; canonical status **Pago**.
+7. On that sale, **Emitir nota fiscal eletrônica** → DFe.NET authorizes → status **Preparando para envio**. Retry of the same key does not emit twice.
+8. **Imprimir etiqueta para envio** → PDF 10×15 (or 13.8×10.6) with sender CNPJ/address, recipient name/address/CEP, barcode not covered. Status **Etiqueta impressa**.
+9. A second company cannot see those products or sales. Vendor B cannot open vendor A's sale (`404`).
