@@ -34,8 +34,9 @@ flowchart TB
   end
 
   subgraph edge ["Edge"]
-    web["vilmo-web :8081 Metronic HTML /api proxy"]
-    api["vilmo-api :8080 JWT X-Company-Id Idempotency-Key"]
+    gw["vilmo-gateway :80 slugs /web /api /nfe /worker"]
+    web["vilmo-web internal :80"]
+    api["vilmo-api internal :80"]
   end
 
   subgraph apps ["App processes"]
@@ -60,10 +61,13 @@ flowchart TB
     sefaz["SEFAZ DistDFe NFeAutorizacao"]
   end
 
-  browser --> web
-  web --> api
-  mpHook -->|"POST /webhooks/code ACK 200"| api
-  oauthUser -->|"GET /oauth/code/callback"| api
+  browser -->|"/web"| gw
+  gw -->|"/web"| web
+  gw -->|"/api"| api
+  gw -->|"/nfe"| nfe
+  gw -->|"/worker"| worker
+  mpHook -->|"POST /webhooks/code ACK 200"| gw
+  oauthUser -->|"GET /oauth/code/callback"| gw
 
   api --> pg
   api --> redis
@@ -82,14 +86,17 @@ flowchart TB
 
 ### Deployables
 
-| Service | Port | Responsibility | Must not |
-| --- | --- | --- | --- |
-| `vilmo-web` | 8081 | Metronic HTML. Proxies `/api` to `vilmo-api`. | Store marketplace secrets in the browser |
-| `vilmo-api` | 8080 | Auth, CRUD, OAuth callback, webhook **ACK only** | Call marketplace GET inside the webhook thread (ML 500 ms) |
-| `vilmo-worker` | — | FetchOrder, publish listing/stock, UploadInvoice, FetchShipmentLabel, token refresh | Own fiscal SOAP |
-| `vilmo-nfe` | — | DistDFe ingest, `NFeAutorizacao` emit, XML parse, CFOP movements | Use another company's A1 |
-| `postgres` | 5432 | Companies, users, catalog, inventory, sales, bindings, certificates metadata | — |
-| `redis` | 6379 | Idempotency, definition/config/vendor cache, Streams | Source of truth for money/stock |
+| Service | Host port | Internal | Responsibility | Must not |
+| --- | --- | --- | --- | --- |
+| `vilmo-gateway` | **80** (only public) | 80 | Nginx. Path slugs to HTTP services. | Publish 8080/8081/5432/6379 |
+| `vilmo-web` | none | 80 | Metronic HTML at slug `/web` | Store marketplace secrets in the browser |
+| `vilmo-api` | none | 80 | Auth, CRUD, OAuth, webhook **ACK only**. Slug `/api` | Call marketplace GET inside the webhook thread (ML 500 ms) |
+| `vilmo-worker` | none | 80 | FetchOrder, publish, UploadInvoice, token refresh. Slug `/worker` | Own fiscal SOAP; listen on the host |
+| `vilmo-nfe` | none | 80 | DistDFe ingest, `NFeAutorizacao`. Slug `/nfe` | Use another company's A1; listen on the host |
+| `postgres` | none | 5432 | Companies, users, catalog, inventory, sales, bindings, certificates metadata | — |
+| `redis` | none | 6379 | Idempotency, definition/config/vendor cache, Streams | Source of truth for money/stock |
+
+Public slugs (see `deploy/docker-compose.yml`): `/web`, `/api`, `/nfe`, `/worker`. Marketplace callbacks stay at the root: `/webhooks/{code}`, `/oauth/{code}/callback` → `vilmo-api`. `/` redirects to `/web/`. Compose today uses HTTP echo stubs until the .NET images exist.
 
 ### Redis resources
 
@@ -318,8 +325,8 @@ sequenceDiagram
 
 ```
 Browser
-  -> vilmo-web
-  -> vilmo-api
+  -> vilmo-gateway :80  (/web /api /nfe /worker)
+  -> vilmo-web or vilmo-api (Docker network only)
        JWT + X-Company-Id + Idempotency-Key
        Redis SET NX
        Postgres write

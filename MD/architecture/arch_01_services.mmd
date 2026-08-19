@@ -6,8 +6,9 @@ flowchart TB
   end
 
   subgraph edge ["Edge"]
-    web["vilmo-web :8081 Metronic HTML /api proxy"]
-    api["vilmo-api :8080 JWT X-Company-Id Idempotency-Key"]
+    gw["vilmo-gateway :80 slugs /web /api /nfe /worker"]
+    web["vilmo-web internal :80"]
+    api["vilmo-api internal :80"]
   end
 
   subgraph apps ["App processes"]
@@ -32,10 +33,13 @@ flowchart TB
     sefaz["SEFAZ DistDFe NFeAutorizacao"]
   end
 
-  browser --> web
-  web --> api
-  mpHook -->|"POST /webhooks/code ACK 200"| api
-  oauthUser -->|"GET /oauth/code/callback"| api
+  browser -->|"/web"| gw
+  gw -->|"/web"| web
+  gw -->|"/api"| api
+  gw -->|"/nfe"| nfe
+  gw -->|"/worker"| worker
+  mpHook -->|"POST /webhooks/code ACK 200"| gw
+  oauthUser -->|"GET /oauth/code/callback"| gw
 
   api --> pg
   api --> redis
