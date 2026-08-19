@@ -232,6 +232,7 @@ Every write that can be retried must be idempotent. Retries are normal (webhooks
 | Connect shop (company app) | `(company_id, marketplace_code)` |
 | Create vendor | `(company_id, user_id)` on `users_detail` |
 | Create vendor subaccount | `(company_id, user_id, marketplace_code)` on `user_detail_marketplace` |
+| Company user channel | `(company_id, user_id, marketplace_code)` on `user_company_marketplace` |
 | Upsert listing | `(company_id, vendor_user_id, sku, marketplace_code)` |
 | Import sale | `(company_id, marketplace_code, remote_order_id)` |
 | Sale attribute | `(sale_id, field_name)` |
