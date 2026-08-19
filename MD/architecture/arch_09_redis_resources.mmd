@@ -1,0 +1,48 @@
+flowchart LR
+  subgraph keys ["Redis keys SET NX cache"]
+    idem["idempotency companyId key"]
+    defn["marketplace-definition code"]
+    cfg["marketplace-config companyId code"]
+    vend["vendor-marketplace companyId userId code"]
+    lockTok["lock token-refresh"]
+    lockNfe["lock nfe-emit"]
+  end
+
+  subgraph streams ["Redis Streams"]
+    saleImp["sale.import"]
+    nfeIn["nfe.ingest.requested"]
+    nfeEm["nfe.emit.requested"]
+    stock["stock.publish.requested"]
+    inv["marketplace.upload_invoice"]
+    pub["publish.listing"]
+  end
+
+  subgraph producers ["Producers"]
+    api["vilmo-api"]
+    nfeSvc["vilmo-nfe"]
+  end
+
+  subgraph consumers ["Consumers"]
+    worker["vilmo-worker"]
+    nfeC["vilmo-nfe"]
+  end
+
+  api --> idem
+  api --> defn
+  api --> cfg
+  api --> vend
+  api --> lockTok
+  api --> lockNfe
+  api --> saleImp
+  api --> nfeIn
+  api --> nfeEm
+  api --> stock
+  api --> pub
+  nfeSvc --> inv
+
+  saleImp --> worker
+  stock --> worker
+  inv --> worker
+  pub --> worker
+  nfeIn --> nfeC
+  nfeEm --> nfeC

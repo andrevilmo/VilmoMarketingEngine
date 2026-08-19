@@ -1,0 +1,23 @@
+sequenceDiagram
+  autonumber
+  participant Admin
+  participant Web as vilmo-web
+  participant Api as vilmo-api
+  participant Pg as postgres
+  participant Redis
+  participant MP as Marketplace OAuth
+
+  Admin->>Web: Novo vendedor
+  Web->>Api: GET /companies
+  Api->>Pg: list companies
+  Pg-->>Api: fantasia plus CNPJ
+  Api-->>Web: select options
+  Admin->>Web: pick company marketplaces submit
+  Web->>Api: POST /companies/id/vendors plus Idempotency-Key
+  Api->>Redis: SET NX idempotency companyId key
+  Api->>Pg: User UserCompany users_detail PendingConnect
+  Api-->>Web: 201 plus connect URLs
+  Admin->>MP: authorize shop
+  MP->>Api: GET /oauth/code/callback
+  Api->>Pg: ShopId tokens link_status Linked
+  Api->>Redis: DEL vendor-marketplace cache

@@ -1,0 +1,29 @@
+sequenceDiagram
+  autonumber
+  participant User
+  participant Web as vilmo-web
+  participant Api as vilmo-api
+  participant Redis
+  participant Pg as postgres
+  participant Nfe as vilmo-nfe
+  participant Sefaz as SEFAZ
+  participant Worker as vilmo-worker
+  participant MPAPI as Marketplace HTTP
+
+  User->>Web: Emitir NF-e on Paid sale
+  Web->>Api: POST /sales/id/nfe plus Idempotency-Key
+  Api->>Redis: lock nfe-emit companyId saleId
+  Api->>Pg: status Invoicing
+  Api->>Redis: XADD nfe.emit.requested
+  Api-->>Web: HTTP 202
+  Nfe->>Redis: consume nfe.emit.requested
+  Nfe->>Pg: load sale items plus company A1
+  Nfe->>Sefaz: NFeAutorizacao DFe.NET
+  Sefaz-->>Nfe: cStat 100
+  Nfe->>Pg: XML chave status PreparingForDispatch
+  Nfe->>Redis: XADD marketplace.upload_invoice
+  Worker->>MPAPI: UploadInvoice XML
+  User->>Web: Imprimir etiqueta 100x150 mm
+  Web->>Api: POST /sales/id/label
+  Api->>Pg: shipment_labels PDF status LabelPrinted
+  Api-->>Web: label.pdf

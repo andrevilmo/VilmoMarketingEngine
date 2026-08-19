@@ -1,0 +1,16 @@
+sequenceDiagram
+  autonumber
+  participant Vendor
+  participant Api as vilmo-api
+  participant Redis
+  participant Worker as vilmo-worker
+  participant Pg as postgres
+  participant MPAPI as Marketplace HTTP
+
+  Vendor->>Api: POST /advertisements sku plus optional codes
+  Api->>Pg: unique company vendor sku code
+  Api->>Redis: XADD publish.listing per Linked subaccount
+  Worker->>Pg: company app plus vendor params
+  Worker->>MPAPI: PublishListing binding
+  MPAPI-->>Worker: remoteListingId
+  Worker->>Pg: listing row

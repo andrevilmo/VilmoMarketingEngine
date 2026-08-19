@@ -1,0 +1,23 @@
+{
+  "theme": "neutral",
+  "themeVariables": {
+    "fontFamily": "Arial, Helvetica, sans-serif",
+    "fontSize": "16px"
+  },
+  "flowchart": {
+    "htmlLabels": false,
+    "curve": "basis",
+    "padding": 16
+  },
+  "sequence": {
+    "actorMargin": 60,
+    "boxMargin": 8,
+    "messageMargin": 40,
+    "mirrorActors": false
+  },
+  "er": {
+    "layoutDirection": "TB",
+    "minEntityWidth": 100,
+    "minEntityHeight": 70
+  }
+}

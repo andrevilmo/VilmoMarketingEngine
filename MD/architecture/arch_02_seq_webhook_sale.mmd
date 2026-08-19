@@ -1,0 +1,18 @@
+sequenceDiagram
+  autonumber
+  participant MP as Marketplace
+  participant Api as vilmo-api
+  participant Redis
+  participant Worker as vilmo-worker
+  participant Pg as postgres
+  participant MPAPI as Marketplace HTTP
+
+  MP->>Api: POST /webhooks/code
+  Api->>Api: verify HMAC via webhook binding
+  Api->>Redis: XADD sale.import companyId eventId
+  Api-->>MP: HTTP 200 ACK
+  Worker->>Redis: XREADGROUP sale.import
+  Worker->>Pg: resolve shop to user_detail_marketplace
+  Worker->>MPAPI: FetchOrder generic binding
+  MPAPI-->>Worker: order JSON
+  Worker->>Pg: UPSERT sales items attributes SaleStatus

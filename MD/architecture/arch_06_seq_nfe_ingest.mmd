@@ -1,0 +1,17 @@
+sequenceDiagram
+  autonumber
+  participant User
+  participant Api as vilmo-api
+  participant Redis
+  participant Nfe as vilmo-nfe
+  participant Sefaz as SEFAZ
+  participant Pg as postgres
+
+  User->>Api: POST /nfe/chaves/chave/ingest
+  Api->>Redis: SET NX idempotency companyId chave
+  Api->>Pg: INSERT nfe_documents unique company chave
+  Api->>Redis: XADD nfe.ingest.requested
+  Nfe->>Pg: load A1 for companyId
+  Nfe->>Sefaz: DistDFe consChNFe
+  Sefaz-->>Nfe: nfeProc XML
+  Nfe->>Pg: CFOP policy InventoryMovement InventoryBalance

@@ -1,0 +1,81 @@
+erDiagram
+  COMPANY ||--o{ USER_COMPANY : memberships
+  USER ||--o{ USER_COMPANY : memberships
+  COMPANY ||--o{ COMPANY_CERTIFICATE : a1
+  COMPANY ||--o{ COMPANY_MARKETPLACE_CONFIG : apps
+  MARKETPLACE ||--o{ COMPANY_MARKETPLACE_CONFIG : enabled
+  MARKETPLACE ||--o{ MARKETPLACE_PARAMETER_DEFINITION : params
+  MARKETPLACE ||--o{ MARKETPLACE_OPERATION_BINDING : ops
+  MARKETPLACE ||--o{ MARKETPLACE_WEBHOOK_BINDING : hooks
+  MARKETPLACE ||--o{ MARKETPLACE_SALE_STATUS_MAP : status
+  COMPANY_MARKETPLACE_CONFIG ||--o{ COMPANY_MARKETPLACE_PARAMETER : values
+  USER ||--o| USERS_DETAIL : vendor_profile
+  COMPANY ||--o{ USERS_DETAIL : vendors
+  USERS_DETAIL ||--o{ USER_DETAIL_MARKETPLACE : shops
+  MARKETPLACE ||--o{ USER_DETAIL_MARKETPLACE : channel
+  USER_COMPANY ||--o{ USER_COMPANY_MARKETPLACE : company_apps
+  COMPANY ||--o{ PRODUCT : catalog
+  PRODUCT ||--o{ PRODUCT_IDENTIFIER : ids
+  PRODUCT ||--o{ INVENTORY_BALANCE : stock
+  PRODUCT ||--o{ INVENTORY_MOVEMENT : movements
+  PRODUCT ||--o{ LISTING : ads
+  USER_DETAIL_MARKETPLACE ||--o{ LISTING : shop
+  COMPANY ||--o{ SALES : orders
+  USER ||--o{ SALES : vendor
+  SALES ||--o{ SALE_ITEMS : lines
+  SALES ||--o{ SALE_MARKETPLACE_ATTRIBUTES : eav
+  SALES ||--o| NFE_DOCUMENTS : outbound
+  COMPANY ||--o{ NFE_DOCUMENTS : fiscal
+  SALES ||--o{ SHIPMENT_LABELS : labels
+
+  COMPANY {
+    uuid id PK
+    string cnpj UK
+    string razao_social
+    string nome_fantasia
+  }
+  USER {
+    uuid id PK
+    string email UK
+    bool is_platform_super_user
+  }
+  USER_COMPANY {
+    uuid company_id FK
+    uuid user_id FK
+    string role
+  }
+  COMPANY_CERTIFICATE {
+    uuid company_id FK
+    string cnpj
+    string pfx_path
+    bytes password_encrypted
+  }
+  MARKETPLACE {
+    string code PK
+    string auth_protocol
+    bool is_active
+  }
+  USERS_DETAIL {
+    uuid company_id FK
+    uuid user_id FK
+    string document_cpf
+  }
+  USER_DETAIL_MARKETPLACE {
+    uuid company_id FK
+    uuid user_id FK
+    string marketplace_code FK
+    string link_status
+  }
+  SALES {
+    uuid id PK
+    uuid company_id FK
+    uuid vendor_user_id FK
+    string marketplace_code
+    string remote_order_id
+    string status
+  }
+  NFE_DOCUMENTS {
+    uuid company_id FK
+    string chave_acesso
+    string kind
+  }

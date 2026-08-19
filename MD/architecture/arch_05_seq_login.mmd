@@ -1,0 +1,15 @@
+sequenceDiagram
+  autonumber
+  participant Browser
+  participant Web as vilmo-web
+  participant Api as vilmo-api
+  participant Pg as postgres
+
+  Browser->>Web: GET /
+  Web-->>Browser: Metronic sign-in
+  Browser->>Web: email plus password
+  Web->>Api: POST /auth/login
+  Api->>Pg: load user memberships IsPlatformSuperUser
+  Pg-->>Api: user plus companies
+  Api-->>Web: JWT plus level
+  Web-->>Browser: Admin Empresas / Company Dashboard / Vendor Minhas vendas

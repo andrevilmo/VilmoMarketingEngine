@@ -1,0 +1,52 @@
+flowchart TB
+  subgraph clients ["Clients"]
+    browser["Browser Admin / Empresa / Vendedor"]
+    mpHook["Marketplace webhooks"]
+    oauthUser["Seller OAuth browser"]
+  end
+
+  subgraph edge ["Edge"]
+    web["vilmo-web :8081 Metronic HTML /api proxy"]
+    api["vilmo-api :8080 JWT X-Company-Id Idempotency-Key"]
+  end
+
+  subgraph apps ["App processes"]
+    worker["vilmo-worker generic HTTP executor"]
+    nfe["vilmo-nfe DFe.NET A1 per CNPJ"]
+  end
+
+  subgraph data ["Data stores"]
+    pg[("PostgreSQL source of truth")]
+    redis[("Redis cache SET NX Streams")]
+  end
+
+  subgraph secrets ["Host secrets gitignored"]
+    pfx["A1 PFX /certs/cnpj.pfx"]
+  end
+
+  subgraph ext ["External systems"]
+    ml["Mercado Livre"]
+    shopee["Shopee Open API BR"]
+    shein["SHEIN Open Platform"]
+    magalu["Magalu IDM plus APIs"]
+    sefaz["SEFAZ DistDFe NFeAutorizacao"]
+  end
+
+  browser --> web
+  web --> api
+  mpHook -->|"POST /webhooks/code ACK 200"| api
+  oauthUser -->|"GET /oauth/code/callback"| api
+
+  api --> pg
+  api --> redis
+  worker --> pg
+  worker --> redis
+  nfe --> pg
+  nfe --> redis
+  nfe --> pfx
+
+  worker -.-> ml
+  worker -.-> shopee
+  worker -.-> shein
+  worker -.-> magalu
+  nfe -.-> sefaz

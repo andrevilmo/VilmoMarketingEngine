@@ -1,0 +1,17 @@
+stateDiagram-v2
+  [*] --> PendingPayment
+  PendingPayment --> Paid
+  PendingPayment --> Cancelled
+  Paid --> Invoicing: Emitir NF-e
+  Paid --> Cancelled
+  Invoicing --> PreparingForDispatch: cStat 100
+  Invoicing --> InvoiceRejected: SEFAZ reject
+  InvoiceRejected --> Invoicing: retry emit
+  PreparingForDispatch --> LabelPrinted: Imprimir etiqueta
+  PreparingForDispatch --> Shipped: channel shipped first
+  PreparingForDispatch --> Cancelled
+  LabelPrinted --> Shipped
+  Shipped --> Delivered
+  Delivered --> [*]
+  Cancelled --> [*]
+  InvoiceRejected --> Cancelled
