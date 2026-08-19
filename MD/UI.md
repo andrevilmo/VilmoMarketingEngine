@@ -87,12 +87,14 @@ Sale detail buttons follow [USER_STORIES.md](./USER_STORIES.md) US-06 and US-07.
 
 ## Docker
 
+`vilmo-gateway` (nginx) is the only published port (`:80`). Browser URLs:
+
 ```
-vilmo-web:   # Metronic HTML UI, e.g. :8081
-vilmo-api:   # already planned
+/web     → vilmo-web   (Metronic HTML)
+/api     → vilmo-api   (REST; slug stripped)
 ```
 
-Nginx or YARP in `vilmo-web` (or a gateway) serves `/` from Metronic and proxies `/api` to `vilmo-api`.
+Do not publish `vilmo-web` or `vilmo-api` on 8081/8080. Page JS calls `/api/...` on the same public origin.
 
 ## What not to do
 
