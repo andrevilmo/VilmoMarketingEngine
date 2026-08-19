@@ -220,6 +220,8 @@ A **company user** is not a vendor. They use the **company’s** marketplace app
 
 `POST /companies/{companyId}/users` + `Idempotency-Key`
 
+Admin UI: **Empresa** is a select of existing companies (same control as US-10), then e-mail/name, then marketplace checkboxes of **that** company. Do not type the company CNPJ.
+
 ```
 {
   "email", "name", "password" | "invite": true,
