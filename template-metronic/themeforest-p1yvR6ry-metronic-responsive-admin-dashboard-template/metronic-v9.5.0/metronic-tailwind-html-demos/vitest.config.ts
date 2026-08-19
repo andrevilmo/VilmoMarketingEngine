@@ -1,0 +1,14 @@
+import { defineConfig } from 'vitest/config';
+
+export default defineConfig({
+	test: {
+		globals: true,
+		environment: 'jsdom',
+		include: ['src/**/*.{test,spec}.{js,ts}'],
+		exclude: ['node_modules', 'dist', '**/views/**'],
+		testTimeout: 5000,
+	},
+	resolve: {
+		extensions: ['.ts', '.js'],
+	},
+});

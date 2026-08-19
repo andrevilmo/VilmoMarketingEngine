@@ -1,0 +1,1 @@
+import{c as e}from"./input-BNwuXLdH.js";const c=[["path",{d:"m15 18-6-6 6-6",key:"1wnfg3"}]],n=e("chevron-left",c);const o=[["path",{d:"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2",key:"975kel"}],["circle",{cx:"12",cy:"7",r:"4",key:"17ys0d"}]],r=e("user",o);export{n as C,r as U};

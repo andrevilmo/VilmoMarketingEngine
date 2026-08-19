@@ -1,0 +1,23 @@
+@custom-variant light (&:not(.dark *));
+
+.appearance-none {
+	background-image: none !important;
+	box-shadow: none;
+	background-color: transparent;
+	border: 0;
+	width: 0;
+	height: 0;
+}
+
+@import './apexcharts.css';
+@import './color-picker.css';
+@import './container.css';
+@import './date-picker.css';
+@import './datatables-net.css';
+@import './dropzone.css';
+@import './fullcalendar.css';
+@import './leaflet.css';
+@import './menu.css';
+@import './range.css';
+@import './rating.css';
+@import './scrollable.css';

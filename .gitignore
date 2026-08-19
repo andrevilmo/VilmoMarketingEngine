@@ -56,3 +56,10 @@ CodeCoverage/
 *.VisualState.xml
 TestResult.xml
 nunit-*.xml
+
+# Large design files (GitHub 100MB limit)
+*.fig
+
+# macOS zip artifacts
+__MACOSX/
+.DS_Store

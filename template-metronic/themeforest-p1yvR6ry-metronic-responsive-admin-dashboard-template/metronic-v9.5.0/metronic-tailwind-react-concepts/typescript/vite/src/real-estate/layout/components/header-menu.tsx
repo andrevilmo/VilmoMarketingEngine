@@ -1,0 +1,71 @@
+import { Link } from "react-router";
+import { ChevronDown } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Button } from "@/components/ui/button";
+import type { MenuItem } from "../../types";
+import { MENU_HEADER } from "../../mock";
+
+export function HeaderMenu() {
+  const renderMenuItem = (item: MenuItem, index: number) => {
+    const hasChildren = item.children && item.children.length > 0;
+
+    if (hasChildren) {
+      return (
+        <DropdownMenu key={index}>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost">
+              {item.icon && <item.icon />}
+              {item.title}
+              <ChevronDown />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            {item.children?.map((child, childIndex) => (
+              <DropdownMenuItem key={childIndex} asChild>
+                <Link 
+                  to={child.path}
+                  className="flex flex-col items-start cursor-pointer"
+                >
+                  <span className="text-sm font-semibold leading-none text-foreground">
+                    {child.title}
+                  </span>
+                  {child.desc && (
+                    <span className="text-xs font-normal text-muted-foreground">
+                      {child.desc}
+                    </span>
+                  )}
+                </Link>
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      );
+    }
+
+    return (
+      <Button 
+        key={index}
+        variant="ghost"
+        asChild
+      >
+        <Link to={item.path}>
+          {item.icon && <item.icon />}
+          {item.title}
+        </Link>
+      </Button>
+    );
+  };
+
+  return (
+    <div className="flex items-stretch">
+      <nav className="list-none flex items-center gap-2">
+        {MENU_HEADER.map(renderMenuItem)}
+      </nav>
+    </div>
+  );
+}

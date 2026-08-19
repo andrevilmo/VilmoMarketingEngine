@@ -1,0 +1,6 @@
+import{c as t,k as i,a7 as d}from"./input-CaKeGYg_.js";import{j as o}from"./index-CRSGX5jj.js";const s=[["path",{d:"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2",key:"1yyitq"}],["path",{d:"M16 3.128a4 4 0 0 1 0 7.744",key:"16gr8j"}],["path",{d:"M22 21v-2a4 4 0 0 0-3-3.87",key:"kshegd"}],["circle",{cx:"9",cy:"7",r:"4",key:"nufk8"}]],l=t("users",s),n=d(`
+    w-full bg-background border border-input bg-background text-foreground shadow-xs shadow-black/5 transition-[color,box-shadow] 
+    text-foreground placeholder:text-muted-foreground/80 focus-visible:border-ring focus-visible:outline-none focus-visible:ring-[3px] 
+    focus-visible:ring-ring/30 disabled:cursor-not-allowed disabled:opacity-50 [&[readonly]]:opacity-70 aria-invalid:border-destructive
+    aria-invalid:border-destructive/60 aria-invalid:ring-destructive/10 dark:aria-invalid:border-destructive dark:aria-invalid:ring-destructive/20
+  `,{variants:{variant:{sm:"px-2.5 py-2.5 text-xs rounded-md",md:"px-3 py-3 text-[0.8125rem] leading-(--text-sm--line-height) rounded-md",lg:"px-4 py-4 text-sm rounded-md"}},defaultVariants:{variant:"md"}});function x({className:a,variant:e,...r}){return o.jsx("textarea",{"data-slot":"textarea",className:i(n({variant:e}),a),...r})}export{x as T,l as U};

@@ -1,0 +1,51 @@
+export const initialTodayTasks = [
+  {
+    id: '1',
+    title: 'Morning standup meeting',
+    time: '09:00',
+    priority: 'high',
+    completed: true,
+  },
+  {
+    id: '2',
+    title: 'Review pull requests',
+    time: '10:30',
+    priority: 'medium',
+    completed: true,
+  },
+  {
+    id: '3',
+    title: 'Update project documentation',
+    time: '12:00',
+    priority: 'low',
+    completed: false,
+  },
+  {
+    id: '4',
+    title: 'Client presentation call',
+    time: '14:00',
+    priority: 'high',
+    completed: false,
+  },
+  {
+    id: '5',
+    title: 'Code review: authentication module',
+    time: '15:30',
+    priority: 'medium',
+    completed: false,
+  },
+  {
+    id: '6',
+    title: 'Team retrospective',
+    time: '17:00',
+    priority: 'medium',
+    completed: false,
+  },
+  {
+    id: '7',
+    title: 'Daily progress report',
+    time: '18:00',
+    priority: 'low',
+    completed: false,
+  },
+];
