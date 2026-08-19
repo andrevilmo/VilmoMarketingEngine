@@ -287,7 +287,7 @@ Many companies. Each company has many users with profile **`Vendor`**. Each mark
 
 **Create vendor (must be idempotent per company; US-10 admin, US-11 company):**
 
-Admin or company user sends **selected** `marketplaceCodes` (subset of company-enabled codes, or `"*"` for all enabled). Empty list is `400`.
+Admin opens **Novo vendedor**, **selects an existing company** (searchable list: fantasia + CNPJ — not a CNPJ text field), then selected `marketplaceCodes` (subset of **that** company's enabled codes, or `"*"` for all enabled). Empty company or empty list is `400`. Company user skips the picker; company is the logged-in CNPJ.
 
 ```
 POST /companies/{companyId}/vendors  + Idempotency-Key

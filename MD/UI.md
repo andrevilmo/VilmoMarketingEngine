@@ -48,7 +48,7 @@ Do not serve the 10GB-class template tree from Docker. `vilmo-web` is a small st
 | Create company user | members form + integrations checkboxes | Admin US-09. Codes must be company-enabled. |
 | Company switcher | header / teams dropdown in demo1 | Sets `X-Company-Id`. Admin: all CNPJs. |
 | Vendors list | `demo1/account/members/team-members-datatable.html` | Company/Admin. Link status per channel. Hidden from Vendor. |
-| Create vendor | members form + marketplace checkboxes + Connect | Admin US-10 or Company US-11. Selected codes → `PendingConnect` until OAuth. |
+| Create vendor | members form; **Empresa select** (admin) or locked company (company user); marketplace checkboxes of **that** company | US-10 / US-11. Never a free-text company CNPJ. |
 | Vendor detail (common) | `demo1/account/home/user-profile.html` + `settings-sidebar.html` | `users_detail`. Vendor: own profile only. |
 | Vendor marketplace subaccount | `demo1/account/api-keys.html` + settings form | `user_detail_marketplace`. Secrets masked. Connect if pending. |
 | Roles / permissions | `demo1/account/members/roles.html`, `permissions-toggle.html` | Admin / Company / Vendor. |

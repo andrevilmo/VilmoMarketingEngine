@@ -279,12 +279,26 @@ Members datatable + form: company picker, profile = Empresa, marketplace checkbo
 ## US-10 — Admin creates a vendor user and related marketplace users
 
 **As** admin  
-**I want** to create a vendor for a **selected company** and, on **selected marketplaces**, a related user/shop for that vendor  
-**So that** ads and sales on those channels attach to that vendor, not to a shared company shop.
+**I want** to **select a company that already exists** and then create a vendor **linked to that company**, with shops on the marketplaces that company already enabled  
+**So that** I never re-type the company's CNPJ or address on the vendor form.
+
+The vendor does **not** own the CNPJ. The company (US-03) already has razão social, fantasia, CNPJ, address, A1. Creating a vendor only **chooses** that row.
+
+### UI (admin) — company first
+
+1. Required control **Empresa** — searchable select of companies already in the database (`GET /companies`). Each option shows **nome fantasia**, **CNPJ formatted**, status (Ativa/Rascunho).
+2. Typing a CNPJ in a free-text box is **wrong**. There is no “CNPJ da empresa” input on this screen.
+3. If the list is empty: disable submit and show **Cadastrar nova empresa** (US-03). You cannot create a vendor without a company.
+4. If the header company switcher already has a company: pre-select it; admin may change it.
+5. After a company is selected: load **that** company’s enabled marketplaces and show only those checkboxes. Codes not enabled are hidden or disabled (“não habilitado nesta empresa”).
+6. Vendor **person** fields: e-mail, nome, telefone, optional **CPF/CNPJ da pessoa** (seller document — may differ from the company CNPJ), optional address. Label must say **do vendedor**, not da empresa.
+7. Submit: `POST /companies/{companyId}/vendors` where `{companyId}` is the **selected** company’s id (never parsed from a typed CNPJ).
+
+Company-user variant: [US-11](#us-11--company-user-creates-vendors-and-checks-their-sales) — same form, **Empresa** is read-only (their membership). No picker of other CNPJs.
 
 Marketplaces do **not** let us “sign up a seller” with a silent API in production (ML/Shopee/SHEIN/Magalu require the human OAuth / shop authorize). “Create a related user on the marketplace” means:
 
-1. Create the Vilmo vendor.
+1. Create the Vilmo vendor **under the selected `companyId`**.
 2. Create a **subaccount row** per selected code (`user_detail_marketplace`).
 3. Open the official **connect** flow so the remote seller/shop user is **linked** (store `SellerId` / `ShopId` / tokens on that row).
 4. Optional: Mercado Livre **test users** in sandbox via a seed operation binding — never against production CNPJ.
@@ -293,18 +307,20 @@ Marketplaces do **not** let us “sign up a seller” with a silent API in produ
 
 `POST /companies/{companyId}/vendors` + `Idempotency-Key`
 
+`{companyId}` **must already exist**. Unknown id → `404`. Admin may pick any company. Company user: only their membership (US-11).
+
 ```
 {
   "email", "name", "password" | "invite": true,
   "detail": { "legalName", "documentType", "document", "phone",
-              "address": { ... CEP 8 digits } },
-  "marketplaceCodes": ["MercadoLivre", "Magalu"]   // selected; subset of company-enabled
+              "address": { ... CEP 8 digits } },   // vendor person, not company
+  "marketplaceCodes": ["MercadoLivre", "Magalu"]   // subset of the selected company's enabled codes
 }
 ```
 
-Empty `marketplaceCodes` → `400 MustSelectMarketplaces` (admin must choose; do not silently attach all unless they send `"marketplaceCodes": "*"` meaning all enabled).
+Empty `marketplaceCodes` → `400 MustSelectMarketplaces` (or `"*"` for all enabled on **that** company).
 
-Company must exist and be selected. Codes not enabled on the company → `400`.
+Codes not enabled on the **selected** company → `400`. Do not offer them in the UI.
 
 ### Side effects
 
@@ -340,11 +356,12 @@ Until `Linked`, that vendor cannot publish to that code; sales webhooks for an u
 - Company (and admin) see this vendor under the CNPJ and **all of his sales** once they exist.
 - Second POST with same idempotency key does not create a second Vilmo user or extra subaccounts.
 - Adding a marketplace later: `PUT .../vendors/{id}/marketplaces/{code}` creates the missing subaccount + connect URL (same uniqueness).
-- Document (CPF/CNPJ) of the vendor may differ from the company CNPJ. NF-e **emitente** remains the **company** CNPJ (US-06).
+- Document (CPF/CNPJ) of the **vendor person** may differ from the **selected company** CNPJ. NF-e **emitente** remains the **company** CNPJ (US-06).
+- UI never asks for the company CNPJ as a text field. Selecting another company changes the marketplace checkbox set.
 
 ### UI
 
-Create vendor: members form + marketplace checkboxes + “Conectar loja” per code (`PendingConnect` / `Linked` / `Error`). Vendor detail: `users_detail` + per-channel status.
+First control: **Empresa** select (admin) or locked company (company user). Then vendor person fields. Then marketplace checkboxes **of that company**. Connect per code (`PendingConnect` / `Linked` / `Error`).
 
 ---
 
@@ -358,7 +375,7 @@ Create vendor: members form + marketplace checkboxes + “Conectar loja” per c
 
 Same body and side effects as [US-10](#us-10--admin-creates-a-vendor-user-and-related-marketplace-users), except:
 
-- `companyId` is **always** the active membership (ignore a body company id for another CNPJ → `403`).
+- `companyId` is **always** the active membership. The **Empresa** field is visible but **read-only** (fantasia + CNPJ). No dropdown of other companies. Sending another company id → `403`.
 - `marketplaceCodes` ⊂ this company’s enabled codes.
 - Cannot create a vendor on another company.
 - Cannot create a company user or a platform admin.

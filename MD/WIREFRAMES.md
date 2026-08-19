@@ -112,18 +112,26 @@ Traffic lights on the right stay gray until each block is complete. **Salvar ras
 
 - Badge **Empresa**. No Empresas catalog, no creating other CNPJs.
 - Sales table includes a **Vendedor** column (Ana, Carlos, …) — this is how “check all his sales” is visible.
-- **Novo vendedor** → same form as admin vendor create, company id forced.
+- **Novo vendedor** → form with **Empresa locked** to this CNPJ (US-11). Admin uses a **company select** instead (US-10).
 
 ---
 
-## 5. Novo vendedor (admin or company)
+## 5. Novo vendedor — select an existing company
 
 ![Novo vendedor](./wireframes/wf_05_create_vendor.png)
 
-- Selected marketplaces only (empty list = error, or `*` for all enabled).
+The old mockup looked like you typed a CNPJ to “be” the company. That is wrong.
+
+| Role | Empresa control |
+| --- | --- |
+| **Admin** | Required **select** of companies already created (fantasia + CNPJ). Search by name or CNPJ. Cannot invent a CNPJ here. Empty list → link to Nova empresa. |
+| **Company** | Same layout, Empresa **read-only** (their CNPJ). |
+
+Then: vendor person (e-mail, nome, telefone, optional CPF **da pessoa**). Then marketplaces **of the selected company** only.
+
+- Company CNPJ / razão / A1 / fiscal address are **not** fields on this form.
 - Each checked code creates `user_detail_marketplace` with **PendingConnect**.
-- **Conectar loja** runs official OAuth; then **Linked**.
-- Company user: checkboxes limited to **this** CNPJ’s enabled channels.
+- **Conectar loja** → OAuth → **Linked**.
 
 **Novo usuário empresa** (admin only) is the same marketplace checkbox idea, but rows go to `user_company_marketplace` (company apps, not a personal shop).
 
