@@ -31,6 +31,8 @@ Use **HTML**, not React/Next.js, so the UI stays a thin client of the .NET API.
 
 Runtime app (`src/Vilmo.Web` when implementing): copy **assets** (`css`, `js`, `media`, `vendors`) + **one layout** + **only the pages we map**. Talk to `vilmo-api` with `Authorization` + `X-Company-Id` + `Idempotency-Key` on writes.
 
+**Wireframes (planning mockups):** [WIREFRAMES.md](./WIREFRAMES.md) — login, three role shells, company wizard, create vendor, sales, NF-e button, Correios 10×15 label.
+
 Do not serve the 10GB-class template tree from Docker. `vilmo-web` is a small static/Razor site.
 
 ## Screen map (Vilmo domain → Metronic file)
