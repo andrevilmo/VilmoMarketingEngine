@@ -37,40 +37,41 @@ Do not serve the 10GB-class template tree from Docker. `vilmo-web` is a small st
 
 | Vilmo screen | Metronic source to clone/adapt | Notes |
 | --- | --- | --- |
-| Sign in | `demo1/authentication/branded/sign-in.html` | POST `/auth/login`. Admin may omit company. Company/Vendor use membership. |
-| Sign up / invite | `demo1/authentication/branded/sign-up.html` | Staff/vendor invite, not public self-serve. |
+| Sign in | `demo1/authentication/branded/sign-in.html` | `POST /auth/login` (US-01). One screen for Admin / Company / Vendor. |
+| Sign up / invite | `demo1/authentication/branded/sign-up.html` | Invite token from US-08–US-10. Not public self-serve. |
 | Reset password | `demo1/authentication/branded/reset-password/*` | |
 | 404 / 500 | `demo1/authentication/error-404.html`, `error-500.html` | |
-| Dashboard | starter `layout-1/index.html` + demo1 `index.html` widgets | Admin: all-company KPIs after switcher. Company: CNPJ KPIs. Vendor: own sales KPIs. |
-| Companies (super user) | `demo1/account/members/teams.html` | `GET /companies`. |
-| Company switcher | header / teams dropdown in demo1 | Sets `X-Company-Id`. Admin only for all CNPJs. |
-| Vendors list | `demo1/account/members/team-members-datatable.html` | Company/Admin. Hidden from Vendor. |
-| Create vendor | members starter + settings form | `POST /vendors` (idempotent). Creates `users_detail` + subaccounts under this CNPJ. |
+| Dashboard | starter `layout-1/index.html` + demo1 `index.html` widgets | US-02 widgets by level. Header badge **Admin** / **Empresa** / **Vendedor**. |
+| Companies (admin) | `demo1/account/members/teams.html` | Create wizard US-03: legal, A1, selected marketplaces, readiness lights. |
+| Create company user | members form + integrations checkboxes | Admin US-09. Codes must be company-enabled. |
+| Company switcher | header / teams dropdown in demo1 | Sets `X-Company-Id`. Admin: all CNPJs. |
+| Vendors list | `demo1/account/members/team-members-datatable.html` | Company/Admin. Link status per channel. Hidden from Vendor. |
+| Create vendor | members form + marketplace checkboxes + Connect | Admin US-10 or Company US-11. Selected codes → `PendingConnect` until OAuth. |
 | Vendor detail (common) | `demo1/account/home/user-profile.html` + `settings-sidebar.html` | `users_detail`. Vendor: own profile only. |
-| Vendor marketplace subaccount | `demo1/account/api-keys.html` + settings form | `user_detail_marketplace` key/values. Secrets masked. Vendor: own links only. |
-| Roles / permissions | `demo1/account/members/roles.html`, `permissions-toggle.html` | Admin / Company / Vendor personas. |
+| Vendor marketplace subaccount | `demo1/account/api-keys.html` + settings form | `user_detail_marketplace`. Secrets masked. Connect if pending. |
+| Roles / permissions | `demo1/account/members/roles.html`, `permissions-toggle.html` | Admin / Company / Vendor. |
 | Company marketplace config | `demo1/account/integrations.html` | Company/Admin. Vendor cannot change app credentials. |
 | Register marketplace (super user) | integrations + settings form | `POST /marketplaces` — new `code` at runtime, no deploy. |
-| A1 certificate | settings form + Dropzone | `POST /companies/{id}/certificate`. Company/Admin. |
-| Products | store-inventory **Product List / Details / Create** (HTML tables from demo1 members datatable + store-client `product-details.html` for the detail chrome) | Company catalog. |
+| A1 certificate | settings form + Dropzone | Required for `ready_to_invoice`. |
+| Products | store-inventory **Product List / Details / Create** (HTML tables from demo1 members datatable + store-client `product-details.html` for the detail chrome) | Post items when `ready_to_list`. |
 | Inventory | store-inventory **All Stock / Current / Inbound / Outbound** | NF-e movements. Inbound = purchase CFOP; outbound = sale CFOP (after emit). |
 | Ingest NF-e | custom form on layout-1 (chave 44 + XML Dropzone) | `POST /nfe/chaves/{chave}/ingest`, `POST /nfe/xml`. |
-| Advertisements | product list + “publish” modal with marketplace checkboxes | Default **all** channels; optional `marketplaceCodes`. Vendor: own listings. |
-| **Sales list** | store-inventory **Order List** (DataTables) | Admin/Company: all sales of CNPJ. Vendor: own sales. Status badges in PT. |
-| **Sale detail** | store-inventory **Order Details** | Common fields + accordion **Dados do marketplace** (EAV `field_name`/`field_value`). Chips: canonical status + raw remote status. |
-| **Emitir NF-e** | confirm modal on sale detail | Visible when `Paid` or `InvoiceRejected`. POST `/sales/{id}/nfe`. Shows emitente CNPJ, dest, CEP, items. Spinner while `Invoicing`. |
-| **Imprimir etiqueta para envio** | sale detail + print iframe | Visible when `PreparingForDispatch` or `LabelPrinted`. Size 10×15 cm (default) or 13.8×10.6 cm. Placement hint: largest side, do not cover barcode, do not wrap folds. GET `/sales/{id}/label.pdf`. |
+| Advertisements | product list + “publish” modal with marketplace checkboxes | Default **linked** channels; optional `marketplaceCodes`. Vendor: own listings. |
+| **Sales list** | store-inventory **Order List** (DataTables) | Company: all vendors. Vendor: own (US-12). Status in PT. |
+| **Sale detail** | store-inventory **Order Details** | Common fields + accordion **Dados do marketplace** (EAV). Chips: canonical + raw. |
+| **Emitir NF-e** | confirm modal on sale detail | Visible when `Paid` or `InvoiceRejected` and company `ready_to_invoice`. |
+| **Imprimir etiqueta para envio** | sale detail + print iframe | Visible when `PreparingForDispatch` or `LabelPrinted`. Size 10×15 cm (default) or 13.8×10.6 cm. |
 | Account security | `demo1/account/security/overview.html` | Password, sessions. |
 
 Sidebar by role (replace Metronic demo links with these, nothing else):
 
 | Role | Items |
 | --- | --- |
-| **Admin** | Companies, Dashboard, NF-e / Inventory, Products, Advertisements, **Sales**, Vendors, Marketplaces, Settings |
+| **Admin** | Companies, Users, Dashboard, NF-e / Inventory, Products, Advertisements, **Sales**, Vendors, Marketplaces, Settings |
 | **Company** | Dashboard, NF-e / Inventory, Products, Advertisements, **Sales**, Vendors, Marketplaces, Settings |
 | **Vendor** | Dashboard, **My sales**, My advertisements, My marketplaces, Profile |
 
-Vendor users see only their advertisements, their `users_detail`, their subaccounts, and **their sales**. `CompanyAdmin` sees every user and every sale of the CNPJ. Super user sees all after picking a company.
+Company users create vendors for their CNPJ and see **all** those sales. Vendors see only their own. Admin sees all after picking a company.
 
 Sale detail buttons follow [USER_STORIES.md](./USER_STORIES.md) US-06 and US-07. Do not keep a separate “Orders” table or menu — **Sales** is the name.
 

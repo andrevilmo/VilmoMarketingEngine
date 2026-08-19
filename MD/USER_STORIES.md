@@ -1,96 +1,422 @@
-# User stories — roles, sales sync, NF-e de saída, etiqueta Correios
+# User stories — login, roles, provisioning, sales, NF-e, labels
 
-This document is the **depth plan** for identity, sales, outbound invoice, and shipping labels. It extends [PLAN.md](./PLAN.md) and [MarketPlaceEngine.MD](./MarketPlaceEngine.MD). No application code in this revision.
+This document is the **depth plan** for identity, company/vendor provisioning, sales, outbound invoice, and shipping labels. It extends [PLAN.md](./PLAN.md) and [MarketPlaceEngine.MD](./MarketPlaceEngine.MD). No application code in this revision.
 
-Actors (login roles). Names in the UI stay Portuguese; codes in the API stay English.
+UI copy in Portuguese; API codes in English.
 
-| Login role (user wording) | System profile | Visibility |
+| Login level | Profile | After login, sees |
 | --- | --- | --- |
-| **Admin** | `IsPlatformSuperUser` (`admin@vilmomkt.com`) | **See all**: every company (CNPJ), every user, every sale, every NF-e, every label |
-| **Company** | `CompanyAdmin` on `UserCompany` | **See all regarding his users**: every vendor/staff of **that CNPJ**, their subaccounts, their sales, their invoices and labels |
-| **Vendor user** | `UserProfile.Vendor` | **See all related to his sales**: own profile, own marketplace links, own sales, own NF-e and labels. Nothing of other vendors in the same company |
+| **Admin** | `IsPlatformSuperUser` (`admin@vilmomkt.com`) | All companies, all users, all sales. Can **create companies** and **create users** (company + vendor). |
+| **Company** | `CompanyAdmin` on `UserCompany` | Everything of **that CNPJ**: vendors, marketplace links, **all their sales**. Can **create vendor users** for this company. |
+| **Vendor** | `UserProfile.Vendor` | Own marketplace links and **own sales** (status, items, NF-e, labels). Cannot create users or companies. |
 
-`Operator` and `Viewer` stay as staff profiles (warehouse / read-only). They are not a third login persona in these stories; they inherit company-scoped data with fewer write buttons.
+`Operator` / `Viewer` are staff profiles (warehouse / read-only), not a fourth login persona.
+
+Index: [US-01](#us-01--login-as-a-user) login · [US-02](#us-02--show-information-at-my-user-level) home by level · [US-03](#us-03--admin-creates-a-company-ready-to-operate) admin creates company · [US-08](#us-08--admin-creates-users) admin creates users · [US-09](#us-09--admin-creates-a-company-user-with-marketplace-access) admin creates company user · [US-10](#us-10--admin-creates-a-vendor-user-and-related-marketplace-users) admin creates vendor · [US-11](#us-11--company-user-creates-vendors-and-checks-their-sales) company creates vendors · [US-12](#us-12--vendor-checks-own-sales-and-status) vendor sales · [US-04](#us-04--sales-stay-in-sync-common-table--per-marketplace-attributes)–[US-07](#us-07--after-preparando-para-envio-print-correios-format-shipping-label) sales / NF-e / label.
 
 ---
 
-## US-01 — Log in as Admin and see everything
+## US-01 — Login as a user
 
-**As** the platform admin  
-**I want** to sign in once and operate every company  
-**So that** I can support, audit, and configure the whole engine without a second login.
+**As** any registered person  
+**I want** to sign in with my email and password  
+**So that** the API knows who I am and which level to apply (admin, company, or vendor).
+
+### Flow
+
+```
+GET  /          → Metronic branded sign-in (demo1)
+POST /auth/login  { email, password }
+        │
+        ├── 401 InvalidCredentials (same message for unknown email / bad password)
+        ├── 403 UserDisabled
+        └── 200 { accessToken, expiresIn, user }
+                    │
+                    ▼
+JWT claims: user_id, email, is_platform_super_user,
+            memberships[{ companyId, cnpj, legalName, profile }]
+                    │
+                    ├── Admin     → /companies  (US-02)
+                    ├── Company   → /dashboard  that CNPJ (US-02)
+                    └── Vendor    → /sales      mine (US-12)
+```
 
 ### Acceptance
 
-- Sign-in: `POST /auth/login` with `admin@vilmomkt.com`. JWT has `is_platform_super_user = true`.
-- Default landing: company list (`GET /companies`). Header **company switcher** sets `X-Company-Id` for subsequent calls.
-- With no `X-Company-Id`: `GET /companies`, `GET /marketplaces`, diagnostics. Any sale/inventory/vendor list without a company → `400 CompanyRequired`.
-- With `X-Company-Id`: admin sees **that** company's users, vendors, sales, NF-e, labels — including vendors the company admin created.
-- Admin can open **any** sale by id (`GET /sales/{saleId}`) even if it belongs to another CNPJ; the payload still includes `companyId` + `cnpj`.
-- Admin cannot skip tenancy on writes: mutating routes still require `X-Company-Id` and `Idempotency-Key`.
-- Password lives in gitignored secrets. Email is seeded, not hard-coded in handlers.
+- One login screen for all levels. No separate “admin URL”.
+- Email is unique globally. Password hashed (Argon2id or ASP.NET Identity defaults). Never returned.
+- Seeded admin: `admin@vilmomkt.com`, password from gitignored secret.
+- Token: bearer JWT, short TTL (e.g. 8h) + optional refresh. Sent as `Authorization: Bearer`.
+- Active company: `X-Company-Id`. Admin may send any company id. Company/vendor may send only a membership; otherwise `403`.
+- One membership and not admin: header optional (that company is implied).
+- Many memberships and not admin: header required (`400 CompanyRequired`).
+- Logout: `POST /auth/logout` revokes refresh; access token dies at expiry (or denylist if we add one).
+- Forgot password: `demo1` reset-password pages; email token. Out of band (no SMTP in v1? — plan a provider; until then admin can `POST /users/{id}/reset-password`).
+- Lockout after N failures (e.g. 5 / 15 min). Audit `login_attempts`.
+- Idempotency-Key is **not** required on login.
 
 ### UI
 
-Metronic branded sign-in. After login: Companies (teams) + switcher. All sidebar items visible. Badge **Admin**.
+Metronic `demo1/authentication/branded/sign-in.html`. After success, store token in memory (or httpOnly cookie via BFF). Header shows name + level badge (**Admin** / **Empresa** / **Vendedor**) + company switcher when applicable.
 
 ---
 
-## US-02 — Log in as Company and see all of that CNPJ
+## US-02 — Show information at my user level
 
-**As** a company user (`CompanyAdmin`)  
-**I want** to see every user and every sale that belongs to my company CNPJ  
-**So that** I run the store without seeing other legal entities.
+**As** a logged-in user  
+**I want** the home screen and every list to match my level  
+**So that** I never see another CNPJ’s data (unless I am admin) and a vendor never sees another vendor’s sales.
 
-### Acceptance
+### What each level sees (home + menus)
 
-- User is linked with `UserCompany(companyId, CompanyAdmin)`. Company row has unique `Cnpj` (digits only, 14).
-- JWT carries memberships. If the user has **one** company, that CNPJ is the active context (header optional). If many, require `X-Company-Id` among memberships; otherwise `400`.
-- Lists are filtered `WHERE company_id = @activeCompanyId`:
-  - users / vendors of this CNPJ
-  - marketplace configs and vendor subaccounts
-  - **all sales** of this company (every vendor)
-  - NF-e ingest + NF-e de saída of this company
-  - labels of this company
-- Attempt to read another company's `saleId` → `404` (not `403` with a leaked id). Same for vendors and NF-e.
-- Company admin may create vendors, enable marketplaces, upload A1, emit NF-e and print labels **for any sale of this CNPJ**.
-- Company admin does **not** see `GET /companies` as a global catalog (only own memberships). Cannot `POST /marketplaces` (catalog). Cannot seed `IsPlatformSuperUser`.
+| Area | Admin | Company | Vendor |
+| --- | --- | --- | --- |
+| Companies | All. Create/edit | Own CNPJ only (read) | Hidden |
+| Users | All, filtered by selected company | Users of this CNPJ | Hidden |
+| Create company | Yes (US-03) | No | No |
+| Create company user | Yes (US-09) | No | No |
+| Create vendor | Yes, for selected company (US-10) | Yes, for **my** company (US-11) | No |
+| Marketplaces catalog | Yes (`POST /marketplaces`) | No | No |
+| Company marketplace apps | Yes (selected company) | Yes (this CNPJ) | Read own shop links only |
+| Products / inventory / ads | Selected company | This CNPJ | Own ads only |
+| Sales | Selected company, or admin search-all | **All vendors** of this CNPJ | **Own** sales only |
+| Sale status, NF-e, label | Same scope | All of this CNPJ | Own sales |
+| A1 certificate | Yes | Yes | No |
 
-### Binding vendor → company by CNPJ
+Wrong-tenant read: **`404`**, never `403` with a leaked id.
 
-A vendor **belongs** to a company, not to a marketplace. The company's CNPJ is the legal owner of the A1, of the NF-e emitente, and of the sender block on the label.
+### Home widgets
 
-```
-Company (unique CNPJ)
-  └── UserCompany (CompanyAdmin | Operator | Viewer | Vendor)
-        └── if Vendor: users_detail + user_detail_marketplace(code…)
-              └── sales (vendor_user_id)
-```
+- **Admin** (after picking a company, or a global strip): companies count, users count, open sales by status, marketplaces with broken tokens.
+- **Company**: sales by status (all vendors), stock alerts, vendors pending marketplace link, NF-e pending.
+- **Vendor**: my sales by status, my unpaid / paid / preparing for dispatch counts, my pending marketplace links.
 
-Creating a vendor always sets `users_detail.company_id` to that CNPJ's company. A vendor cannot be moved to another CNPJ without a new user+detail (different tenant). Same email on two CNPJs is two vendor rows.
+Sidebar: [UI.md](./UI.md).
+
+### API
+
+`GET /me` → `{ user, level, memberships, readiness }` so the shell can hide menus without guessing.
 
 ---
 
-## US-03 — Log in as Vendor user: marketplaces + own sales only
+## US-03 — Admin creates a company ready to operate
 
-**As** a vendor user  
-**I want** to be linked to the marketplaces my company enabled, under that company's CNPJ, and see only my sales  
-**So that** I fulfill my own orders without seeing other sellers.
+**As** admin  
+**I want** to create a company with **every block required** so that company can post items, sync sales, check status, and send NF-e  
+**So that** I am not chasing missing CNPJ, A1, or marketplace apps after go-live.
 
-### Acceptance
+A company is not “created” when only a name exists. Creation is a **wizard** that records readiness flags. The row can be saved as `Draft`; **operate** (publish, sync, invoice) requires the matching flag.
 
-- Profile is `Vendor`. Row in `users_detail` unique `(company_id, user_id)`: legal name, CPF/CNPJ of the vendor (may differ from the company CNPJ), phone, address.
-- One `user_detail_marketplace` per enabled `marketplace.code` unique `(company_id, user_id, marketplace_code)`: shop id, tokens, nickname.
-- Login lands on **My sales** (`GET /sales?vendorUserId=me`). Default filter is implicit; passing another vendor id → `403`.
-- Vendor **can**: view own listings, own sales, emit NF-e on **own paid** sales (company A1 still signs — emitente is the **company CNPJ**), print labels for own sales, update own `users_detail` (non-document fields).
-- Vendor **cannot**: list other vendors, list other vendors' sales, change company marketplace app credentials, upload A1, create companies, enable a new marketplace catalog row.
-- Webhook-imported orders attach to the vendor whose `user_detail_marketplace` matches the remote shop/seller id. If unmatched: ACK 200, park the event, **do not** assign to a random vendor.
+### Wizard (one `Idempotency-Key` for the whole POST, or one key per step with `companyId`)
+
+#### Step 1 — Legal identity (required to save)
+
+| Field | Rule |
+| --- | --- |
+| `legalName` | Razão social, required |
+| `tradeName` | Nome fantasia, optional |
+| `cnpj` | 14 digits, unique, checksum. **This is the tenant.** |
+| `ie` | Inscrição estadual (required to emit NF-e; may be `ISENTO` where legal) |
+| `im` | Optional |
+| `email`, `phone` | Contact |
+| Address | street, number, complement, neighborhood, city, UF, **CEP 8 digits** |
+| `status` | `Draft` / `Active` / `Disabled` |
+
+`POST /companies` → `201` + `companyId`. Duplicate CNPJ + same idempotency key → replay. Different payload → `409`.
+
+#### Step 2 — Fiscal (required to **send invoices**)
+
+| Field | Why |
+| --- | --- |
+| A1 PKCS#12 + password | DFe.NET `NFeAutorizacao` and DistDFe. `POST /companies/{id}/certificate` |
+| `nfeSerie`, next `nNF` | `company_nfe_series` |
+| `taxRegime` | Simples / Lucro Presumido / Real (tax profile defaults) |
+| Default CFOP intra / interstate | 5102 / 6102 unless overridden per SKU |
+| `nfeEnvironment` | Homologation / Production |
+
+Without A1: `ready_to_invoice = false`. Ingest XML still allowed; emit button hidden.
+
+#### Step 3 — Selected marketplaces (required to **post items** and **check sales**)
+
+Admin checks which channels this company will use (`MercadoLivre`, `Shopee`, `Shein`, `Magalu`, …). For **each selected** `code`:
+
+1. Insert `company_marketplace_config` (`is_enabled = true`).
+2. Collect **company app** parameters from `marketplace_parameter_definition` where `scope = company` (ClientId, PartnerId, secrets). Secrets never in git.
+3. Start OAuth / shop authorize when the protocol needs it (`GET /marketplaces/{code}/connect?companyId=`).
+4. Show webhook URL `https://<public>/webhooks/{code}` (must already ACK 200).
+
+Until tokens exist for a selected code: that code is `PendingConnect`. Listings and sale sync for that code stay disabled.
+
+Omitted `marketplaceCodes` on create → no channels yet (`ready_to_list = false`). Admin can add them later with `PUT /companies/{id}/marketplaces/{code}`.
+
+#### Step 4 — Optional first company user
+
+Same payload as [US-09](#us-09--admin-creates-a-company-user-with-marketplace-access) nested in the wizard, or a follow-up screen. Not required to persist the company.
+
+### Readiness (stored on `companies` or computed)
+
+| Flag | True when | Unlocks |
+| --- | --- | --- |
+| `ready_to_list` | ≥1 marketplace **Linked** (app tokens) + address | Publish advertisements / post items |
+| `ready_to_sync_sales` | Linked marketplace + webhook configured | Import sales, show status |
+| `ready_to_invoice` | A1 valid for this CNPJ + IE + series + dest CEP rules | **Emitir NF-e** |
+| `ready_to_operate` | all three | Full process |
+
+UI: traffic-light on the company card. Clicking a red flag opens the missing step.
+
+### Why this is “all information”
+
+| Process | Needs |
+| --- | --- |
+| Post sales items | Company catalog (later) + linked marketplace apps + (usually) a vendor subaccount (US-10) |
+| Check sales status | Webhooks + FetchOrder + canonical `SaleStatus` (US-04, US-05) |
+| Send NF-e | A1 + emitente address/CNPJ/IE + sale dest/items (US-06) |
+
+Admin can save a Draft missing A1; they cannot emit until fiscal is green.
 
 ### UI
 
-Sidebar for vendor: Dashboard (own KPIs), My sales, My advertisements, My marketplaces, Profile. No Companies, no Vendors admin, no Marketplace catalog, no A1.
+Metronic settings form + integrations (marketplace checkboxes) + Dropzone for A1. Companies list: `demo1/account/members/teams.html`.
 
 ---
+
+## US-08 — Admin creates users
+
+**As** admin  
+**I want** to create users and assign a level (company or vendor) on a company  
+**So that** those people can log in (US-01) at the right level (US-02).
+
+Admin does **not** create other platform super users from the UI (no second `IsPlatformSuperUser`). Support can seed that in the database if needed.
+
+### Types
+
+| Kind | Profile | Also runs |
+| --- | --- | --- |
+| Company user | `CompanyAdmin` | [US-09](#us-09--admin-creates-a-company-user-with-marketplace-access) |
+| Vendor user | `Vendor` | [US-10](#us-10--admin-creates-a-vendor-user-and-related-marketplace-users) |
+| Staff | `Operator` / `Viewer` | Membership only; no marketplace shop |
+
+### Common fields
+
+`email` (unique), `name`, `phone`, `password` **or** invite link, `companyId` (must exist), `profile`.
+
+`POST /users` or dedicated routes below. Idempotent per `(companyId, email, profile)`.
+
+Invite: user sets password on first login (`sign-up` branded page with token). Until then `status = Invited`.
+
+---
+
+## US-09 — Admin creates a company user with marketplace access
+
+**As** admin  
+**I want** a company user created **with everything needed to operate that company on the selected marketplaces**  
+**So that** they can post items, watch sales, and send NF-e for that CNPJ without a second setup pass.
+
+A **company user** is not a vendor. They use the **company’s** marketplace apps (`company_marketplace_*`). They see **all vendors** of that CNPJ.
+
+### Request
+
+`POST /companies/{companyId}/users` + `Idempotency-Key`
+
+```
+{
+  "email", "name", "password" | "invite": true,
+  "profile": "CompanyAdmin",
+  "marketplaceCodes": ["MercadoLivre", "Shopee"]   // selected; required non-empty
+}
+```
+
+`marketplaceCodes` must already be **enabled** on the company (US-03 step 3). Unknown code → `400`. Company missing that config → `400 CompanyMarketplaceNotEnabled` (admin must finish US-03 first).
+
+### Side effects (same transaction + outbox for OAuth)
+
+```
+User + UserCompany (CompanyAdmin)
+        │
+        ▼
+for each selected marketplace_code:
+    user_company_marketplace
+        unique (company_id, user_id, marketplace_code)
+        status = Linked if company tokens exist
+               | PendingConnect if company app still needs OAuth
+        │
+        ▼
+If company tokens missing: enqueue Connect for that code (company-level, not a vendor shop)
+```
+
+`user_company_marketplace` is **which channels this company user may operate**. Tokens still live on `company_marketplace_parameter` (one app per company per code). The company user does not get a personal ML shop.
+
+### “All information on marketplaces”
+
+For each selected code, the company user is ready when:
+
+| Needed | Where |
+| --- | --- |
+| App credentials (ClientId, PartnerId, …) | Company parameters |
+| Access / refresh tokens or HMAC shop | After OAuth / authorize |
+| Webhook receiving | Platform URL (already) |
+| Fiscal (to send NF-e) | Company A1 (US-03) — not copied onto the user |
+
+If the company is not `ready_to_invoice`, the user is still created; UI shows the same traffic lights. Creating the user does **not** skip A1.
+
+### Acceptance
+
+- User can log in (US-01) as **Company** (US-02).
+- They see all sales of that CNPJ.
+- They can create vendors (US-11).
+- They cannot `POST /companies`. They cannot see another CNPJ.
+- Retry same idempotency key does not duplicate membership or `user_company_marketplace` rows.
+- Same email as vendor in **another** company is allowed (different `UserCompany`). Same email as another user globally is **not** (one `User` row, extra membership if we allow multi-company; v1: one profile per user per company, one email globally).
+
+### UI
+
+Members datatable + form: company picker, profile = Empresa, marketplace checkboxes (only codes enabled on that company). Connect buttons per pending channel.
+
+---
+
+## US-10 — Admin creates a vendor user and related marketplace users
+
+**As** admin  
+**I want** to create a vendor for a **selected company** and, on **selected marketplaces**, a related user/shop for that vendor  
+**So that** ads and sales on those channels attach to that vendor, not to a shared company shop.
+
+Marketplaces do **not** let us “sign up a seller” with a silent API in production (ML/Shopee/SHEIN/Magalu require the human OAuth / shop authorize). “Create a related user on the marketplace” means:
+
+1. Create the Vilmo vendor.
+2. Create a **subaccount row** per selected code (`user_detail_marketplace`).
+3. Open the official **connect** flow so the remote seller/shop user is **linked** (store `SellerId` / `ShopId` / tokens on that row).
+4. Optional: Mercado Livre **test users** in sandbox via a seed operation binding — never against production CNPJ.
+
+### Request
+
+`POST /companies/{companyId}/vendors` + `Idempotency-Key`
+
+```
+{
+  "email", "name", "password" | "invite": true,
+  "detail": { "legalName", "documentType", "document", "phone",
+              "address": { ... CEP 8 digits } },
+  "marketplaceCodes": ["MercadoLivre", "Magalu"]   // selected; subset of company-enabled
+}
+```
+
+Empty `marketplaceCodes` → `400 MustSelectMarketplaces` (admin must choose; do not silently attach all unless they send `"marketplaceCodes": "*"` meaning all enabled).
+
+Company must exist and be selected. Codes not enabled on the company → `400`.
+
+### Side effects
+
+```
+User + UserCompany (Vendor)
+        │
+        ▼
+users_detail  unique (company_id, user_id)
+        │
+        ▼
+for each selected marketplace_code:
+    user_detail_marketplace
+        unique (company_id, user_id, marketplace_code)
+        link_status = PendingConnect
+        parameters = {}
+        │
+        ▼
+outbox: marketplace.connect_vendor { companyId, vendorUserId, code }
+        → connect URL for that vendor (uses company app creds + vendor OAuth)
+```
+
+When OAuth completes (`GET /oauth/{code}/callback` with state = company + vendor):
+
+- Store vendor `AccessToken` / `ShopId` / `UserId` on `user_detail_marketplace`.
+- `link_status = Linked`.
+- `DEL` Redis `vendor-marketplace:{companyId}:{userId}:{code}`.
+
+Until `Linked`, that vendor cannot publish to that code; sales webhooks for an unknown shop stay parked.
+
+### Acceptance
+
+- Vendor logs in as **Vendor** (US-12). Sees only own sales.
+- Company (and admin) see this vendor under the CNPJ and **all of his sales** once they exist.
+- Second POST with same idempotency key does not create a second Vilmo user or extra subaccounts.
+- Adding a marketplace later: `PUT .../vendors/{id}/marketplaces/{code}` creates the missing subaccount + connect URL (same uniqueness).
+- Document (CPF/CNPJ) of the vendor may differ from the company CNPJ. NF-e **emitente** remains the **company** CNPJ (US-06).
+
+### UI
+
+Create vendor: members form + marketplace checkboxes + “Conectar loja” per code (`PendingConnect` / `Linked` / `Error`). Vendor detail: `users_detail` + per-channel status.
+
+---
+
+## US-11 — Company user creates vendors and checks their sales
+
+**As** a logged-in **company** user  
+**I want** to create vendor users **linked to my company** and see **all of their sales**  
+**So that** I run my CNPJ without calling the platform admin.
+
+### Create vendor
+
+Same body and side effects as [US-10](#us-10--admin-creates-a-vendor-user-and-related-marketplace-users), except:
+
+- `companyId` is **always** the active membership (ignore a body company id for another CNPJ → `403`).
+- `marketplaceCodes` ⊂ this company’s enabled codes.
+- Cannot create a vendor on another company.
+- Cannot create a company user or a platform admin.
+
+Route: `POST /vendors` (company implied) or `POST /companies/{myId}/vendors`.
+
+### Check all his sales
+
+- `GET /sales` with no vendor filter → **every** vendor of this CNPJ.
+- `GET /sales?vendorUserId={id}` → that vendor only (must belong to this company).
+- Sale detail, status chips, Emitir NF-e, Imprimir etiqueta: allowed for **any** sale of this CNPJ (US-05–US-07).
+- Vendor list shows link_status per marketplace.
+
+### Acceptance
+
+- Company user created by US-09 can perform US-11 without admin.
+- Sales of vendor A and vendor B both appear on the company sales screen.
+- Vendor A still cannot see vendor B (US-12).
+
+---
+
+## US-12 — Vendor checks own sales and status
+
+**As** a logged-in **vendor**  
+**I want** to see my sales, their canonical status, marketplace extras, NF-e, and labels  
+**So that** I fulfill my orders.
+
+### Acceptance
+
+- Home = **My sales** (`GET /sales`, server forces `vendor_user_id = me`).
+- Filters: status, marketplace, date. Passing another `vendorUserId` → `403`.
+- Detail: common fields + EAV accordion + raw remote status (US-04, US-05).
+- Buttons: **Emitir NF-e** / **Imprimir etiqueta** on **own** sales only, same guards as US-06/US-07 (company A1 still signs).
+- **My marketplaces**: list `user_detail_marketplace` with `link_status` (no secrets). Can click Connect if `PendingConnect`.
+- Cannot: create users, create companies, list other vendors, change company A1 or company app ClientId.
+
+### UI
+
+Sidebar: Dashboard, My sales, My advertisements, My marketplaces, Profile.
+
+---
+
+## Binding (company CNPJ owns the legal process)
+
+```
+Admin
+  └── creates Company (CNPJ)           US-03
+        ├── company_marketplace_*      selected channels (apps)
+        ├── A1 + series                invoices
+        ├── Company user               US-09  → user_company_marketplace
+        └── Vendor users               US-10 / US-11
+              ├── users_detail
+              └── user_detail_marketplace (related marketplace user/shop)
+                    └── sales (vendor_user_id)
+```
+
+Webhook: resolve shop/seller → `user_detail_marketplace` → vendor + company. Unknown shop → park. Never attach to a random vendor.
+
+---
+
 
 ## US-04 — Sales stay in sync: common table + per-marketplace attributes
 
@@ -447,32 +773,47 @@ v1 does not talk IPP/raw ZPL unless we add it later. The operator prints the PDF
 
 | Resource | Admin | Company (same CNPJ) | Vendor (own) | Vendor (other in same CNPJ) |
 | --- | --- | --- | --- | --- |
-| List companies | all | memberships only | memberships only | — |
+| Login / `GET /me` | yes | yes | yes | — |
+| List companies | all | own membership | own membership | — |
+| Create company | yes | no | no | no |
+| Create company user | yes | no | no | no |
+| Create vendor | yes (selected company) | yes (own CNPJ only) | no | no |
 | Users of company | yes | yes | no | no |
 | Vendor subaccounts | yes | yes | own only | no |
-| Sales list | all in selected company / all companies in admin search | all in company | own `vendor_user_id` | no |
+| Company marketplace apps | yes | yes | no | no |
+| Sales list | selected company / admin search-all | **all vendors** of CNPJ | own `vendor_user_id` | no |
 | Emit NF-e | yes | yes | own sale | no |
 | Print label | yes | yes | own sale | no |
-| A1 / marketplace app config | yes | yes | no | no |
+| A1 | yes | yes | no | no |
 | Marketplace catalog (`POST /marketplaces`) | yes | no | no | no |
 
 Every query: `company_id` from context. Vendor queries add `vendor_user_id = me`. Super user still sends `X-Company-Id` for lists inside a CNPJ.
 
 ---
 
-## API additions (sales / NF-e / label)
+## API (identity + sales)
 
-All mutating calls: JWT + company context + `Idempotency-Key` (except webhooks).
+Mutating business calls: JWT + company context + `Idempotency-Key` (not on login/webhooks).
 
 | Method | Path | Who | Behavior |
 | --- | --- | --- | --- |
-| `GET` | `/sales` | Admin/Company: company filter. Vendor: forced own | Filter `status`, `marketplace_code`, date |
-| `GET` | `/sales/{saleId}` | Owner per matrix | Common sale + items + attributes (secrets masked) + `remote_status` |
-| `POST` | `/sales/{saleId}/sync` | Admin/Company | Enqueue FetchOrder (repair) |
-| `POST` | `/sales/{saleId}/nfe` | Paid/InvoiceRejected | Emit via DFe.NET (US-06) |
-| `GET` | `/sales/{saleId}/nfe` | | XML/chave/status of outbound NF-e |
-| `POST` | `/sales/{saleId}/label` | PreparingForDispatch/LabelPrinted | Generate PDF (US-07) |
-| `GET` | `/sales/{saleId}/label.pdf` | | Application/pdf |
+| `POST` | `/auth/login` | public | US-01 |
+| `POST` | `/auth/logout` | any | |
+| `GET` | `/me` | any | Level, memberships, readiness |
+| `POST` | `/companies` | Admin | US-03 wizard (legal). Idempotent on CNPJ |
+| `PUT` | `/companies/{id}` | Admin | Legal/fiscal fields |
+| `POST` | `/companies/{id}/certificate` | Admin / Company | A1 |
+| `PUT` | `/companies/{id}/marketplaces/{code}` | Admin / Company | Enable app + parameters (US-03 step 3) |
+| `POST` | `/companies/{id}/users` | Admin | Company user + `user_company_marketplace` (US-09) |
+| `POST` | `/companies/{id}/vendors` | Admin / Company (own id) | Vendor + related marketplace users (US-10, US-11) |
+| `PUT` | `/companies/{id}/vendors/{userId}/marketplaces/{code}` | Admin / Company | Extra channel for existing vendor |
+| `GET` | `/sales` | Admin/Company: company. Vendor: own | Filter `status`, `marketplace_code`, `vendorUserId` |
+| `GET` | `/sales/{saleId}` | Owner per matrix | Common + items + EAV + `remote_status` |
+| `POST` | `/sales/{saleId}/sync` | Admin/Company | Enqueue FetchOrder |
+| `POST` | `/sales/{saleId}/nfe` | Paid/InvoiceRejected | DFe.NET (US-06) |
+| `GET` | `/sales/{saleId}/nfe` | | Outbound XML/chave |
+| `POST` | `/sales/{saleId}/label` | PreparingForDispatch/LabelPrinted | US-07 |
+| `GET` | `/sales/{saleId}/label.pdf` | | PDF |
 
 Existing `GET` orders path in [UI.md](./UI.md) is this same resource (`sales`). Do not keep a second `orders` table.
 
@@ -488,14 +829,21 @@ See [UI.md](./UI.md) for file sources. Behavior:
 | Sale detail | All (scoped) | Common fields + accordion **Dados do marketplace** (EAV). Status chips: canonical + raw |
 | Button Emitir NF-e | US-06 | Confirm modal: dest name, CNPJ/CPF, CEP, items, emitente CNPJ |
 | Button Imprimir etiqueta para envio | US-07 | Size selector 10×15 / 13.8×10.6. Placement hint |
-| Sidebar | Vendor vs Company vs Admin | US-01–03 |
+| Sign-in / home by level | US-01, US-02 | Badge Admin / Empresa / Vendedor |
+| Create company wizard | US-03 | Admin. Readiness lights |
+| Create company user | US-09 | Admin. Marketplace checkboxes |
+| Create vendor | US-10, US-11 | Admin or Company. Selected marketplaces + Connect |
+| Sidebar | US-02 | Admin / Company / Vendor menus |
 
 ---
 
 ## Testing these stories (when coding)
 
 - Unit: CEP 8 digits, status map, state machine (cannot emit from `PendingPayment`; cannot skip NF-e to `PreparingForDispatch` unless `invoiced_by_marketplace`).
+- Login: wrong password `401`; vendor JWT cannot `POST /companies`; company JWT cannot create vendor for another CNPJ (`403`).
 - Tenancy: vendor A cannot `GET` vendor B sale (404). Company A cannot see company B sale. Admin with `X-Company-Id` of A sees A's sales only in that list; admin search-all is a separate route.
+- Provisioning: create vendor with two codes → two `user_detail_marketplace` `PendingConnect`; OAuth callback sets `Linked`. Same idempotency key does not duplicate. Create company user with a code not enabled on the company → `400`.
+- Company readiness: no A1 → `ready_to_invoice = false`; emit returns `409 CertificateNotConfigured`.
 - Import: fixture ML order → one `sales` row + attributes `shipment_id`; second webhook updates `remote_status` only.
 - Emit: Testcontainers + stub `INfeAuthorizer` (do not call SEFAZ in CI); assert status `PreparingForDispatch` and XML stored; missing CEP → 400.
 - Label: generated PDF page size 100×150 mm (±1 mm); contains recipient name, CEP, sender CNPJ; reprint same sha256.

@@ -28,15 +28,18 @@ The system is for **N companies**. `CompanyId` is the tenant. Catalog, inventory
 | `MarketplaceParameter` | Company-level config key/value | `(configId, parameterKey)` |
 | `UserProfile` | How this user acts in the company | `Vendor`, `CompanyAdmin`, `Operator`, `Viewer` |
 | `users_detail` | Vendor profile shared by all marketplace subaccounts | `(companyId, userId)` |
-| `user_detail_marketplace` | That vendor's **subaccount** on one marketplace (key/value params) | `(companyId, userId, marketplaceCode)` |
+| `user_detail_marketplace` | That vendor's **subaccount** on one marketplace (key/value params, `link_status`) | `(companyId, userId, marketplaceCode)` |
+| `user_company_marketplace` | Company user's selected channels (company app, not a shop) | `(companyId, userId, marketplaceCode)` |
 
 Login personas (see [USER_STORIES.md](./USER_STORIES.md)):
 
-| Persona | Who | Visibility |
-| --- | --- | --- |
-| **Admin** | `IsPlatformSuperUser` | **All** companies, users, sales, NF-e, labels |
-| **Company** | `CompanyAdmin` of a CNPJ | **All users of that company** and **all of their sales** |
-| **Vendor user** | `UserProfile.Vendor` | Own marketplace links + **own sales** only |
+| Persona | Who | Visibility | Creates |
+| --- | --- | --- | --- |
+| **Admin** | `IsPlatformSuperUser` | **All** companies, users, sales | Companies, company users, vendors on a selected company |
+| **Company** | `CompanyAdmin` of a CNPJ | **All users of that company** and **all of their sales** | Vendors of **this** CNPJ |
+| **Vendor user** | `UserProfile.Vendor` | Own marketplace links + **own sales** only | — |
+
+Login is `POST /auth/login` (US-01). Home and menus follow the level (US-02). Creating a company includes legal + selected marketplace apps + A1 so listings, sale status, and NF-e can run (US-03). Creating a vendor on **selected** marketplaces inserts `user_detail_marketplace` and **connects** the remote shop user (US-10); production APIs do not silently register a seller. Depth: [USER_STORIES.md](./USER_STORIES.md).
 
 A vendor **belongs to the company by CNPJ** (`Company.Cnpj` unique). Marketplace links are `user_detail_marketplace` rows under that `company_id`. Sales attach to `vendor_user_id`. Cross-vendor reads inside the same CNPJ are allowed for Company and Admin, not for Vendor.
 
@@ -164,12 +167,15 @@ Company
 
 `users_detail` exists only for `UserProfile.Vendor`. Staff profiles do not get this row.
 
-**Create vendor (idempotent, per company):**
+**Create vendor (idempotent, per company, selected marketplaces):**
 
 1. Insert `User` + `UserCompany` with profile `Vendor`.
 2. Insert `users_detail` unique `(company_id, user_id)`.
-3. For **each enabled** `company_marketplace_config` of that company, insert `user_detail_marketplace` unique `(company_id, user_id, marketplace_code)` with empty/pending parameters.
-4. Retry with the same `Idempotency-Key` + `CompanyId` must not create a second vendor or a second subaccount set.
+3. For **each selected** `marketplace_code` (must be company-enabled), insert `user_detail_marketplace` unique `(company_id, user_id, marketplace_code)` with `link_status = PendingConnect`.
+4. OAuth/callback stores the remote shop/user ids and tokens → `Linked`. That is the related marketplace user.
+5. Retry with the same `Idempotency-Key` + `CompanyId` must not create a second vendor or a second subaccount set.
+
+Admin may do this for any company (US-10). Company users may do this only for their CNPJ (US-11).
 
 If a marketplace is enabled on the company **later**, provision a missing `user_detail_marketplace` for every existing vendor of that company (same uniqueness; skip rows that already exist).
 

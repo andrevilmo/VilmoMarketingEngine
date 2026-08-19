@@ -157,20 +157,25 @@ The product is multi-company from day one. There is no "default company" fallbac
 | `CompanyMarketplaceConfig` | This company × this marketplace (app/partner credentials) |
 | `CompanyMarketplaceParameter` | Company-level config key/value (cached in Redis) |
 | `users_detail` | Vendor profile **common to all** marketplace subaccounts |
-| `user_detail_marketplace` | That vendor's subaccount on one marketplace (key/value params) |
+| `user_detail_marketplace` | That vendor's subaccount on one marketplace (key/value params, `link_status`) |
+| `user_company_marketplace` | Company user's selected channels (uses company app tokens) |
 | `ICompanyContext` | Resolved once per HTTP request / queue message |
 
 `CompanyRole` / `UserProfile`: `CompanyAdmin`, `Operator`, `Viewer`, **`Vendor`**.
 
-**Login personas (user stories US-01–US-03):**
+**Login personas (US-01, US-02, US-08–US-12):**
 
-| Persona | Profile | Sees |
-| --- | --- | --- |
-| Admin | `IsPlatformSuperUser` | All companies, all users, all sales |
-| Company | `CompanyAdmin` | All users of **this CNPJ**, all of their sales |
-| Vendor user | `Vendor` | Own marketplace links + **own sales** only |
+| Persona | Profile | Sees | Creates |
+| --- | --- | --- | --- |
+| Admin | `IsPlatformSuperUser` | All companies, all users, all sales | Companies, company users, vendors on a selected company |
+| Company | `CompanyAdmin` | All users of **this CNPJ**, **all of their sales** | Vendors linked to **this** company only |
+| Vendor user | `Vendor` | Own marketplace links + **own sales** | Nothing (users/companies) |
 
-Vendors sell. Each company has many vendors. Each vendor is **linked to marketplaces** via `user_detail_marketplace` and **belongs to the company by CNPJ** (`users_detail.company_id` → `Company.Cnpj`). Each vendor publishes through **their own subaccount** on each marketplace and sees only sales attached to that subaccount.
+Login is one screen (`POST /auth/login`). `GET /me` returns the level so the Metronic shell hides menus. Depth: [USER_STORIES.md](./USER_STORIES.md).
+
+Vendors sell. Each vendor is **linked to selected marketplaces** via `user_detail_marketplace` (`PendingConnect` until OAuth links the remote shop user) and **belongs to the company by CNPJ**. Company users operate **company apps** via `user_company_marketplace` (not a personal shop). Sales attach to `vendor_user_id`.
+
+A company created by admin is only **ready to operate** when legal + selected marketplace apps + A1/series are in place (`ready_to_list`, `ready_to_sync_sales`, `ready_to_invoice`). See US-03.
 
 Authorization:
 
@@ -272,7 +277,9 @@ Many companies. Each company has many users with profile **`Vendor`**. Each mark
 | `users_detail` | Common vendor data reused on every marketplace: legal name, document (CPF/CNPJ), phone, address, display name, default description, photos references. One row per vendor. Unique `(company_id, user_id)`. Only when profile is `Vendor`. |
 | `user_detail_marketplace` | Marketplace-specific subaccount as **parameter key/values** (`ShopId`, `AccessToken`, `Nickname`, `SellerId`, …, `is_secret` where needed). Unique `(company_id, user_id, marketplace_code)`. |
 
-**Create vendor (must be idempotent per company):**
+**Create vendor (must be idempotent per company; US-10 admin, US-11 company):**
+
+Admin or company user sends **selected** `marketplaceCodes` (subset of company-enabled codes, or `"*"` for all enabled). Empty list is `400`.
 
 ```
 POST /companies/{companyId}/vendors  + Idempotency-Key
@@ -284,11 +291,14 @@ User + UserCompany (profile Vendor)
 users_detail  unique (company_id, user_id)
         │
         ▼
-for each enabled company marketplace:
+for each selected marketplace:
     user_detail_marketplace  unique (company_id, user_id, marketplace_code)
+    link_status = PendingConnect  until OAuth binds the remote shop/user
 ```
 
-Retry of the same key in the same company returns the existing vendor and does **not** create extra subaccounts. Same email in another company is a different vendor (different `company_id`).
+This is the “related marketplace user”: production channels do not allow silent seller signup; we persist the subaccount and **connect** the official shop user. Retry of the same key does **not** create extra subaccounts.
+
+**Create company user (admin, US-09):** `POST /companies/{id}/users` with selected `marketplaceCodes` → `user_company_marketplace` rows. They use **company** app tokens, not a vendor shop.
 
 When a new marketplace is enabled on the company later, insert missing `user_detail_marketplace` rows for every existing vendor (skip if the unique key already exists).
 
@@ -442,11 +452,12 @@ Auth: bearer session/JWT with `user_id`, `is_platform_super_user`, and membershi
 
 | Method | Path | Behavior |
 | --- | --- | --- |
-| `POST` | `/auth/login` | Issue token. Super user may omit company; others need membership. |
+| `POST` | `/auth/login` | Issue token (US-01). Super user may omit company; others need membership. |
+| `GET` | `/me` | Level, memberships, company readiness. |
 | `GET` | `/companies` | Super user: all. Others: memberships only. |
-| `POST` | `/companies` | Super user creates a company (CNPJ unique). |
-| `POST` | `/companies/{companyId}/users` | Link a staff user to that company with a `CompanyRole`. Super user or `CompanyAdmin`. |
-| `POST` | `/companies/{companyId}/vendors` | Create vendor user + `users_detail` + one `user_detail_marketplace` per enabled marketplace. Idempotent per company. |
+| `POST` | `/companies` | Admin creates a company (CNPJ unique) — US-03 legal step. |
+| `POST` | `/companies/{companyId}/users` | Admin: company user + `user_company_marketplace` for **selected** codes (US-09). |
+| `POST` | `/companies/{companyId}/vendors` | Admin or Company (own id): vendor + related marketplace users on **selected** codes (US-10, US-11). Idempotent. |
 | `GET` | `/companies/{companyId}/vendors/{userId}` | Vendor + common detail + subaccounts (secrets omitted). |
 | `PUT` | `/companies/{companyId}/vendors/{userId}/detail` | Update `users_detail` (common fields). |
 | `PUT` | `/companies/{companyId}/vendors/{userId}/marketplaces/{code}` | Upsert `user_detail_marketplace` parameters; `DEL` Redis vendor cache. |
@@ -539,6 +550,7 @@ Reservation: marketplace sales of that company decrement **available** via `rese
 | Stock push | command id + remote version | `(company_id, listing_id, command_id)` | 24h Redis + unique command |
 | Create vendor | PostgreSQL unique | `(company_id, user_id)` on `users_detail` | forever |
 | Vendor subaccount | PostgreSQL unique | `(company_id, user_id, marketplace_code)` on `user_detail_marketplace` | forever |
+| Company user channel | PostgreSQL unique | `(company_id, user_id, marketplace_code)` on `user_company_marketplace` | forever |
 | Publish advertisement | PostgreSQL unique | `(company_id, vendor_user_id, sku, marketplace_code)` | forever |
 | Import sale | PostgreSQL unique | `(company_id, marketplace_code, remote_order_id)` | forever |
 | Sale attribute | PostgreSQL unique | `(sale_id, field_name)` | forever |
@@ -577,7 +589,7 @@ Shopee/SHEIN HMAC failures are not retried blindly; they are `Failed` with a dis
 Do not build four C# marketplace projects. Build the **generic engine** first, then seed the four launch definitions as data.
 
 1. **Foundation** — solution, Docker Compose (postgres + redis + empty API), BuildingBlocks (Result, company-scoped idempotency, streams), health checks.
-2. **Identity + tenancy** — `Company`, `User`, `UserCompany`, JWT/`X-Company-Id`, seed `admin@vilmomkt.com` + company CNPJ `68431371000161`. Row filters by `company_id`. Personas: Admin / Company / Vendor (US-01–03). `UserProfile.Vendor`, `users_detail`, `user_detail_marketplace`; creating a vendor provisions one subaccount per enabled marketplace (idempotent per company). Vendor APIs force `vendor_user_id = me` on sales.
+2. **Identity + tenancy** — `Company`, `User`, `UserCompany`, JWT/`X-Company-Id`, seed `admin@vilmomkt.com` + company CNPJ `68431371000161`. Login US-01, home by level US-02. Admin creates companies (US-03, readiness flags), company users (US-09, `user_company_marketplace`), vendors on **selected** marketplaces (US-10, `PendingConnect` until OAuth). Company users create vendors for their CNPJ (US-11). Vendor sees only own sales (US-12). Row filters by `company_id`.
 3. **Metronic UI shell** — `vilmo-web` from HTML starter layout-1 + demo1 sign-in and members datatable, proxied to the API. Company switcher for super user. Role-based sidebar. See [UI.md](./UI.md).
 4. **Catalog + inventory domain** — Product, identifiers, movements, balances, uniqueness all include `company_id`.
 5. **NF-e ingest module** — `ChaveAcesso`, XML parse via DFe.NET, CFOP policy vs `Company.Cnpj`, ingest API, XML upload path. `ICompanyCertificateStore` + Zeus fetcher for companies that have an A1 (first tenant included). HTML ingest form (chave + Dropzone XML).
@@ -637,12 +649,13 @@ Outbound **NF-e de saída** from a paid sale (DFe.NET `NFeAutorizacao`) **is in 
 
 Docker Compose up → open `vilmo-web` Metronic sign-in (`demo1` branded):
 
-1. **Admin** `admin@vilmomkt.com` sees all companies → switches to CNPJ `68431371000161`.
-2. **Company** admin of that CNPJ creates a **vendor** (`POST /vendors`, idempotent) → `users_detail` plus one `user_detail_marketplace` per enabled marketplace. Company sees **all** users and **all** sales of this CNPJ.
-3. Vendor logs in and sees **only** his sales and his marketplace links.
-4. Ingest NF-e (chave or XML) using that company's A1 → inventory **only** for that company.
-5. Vendor publishes an advertisement (default all channels).
-6. Webhook/import creates a **common sale** + EAV attributes; canonical status **Pago**.
-7. On that sale, **Emitir nota fiscal eletrônica** → DFe.NET authorizes → status **Preparando para envio**. Retry of the same key does not emit twice.
-8. **Imprimir etiqueta para envio** → PDF 10×15 (or 13.8×10.6) with sender CNPJ/address, recipient name/address/CEP, barcode not covered. Status **Etiqueta impressa**.
-9. A second company cannot see those products or sales. Vendor B cannot open vendor A's sale (`404`).
+1. **Admin** logs in (US-01) → sees all companies (US-02) → **creates a company** with legal + selected marketplaces + A1 (US-03) so list/sync/invoice flags can turn green.
+2. Admin **creates a company user** on selected channels (US-09) and/or a **vendor** on selected marketplaces (US-10, `PendingConnect` → OAuth `Linked`).
+3. That **company user** logs in, **creates more vendors** for the same CNPJ, and sees **all their sales** (US-11).
+4. **Vendor** logs in and sees **only** his sales and status (US-12).
+5. Ingest NF-e (chave or XML) using that company's A1 → inventory **only** for that company.
+6. Vendor publishes an advertisement on **linked** channels.
+7. Webhook/import creates a **common sale** + EAV attributes; canonical status **Pago**.
+8. On that sale, **Emitir nota fiscal eletrônica** → DFe.NET authorizes → status **Preparando para envio**. Retry of the same key does not emit twice.
+9. **Imprimir etiqueta para envio** → PDF 10×15 (or 13.8×10.6) with sender CNPJ/address, recipient name/address/CEP. Status **Etiqueta impressa**.
+10. A second company cannot see those products or sales. Vendor B cannot open vendor A's sale (`404`).
