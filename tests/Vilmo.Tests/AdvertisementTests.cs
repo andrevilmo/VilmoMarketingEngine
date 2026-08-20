@@ -113,6 +113,7 @@ public class AdvertisementApiTests : IClassFixture<ApiFactory>
         Assert.Equal(sku, ad.GetProperty("sku").GetString());
         Assert.Equal(2, ad.GetProperty("items").GetArrayLength());
         Assert.Contains(ad.GetProperty("channels").EnumerateArray(), c => c.GetProperty("marketplaceCode").GetString() == "MercadoLivre");
+        Assert.Contains(ad.GetProperty("channels").EnumerateArray(), c => c.GetProperty("status").GetString() == ListingStatuses.Draft);
 
         var list = await _client.SendAsync(Authed(HttpMethod.Get, "/advertisements", token, companyId: companyId));
         list.EnsureSuccessStatusCode();
@@ -212,6 +213,93 @@ public class AdvertisementApiTests : IClassFixture<ApiFactory>
             items = new[] { new { sku = "NOPE-SKU", quantity = 1m } }
         }, companyId));
         Assert.Equal(HttpStatusCode.NotFound, res.StatusCode);
+    }
+
+    [Fact]
+    public async Task Empty_marketplace_codes_is_400()
+    {
+        var (token, companyId) = await AdminAsync();
+        var res = await _client.SendAsync(Authed(HttpMethod.Post, "/advertisements", token, new
+        {
+            kind = "Product",
+            title = "Sem canal",
+            price = 1m,
+            items = new[] { new { sku = "CAMISETA-001", quantity = 1m } },
+            marketplaceCodes = Array.Empty<string>()
+        }, companyId));
+        Assert.Equal(HttpStatusCode.BadRequest, res.StatusCode);
+        Assert.Contains("MarketplaceRequired", await res.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task Channel_publish_cancel_and_refresh_online_snapshot()
+    {
+        var (token, companyId) = await AdminAsync();
+        var sku = $"AD-CH-{Guid.NewGuid():N}"[..16].ToUpperInvariant();
+        var pub = await _client.SendAsync(Authed(HttpMethod.Post, "/advertisements", token, new
+        {
+            kind = "Product",
+            sku,
+            title = "Camiseta canais",
+            price = 89.90m,
+            availableQuantity = 4,
+            marketplaceCodes = new[] { "MercadoLivre", "Shopee" },
+            items = new[] { new { sku = "CAMISETA-001", quantity = 1m } }
+        }, companyId));
+        Assert.Equal(HttpStatusCode.Created, pub.StatusCode);
+        using var created = JsonDocument.Parse(await pub.Content.ReadAsStringAsync());
+        var ad = created.RootElement.GetProperty("advertisement");
+        var id = ad.GetProperty("id").GetGuid();
+        Assert.Equal(2, ad.GetProperty("channels").GetArrayLength());
+        Assert.All(ad.GetProperty("channels").EnumerateArray(), c =>
+            Assert.Equal(ListingStatuses.Draft, c.GetProperty("status").GetString()));
+
+        var proceed = await _client.SendAsync(Authed(HttpMethod.Post,
+            $"/advertisements/{id}/channels/MercadoLivre/publish", token, new { }, companyId));
+        proceed.EnsureSuccessStatusCode();
+        using var live = JsonDocument.Parse(await proceed.Content.ReadAsStringAsync());
+        var ml = live.RootElement.GetProperty("advertisement").GetProperty("channels").EnumerateArray()
+            .First(c => c.GetProperty("marketplaceCode").GetString() == "MercadoLivre");
+        Assert.Equal(ListingStatuses.Published, ml.GetProperty("status").GetString());
+        Assert.Equal("Publicado", ml.GetProperty("statusPt").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(ml.GetProperty("remoteId").GetString()));
+        Assert.Equal("Camiseta canais", ml.GetProperty("remoteTitle").GetString());
+        Assert.Equal(89.90m, ml.GetProperty("remotePrice").GetDecimal());
+        Assert.Equal("active", ml.GetProperty("remoteStatus").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(ml.GetProperty("remotePermalink").GetString()));
+        Assert.True(ml.GetProperty("lastSyncedAt").ValueKind == JsonValueKind.String);
+
+        var shopeeDraft = live.RootElement.GetProperty("advertisement").GetProperty("channels").EnumerateArray()
+            .First(c => c.GetProperty("marketplaceCode").GetString() == "Shopee");
+        Assert.Equal(ListingStatuses.Draft, shopeeDraft.GetProperty("status").GetString());
+
+        var cancel = await _client.SendAsync(Authed(HttpMethod.Post,
+            $"/advertisements/{id}/channels/Shopee/cancel", token, new { }, companyId));
+        cancel.EnsureSuccessStatusCode();
+        using var stopped = JsonDocument.Parse(await cancel.Content.ReadAsStringAsync());
+        var shopee = stopped.RootElement.GetProperty("advertisement").GetProperty("channels").EnumerateArray()
+            .First(c => c.GetProperty("marketplaceCode").GetString() == "Shopee");
+        Assert.Equal(ListingStatuses.Cancelled, shopee.GetProperty("status").GetString());
+        Assert.Equal("Cancelado", shopee.GetProperty("statusPt").GetString());
+        Assert.Equal("paused", shopee.GetProperty("remoteStatus").GetString());
+
+        var refresh = await _client.SendAsync(Authed(HttpMethod.Post,
+            $"/advertisements/{id}/refresh", token, new { }, companyId));
+        refresh.EnsureSuccessStatusCode();
+        using var synced = JsonDocument.Parse(await refresh.Content.ReadAsStringAsync());
+        var channels = synced.RootElement.GetProperty("advertisement").GetProperty("channels").EnumerateArray().ToList();
+        var mlSync = channels.First(c => c.GetProperty("marketplaceCode").GetString() == "MercadoLivre");
+        var shSync = channels.First(c => c.GetProperty("marketplaceCode").GetString() == "Shopee");
+        Assert.Equal(ListingStatuses.Published, mlSync.GetProperty("status").GetString());
+        Assert.Equal("active", mlSync.GetProperty("remoteStatus").GetString());
+        Assert.True(mlSync.GetProperty("lastSyncedAt").ValueKind == JsonValueKind.String);
+        Assert.Equal(ListingStatuses.Cancelled, shSync.GetProperty("status").GetString());
+        Assert.Equal("paused", shSync.GetProperty("remoteStatus").GetString());
+        Assert.Contains("refresh", shSync.GetProperty("lastSyncJson").GetString()!);
+
+        var get = await _client.SendAsync(Authed(HttpMethod.Get, $"/advertisements/{id}", token, companyId: companyId));
+        get.EnsureSuccessStatusCode();
+        Assert.Contains(sku, await get.Content.ReadAsStringAsync());
     }
 }
 

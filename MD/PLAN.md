@@ -317,13 +317,15 @@ Vendor subaccount params: Redis cache-aside `vendor-marketplace:{companyId}:{use
 
 **Publish advertisement:**
 
-- `POST /advertisements` (alias `POST /listings`) publishes one **anúncio** for the **selected company** (`X-Company-Id`). Kind is `Product` (one SKU) or `Kit` (set of products as one listing).
-- Body: `title`, `description`, `price`, `availableQuantity` (how many ads/kits to sell), `condition`, `brand`, `gtin`, dimensions, optional `sku` (empty kit SKU → `KIT-…`), optional `vendorUserId` (admin/company), optional `marketplaceCodes`, `items: [{ sku, quantity }]`, `attributes: [{ marketplaceCode, fieldName, fieldValue }]`.
+- `POST /advertisements` (alias `POST /listings`) **saves** one **anúncio** for the **selected company** (`X-Company-Id`). Kind is `Product` (one SKU) or `Kit` (set of products as one listing). Default is **Draft** listings (not live).
+- Body: `title`, `description`, `price`, `availableQuantity` (how many ads/kits to sell), `condition`, `brand`, `gtin`, dimensions, optional `sku` (empty kit SKU → `KIT-…`), optional `vendorUserId` (admin/company), `marketplaceCodes` (which channels to attach), `enqueuePublish` (default **false**), `items: [{ sku, quantity }]`, `attributes: [{ marketplaceCode, fieldName, fieldValue }]`.
 - **Items:** a kit can have more than one SKU; each line `quantity` is how many stock units of that SKU leave inventory per 1 advertised unit sold. Two items with qty 2 and 1, sale qty 2 → decrement 4 and 2.
 - Common listing fields live on `advertisement`. Per-channel extras (ML category, Shopee `daysToShip`, …) live on `advertisement_attribute`. Catalog: `GET /marketplaces/listing-fields`.
-- **Omitted or empty `marketplaceCodes` = all** enabled company marketplaces (vendor: that vendor's subaccounts). Unknown codes → `400`.
-- One `listing` row per selected marketplace, unique `(company_id, vendor_user_id, sku, marketplace_code)`, FK `advertisement_id`.
-- Enqueue `{ listingId, advertisementId }` per channel. Connector uses company app credentials **plus** that vendor's `user_detail_marketplace` parameters.
+- **Omitted / null `marketplaceCodes` = all** enabled company marketplaces (vendor: that vendor's subaccounts). **Empty array → `400 MarketplaceRequired`.** Unknown codes → `400`.
+- One `listing` row per selected marketplace, unique `(company_id, vendor_user_id, sku, marketplace_code)`, FK `advertisement_id`. Status starts as `Draft` unless `enqueuePublish: true`.
+- Per channel: `POST /advertisements/{id}/channels/{code}/publish` proceeds (demo snapshot + queue `listing.publish.requested`). `POST .../cancel` sets `Cancelled` / remote `paused` and queues `listing.cancel.requested`.
+- Per ad: `POST /advertisements/{id}/refresh` pulls online snapshot for **every** channel (demo connector today) and queues `listing.refresh.requested`.
+- Connector uses company app credentials **plus** that vendor's `user_detail_marketplace` parameters.
 
 ### Sales: common table + marketplace-specific attributes (US-04, US-05)
 
@@ -497,9 +499,13 @@ Auth: bearer session/JWT with `user_id`, `is_platform_super_user`, and membershi
 | `GET` | `/oauth/{code}/callback` | Store tokens as parameters; invalidate Redis. Same route for every future code. |
 | `POST` | `/webhooks/{code}` | Verify using that code's `marketplace_webhook_binding`, resolve company **and vendor**, enqueue, 200. |
 | `GET` | `/marketplaces/listing-fields` | Common listing fields (`*`) plus extras per `marketplace_code` for the Anúncios form. |
-| `GET` | `/advertisements` / `GET /listings` | Ads of the active company (vendor: own). Includes `items`, `attributes`, `channels`. |
-| `POST` | `/advertisements` | Publish a product or a **kit** for the selected company. `items[].quantity` is stock units per advertised unit. `marketplaceCodes` optional; **default all**. One `listing` per selected marketplace. |
+| `GET` | `/advertisements` / `GET /listings` | Ads of the active company (vendor: own). Includes `items`, `attributes`, `channels` (status + remote snapshot fields). |
+| `GET` | `/advertisements/{id}` | One ad + channels. `404` outside company/vendor scope. |
+| `POST` | `/advertisements` | Save a product or a **kit** for the selected company. `marketplaceCodes` omitted = all; empty array = `400 MarketplaceRequired`. Default `enqueuePublish: false` → **Draft** listings. |
 | `POST` | `/listings` | Same as `/advertisements` (alias). |
+| `POST` | `/advertisements/{id}/channels/{code}/publish` | Proceed: publish **this** marketplace (demo snapshot + queue). |
+| `POST` | `/advertisements/{id}/channels/{code}/cancel` | Cancel **this** marketplace (`Cancelled`, remote `paused`). |
+| `POST` | `/advertisements/{id}/refresh` | Refresh online anúncio data from **every** marketplace of this ad. |
 | `POST` | `/inventory/{sku}/publish` | Fan-out this SKU as a one-item product ad on selected marketplaces (default all). |
 | `GET` | `/sales` | Company/Admin: all sales of the active CNPJ. Vendor: own sales only. Filters: `status`, `marketplace_code`. |
 | `GET` | `/sales/{saleId}` | Common sale + items + EAV attributes (masked). `404` if outside visibility. |

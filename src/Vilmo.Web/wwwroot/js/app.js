@@ -178,6 +178,22 @@ const Vilmo = (() => {
     return String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
 
+  function fmtWhen(iso) {
+    if (!iso) return "";
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? String(iso) : d.toLocaleString("pt-BR");
+  }
+
+  function adErr(code) {
+    return ({
+      MarketplaceRequired: "Selecione ao menos um marketplace.",
+      UnknownMarketplace: "Marketplace não habilitado para esta empresa.",
+      NoChannels: "Este anúncio não tem canais.",
+      AdvertisementNotFound: "Anúncio não encontrado.",
+      ListingNotFound: "Canal não encontrado neste anúncio."
+    })[code] || code;
+  }
+
   function stopIngestLogPoll() {
     if (ingestLogTimer) {
       clearInterval(ingestLogTimer);
@@ -435,21 +451,61 @@ const Vilmo = (() => {
     const extras = (markets || []).map(m => {
       const defs = extraByMkt[m.code] || extraByMkt[m.Code] || [];
       if (!defs.length) return "";
-      const inputs = defs.map(d => `<label>${esc(d.label)}<input class="kt-input attr-field" data-mkt="${esc(m.code)}" data-key="${esc(d.fieldKey)}" ${d.required ? "required" : ""}></label>`).join("");
+      const inputs = defs.map(d => `<label>${esc(d.label)}<input class="kt-input attr-field" data-mkt="${esc(m.code)}" data-key="${esc(d.fieldKey)}"></label>`).join("");
       return `<div class="ad-extra" data-extra="${esc(m.code)}"><h4 class="text-sm font-medium mb-2">${esc(m.displayName || m.code)}</h4><div class="vilmo-grid cols-2">${inputs}</div></div>`;
     }).join("");
     const checks = (markets || []).map(m => `<label class="text-sm"><input type="checkbox" class="mkt-code" value="${esc(m.code)}" checked> ${esc(m.displayName || m.code)}</label>`).join("");
     const vendorSel = store.me.level === "Vendor" ? "" : `<label>Vendedor (opcional)
       <select class="kt-select" name="vendorUserId"><option value="">Eu / empresa</option>${(vendors || []).map(v => `<option value="${v.id || v.userId || ""}">${esc(v.name || v.email || "")}</option>`).join("")}</select></label>`;
-    const rows = (ads || []).map(a => {
+    const list = Array.isArray(ads) ? ads : (ads && ads.advertisements) || [];
+    const cards = list.map(a => {
       const items = (a.items || []).map(i => `${i.quantity}× ${i.sku}`).join(", ");
-      const ch = (a.channels || []).map(c => `${c.marketplaceCode}:${c.status}`).join(" · ");
-      return `<tr><td>${esc(a.title)}<div class="text-xs text-muted-foreground">${esc(a.sku)} · ${a.kind === "Kit" ? "conjunto" : "produto"}</div></td><td>${esc(items)}</td><td>${a.price}</td><td>${a.availableQuantity}</td><td>${esc(ch)}</td></tr>`;
-    });
+      const channels = (a.channels || []).map(c => {
+        const remoteBits = [];
+        if (c.remoteId) remoteBits.push(`id ${esc(c.remoteId)}`);
+        if (c.remoteStatus) remoteBits.push(esc(c.remoteStatus));
+        if (c.remotePrice != null) remoteBits.push(`R$ ${esc(String(c.remotePrice))}`);
+        if (c.remoteQuantity != null) remoteBits.push(`qtd ${esc(String(c.remoteQuantity))}`);
+        const title = c.remoteTitle ? `<div class="text-sm">${esc(c.remoteTitle)}</div>` : "";
+        const link = c.remotePermalink
+          ? `<a class="text-xs" href="${esc(c.remotePermalink)}" target="_blank" rel="noopener">Abrir no marketplace</a>`
+          : "";
+        const synced = c.lastSyncedAt
+          ? `Atualizado ${esc(fmtWhen(c.lastSyncedAt))}`
+          : "Sem dados online ainda";
+        return `<div class="ad-channel" data-ad="${esc(a.id)}" data-code="${esc(c.marketplaceCode)}">
+          <div class="ad-channel-head">
+            <div>
+              <div class="font-medium">${esc(c.displayName || c.marketplaceCode)}</div>
+              <div class="text-xs text-muted-foreground">${esc(c.statusPt || c.status)}</div>
+            </div>
+            <div class="ad-channel-actions">
+              <button type="button" class="kt-btn kt-btn-outline kt-btn-sm ad-cancel">Cancelar</button>
+              <button type="button" class="kt-btn kt-btn-primary kt-btn-sm ad-publish-ch">Publicar neste canal</button>
+            </div>
+          </div>
+          ${title}
+          <div class="text-xs text-muted-foreground">${remoteBits.join(" · ") || synced}</div>
+          <div class="text-xs text-muted-foreground">${esc(synced)}</div>
+          ${link}
+        </div>`;
+      }).join("") || `<p class="text-sm text-muted-foreground">Nenhum marketplace neste anúncio.</p>`;
+      return `<article class="vilmo-card ad-card mb-3" data-ad="${esc(a.id)}">
+        <div class="ad-card-head">
+          <div>
+            <h3 class="font-medium">${esc(a.title)}</h3>
+            <div class="text-xs text-muted-foreground">${esc(a.sku)} · ${a.kind === "Kit" ? "conjunto" : "produto"} · ${esc(items)} · R$ ${esc(String(a.price))} · qtd ${esc(String(a.availableQuantity))}</div>
+          </div>
+          <button type="button" class="kt-btn kt-btn-outline kt-btn-sm ad-refresh">Atualizar dados online</button>
+        </div>
+        <div class="ad-channels">${channels}</div>
+        <div class="ad-card-msg"></div>
+      </article>`;
+    }).join("") || `<p class="text-sm text-muted-foreground">Nenhum anúncio ainda.</p>`;
     return page("Anúncios", "", `
       <form id="ad-form" class="vilmo-card vilmo-grid cols-2 mb-4">
-        <h3 class="col-span-2 font-medium">Publicar anúncio</h3>
-        <p class="col-span-2 text-sm text-muted-foreground">Um produto ou um conjunto (kit). Cada linha do conjunto tem o SKU e a quantidade que sai do estoque quando a venda for paga.</p>
+        <h3 class="col-span-2 font-medium">Salvar anúncio</h3>
+        <p class="col-span-2 text-sm text-muted-foreground">Escolha os marketplaces e salve o rascunho. Depois use <b>Publicar neste canal</b> ou <b>Cancelar</b> em cada marketplace, e <b>Atualizar dados online</b> para puxar o anúncio publicado.</p>
         <div class="col-span-2 ad-kind">
           <label class="text-sm"><input type="radio" name="kind" value="Product" checked> Um produto</label>
           <label class="text-sm"><input type="radio" name="kind" value="Kit"> Conjunto / kit</label>
@@ -478,10 +534,10 @@ const Vilmo = (() => {
           <div class="flex flex-wrap gap-3">${checks}</div>
           ${extras}
         </div>
-        <div class="col-span-2"><button class="kt-btn kt-btn-primary" type="submit">Publicar</button></div>
+        <div class="col-span-2"><button class="kt-btn kt-btn-primary" type="submit">Salvar anúncio</button></div>
         <div id="ad-msg" class="col-span-2"></div>
       </form>
-      ${table(["Anúncio", "Itens (estoque)", "Preço", "Qtd anúncio", "Canais"], rows)}`);
+      ${cards}`);
   }
 
   async function viewSales() {
@@ -727,18 +783,47 @@ const Vilmo = (() => {
           lengthCm: num("lengthCm"),
           vendorUserId: fd.get("vendorUserId") || undefined,
           marketplaceCodes,
+          enqueuePublish: false,
           items,
           attributes
         };
         const msg = $("#ad-msg");
+        if (!marketplaceCodes.length) {
+          if (msg) msg.innerHTML = `<div class="kt-alert kt-alert-danger">${esc(adErr("MarketplaceRequired"))}</div>`;
+          return;
+        }
         try {
           await api("/advertisements", { method: "POST", body });
           renderRoute();
         } catch (ex) {
-          if (msg) msg.innerHTML = `<div class="kt-alert kt-alert-danger">${esc(ex.message)}</div>`;
+          if (msg) msg.innerHTML = `<div class="kt-alert kt-alert-danger">${esc(adErr(ex.message))}</div>`;
         }
       };
     }
+    const runAdAction = async (el, path) => {
+      const card = el.closest(".ad-card") || el.closest(".ad-channel");
+      const msg = (el.closest(".ad-card") || document).querySelector(".ad-card-msg");
+      el.disabled = true;
+      try {
+        await api(path, { method: "POST", body: {} });
+        renderRoute();
+      } catch (ex) {
+        el.disabled = false;
+        if (msg) msg.innerHTML = `<div class="kt-alert kt-alert-danger">${esc(adErr(ex.message))}</div>`;
+      }
+    };
+    document.querySelectorAll(".ad-publish-ch").forEach(btn => btn.onclick = () => {
+      const ch = btn.closest(".ad-channel");
+      return runAdAction(btn, `/advertisements/${ch.dataset.ad}/channels/${encodeURIComponent(ch.dataset.code)}/publish`);
+    });
+    document.querySelectorAll(".ad-cancel").forEach(btn => btn.onclick = () => {
+      const ch = btn.closest(".ad-channel");
+      return runAdAction(btn, `/advertisements/${ch.dataset.ad}/channels/${encodeURIComponent(ch.dataset.code)}/cancel`);
+    });
+    document.querySelectorAll(".ad-refresh").forEach(btn => btn.onclick = () => {
+      const card = btn.closest(".ad-card");
+      return runAdAction(btn, `/advertisements/${card.dataset.ad}/refresh`);
+    });
     if ($("#vendor-form")) $("#vendor-form").onsubmit = async (e) => {
       e.preventDefault();
       const fd = new FormData(e.target);

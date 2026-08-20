@@ -365,6 +365,56 @@ public static class Endpoints
             return Results.Ok(await ads.ListAsync((CompanyContext)ctxr, ct));
         }).RequireAuthorization();
 
+        app.MapGet("/advertisements/{id:guid}", async (Guid id, HttpContext http, AppDbContext db, AdvertisementService ads, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            var mapped = await ads.GetAsync((CompanyContext)ctxr, id, ct);
+            return mapped is null ? Results.NotFound(new { error = "AdvertisementNotFound" }) : Results.Ok(mapped);
+        }).RequireAuthorization();
+
+        app.MapPost("/advertisements/{id:guid}/refresh", async (Guid id, HttpContext http, AppDbContext db, AdvertisementService ads, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            var ctx = (CompanyContext)ctxr;
+            return await WithIdempotency(http, db, ctx.RequireCompany(), async () =>
+            {
+                try { return (200, await ads.RefreshOnlineAsync(ctx, id, ct)); }
+                catch (ArgumentException ex) { return (400, (object)new { error = ex.Message }); }
+                catch (InvalidOperationException ex) { return (400, (object)new { error = ex.Message }); }
+                catch (KeyNotFoundException ex) { return (404, (object)new { error = ex.Message }); }
+            }, ct);
+        }).RequireAuthorization();
+
+        app.MapPost("/advertisements/{id:guid}/channels/{code}/publish", async (Guid id, string code, HttpContext http, AppDbContext db, AdvertisementService ads, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            var ctx = (CompanyContext)ctxr;
+            return await WithIdempotency(http, db, ctx.RequireCompany(), async () =>
+            {
+                try { return (200, await ads.ProceedChannelAsync(ctx, id, code, ct)); }
+                catch (ArgumentException ex) { return (400, (object)new { error = ex.Message }); }
+                catch (InvalidOperationException ex) { return (400, (object)new { error = ex.Message }); }
+                catch (KeyNotFoundException ex) { return (404, (object)new { error = ex.Message }); }
+            }, ct);
+        }).RequireAuthorization();
+
+        app.MapPost("/advertisements/{id:guid}/channels/{code}/cancel", async (Guid id, string code, HttpContext http, AppDbContext db, AdvertisementService ads, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            var ctx = (CompanyContext)ctxr;
+            return await WithIdempotency(http, db, ctx.RequireCompany(), async () =>
+            {
+                try { return (200, await ads.CancelChannelAsync(ctx, id, code, ct)); }
+                catch (ArgumentException ex) { return (400, (object)new { error = ex.Message }); }
+                catch (InvalidOperationException ex) { return (400, (object)new { error = ex.Message }); }
+                catch (KeyNotFoundException ex) { return (404, (object)new { error = ex.Message }); }
+            }, ct);
+        }).RequireAuthorization();
+
         app.MapPost("/inventory/{sku}/publish", async (string sku, JsonElement body, HttpContext http, AppDbContext db, AdvertisementService ads, CancellationToken ct) =>
         {
             var ctxr = await Need(http, db, ct);
@@ -653,6 +703,7 @@ public static class Endpoints
                     return (201, created);
                 }
                 catch (ArgumentException ex) { return (400, (object)new { error = ex.Message }); }
+                catch (InvalidOperationException ex) { return (400, (object)new { error = ex.Message }); }
                 catch (KeyNotFoundException ex) { return (404, (object)new { error = ex.Message }); }
             }, ct);
         }

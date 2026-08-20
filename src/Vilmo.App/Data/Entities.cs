@@ -178,8 +178,15 @@ public class Listing
     public Guid? AdvertisementId { get; set; }
     public string Sku { get; set; } = "";
     public string MarketplaceCode { get; set; } = "";
-    public string Status { get; set; } = "Pending";
+    public string Status { get; set; } = "Draft";
     public string? RemoteId { get; set; }
+    public string? RemoteTitle { get; set; }
+    public decimal? RemotePrice { get; set; }
+    public decimal? RemoteQuantity { get; set; }
+    public string? RemoteStatus { get; set; }
+    public string? RemotePermalink { get; set; }
+    public DateTimeOffset? LastSyncedAt { get; set; }
+    public string? LastSyncJson { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 

@@ -73,6 +73,27 @@ public static class WorkKinds
     public const string StockPublish = "stock.publish.requested";
     public const string UploadInvoice = "marketplace.upload_invoice";
     public const string PublishListing = "listing.publish.requested";
+    public const string ListingRefresh = "listing.refresh.requested";
+    public const string ListingCancel = "listing.cancel.requested";
+}
+
+public static class ListingStatuses
+{
+    public const string Draft = "Draft";
+    public const string Queued = "Queued";
+    public const string Published = "Published";
+    public const string Cancelled = "Cancelled";
+    public const string Error = "Error";
+
+    public static readonly IReadOnlyDictionary<string, string> Pt = new Dictionary<string, string>
+    {
+        [Draft] = "Rascunho",
+        [Queued] = "Na fila",
+        [Published] = "Publicado",
+        ["PublishedDemo"] = "Publicado",
+        [Cancelled] = "Cancelado",
+        [Error] = "Erro"
+    };
 }
 
 public static class AdvertisementKinds

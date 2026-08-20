@@ -290,8 +290,13 @@ Separate from Metronic. Same login (Admin / Empresa). Vendor: blocked.
 │ Itens: [SKU ▼] [qtd no conjunto] [+ item]           │
 │ ☐ ML ☐ Shopee ☐ SHEIN ☐ Magalu                      │
 │ extras do canal (categoria, tipo de anúncio, …)     │
-│ [Publicar]                                          │
-│ Table: anúncio, itens estoque, preço, qtd, canais   │
+│ [Salvar anúncio]                                    │
+│ Card: anúncio + itens + preço                       │
+│   Mercado Livre  Rascunho                           │
+│     [Cancelar] [Publicar neste canal]               │
+│   Shopee         Publicado · id demo-… · R$ 89,90   │
+│     [Cancelar] [Publicar neste canal]               │
+│   [Atualizar dados online]                          │
 └─────────────────────────────────────────────────────┘
 ```
 

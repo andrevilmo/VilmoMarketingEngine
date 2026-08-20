@@ -67,6 +67,16 @@
 .ad-extra { display: none; margin-top: .75rem; padding-top: .75rem; border-top: 1px dashed #e5e7eb; }
 .ad-extra.on { display: block; }
 .ad-kind { display: flex; gap: 1rem; }
+.ad-card-head, .ad-channel-head {
+  display: flex; justify-content: space-between; gap: .75rem; align-items: flex-start; flex-wrap: wrap;
+}
+.ad-channels { display: grid; gap: .75rem; margin-top: .85rem; }
+.ad-channel {
+  border: 1px solid #e5e7eb; border-radius: 10px; padding: .75rem;
+  background: #fafafa;
+}
+.ad-channel-actions { display: flex; gap: .4rem; flex-wrap: wrap; }
+.ad-card-msg { margin-top: .5rem; }
 
 /* Mobile logged-in menu (iPhone): hamburger opens a drawer. Tailwind `hidden`
    on the aside used to leave the toggle with no effect. */

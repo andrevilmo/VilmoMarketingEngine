@@ -65,3 +65,11 @@ ALTER TABLE listing ADD COLUMN IF NOT EXISTS advertisement_id uuid NULL;
 
 CREATE INDEX IF NOT EXISTS ix_listing_advertisement_id
   ON listing (advertisement_id);
+
+ALTER TABLE listing ADD COLUMN IF NOT EXISTS remote_title text NULL;
+ALTER TABLE listing ADD COLUMN IF NOT EXISTS remote_price numeric NULL;
+ALTER TABLE listing ADD COLUMN IF NOT EXISTS remote_quantity numeric NULL;
+ALTER TABLE listing ADD COLUMN IF NOT EXISTS remote_status varchar(32) NULL;
+ALTER TABLE listing ADD COLUMN IF NOT EXISTS remote_permalink text NULL;
+ALTER TABLE listing ADD COLUMN IF NOT EXISTS last_synced_at timestamptz NULL;
+ALTER TABLE listing ADD COLUMN IF NOT EXISTS last_sync_json text NULL;

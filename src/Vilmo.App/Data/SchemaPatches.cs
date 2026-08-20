@@ -115,5 +115,12 @@ public static class SchemaPatches
             CREATE INDEX IF NOT EXISTS ix_listing_advertisement_id
               ON listing (advertisement_id);
             """, ct);
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE listing ADD COLUMN IF NOT EXISTS remote_title text NULL;", ct);
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE listing ADD COLUMN IF NOT EXISTS remote_price numeric NULL;", ct);
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE listing ADD COLUMN IF NOT EXISTS remote_quantity numeric NULL;", ct);
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE listing ADD COLUMN IF NOT EXISTS remote_status varchar(32) NULL;", ct);
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE listing ADD COLUMN IF NOT EXISTS remote_permalink text NULL;", ct);
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE listing ADD COLUMN IF NOT EXISTS last_synced_at timestamptz NULL;", ct);
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE listing ADD COLUMN IF NOT EXISTS last_sync_json text NULL;", ct);
     }
 }
