@@ -34,8 +34,9 @@ def tarball() -> str:
 def main() -> None:
     payload = tarball()
     # Keep lines short for YAML readability and editor limits.
+    indent = "          "
     wrapped = "\n".join(
-        payload[i : i + 120] for i in range(0, len(payload), 120)
+        indent + payload[i : i + 120] for i in range(0, len(payload), 120)
     )
     OUT.write_text(
         TEMPLATE.replace("__PAYLOAD__", wrapped),
@@ -119,7 +120,7 @@ Resources:
           set -euxo pipefail
           mkdir -p /opt/vilmo
           cat >/tmp/vilmo-stack.b64 <<'PAYLOAD'
-          __PAYLOAD__
+__PAYLOAD__
           PAYLOAD
           tr -d '[:space:]' </tmp/vilmo-stack.b64 | base64 -d | tar -xz -C /opt/vilmo
           chmod +x /opt/vilmo/aws/install.sh
