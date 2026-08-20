@@ -8,7 +8,7 @@ Never put AWS or app passwords in the repository. Do not use the AWS **root** us
 | --- | --- |
 | Account | `099223714476` |
 | Region | `sa-east-1` |
-| Instance | `i-0cffbec1b4a5782c0` (`t3.micro`) |
+| Instance | `i-0cffbec1bda376260` (`t3.micro`) |
 | Elastic IP | `54.94.59.184` |
 | DNS | Squarespace A `@` and `www` → `54.94.59.184` |
 | Mail | MX `smtp.google.com` unchanged |
