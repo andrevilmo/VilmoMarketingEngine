@@ -239,18 +239,32 @@ const Vilmo = (() => {
               `<select class="kt-select" name="cnpj">${companies.map(c => `<option value="${c.cnpj}" ${ (c.id||c.companyId)===store.companyId?"selected":""}>${c.tradeName||c.legalName||""} · ${c.cnpjFormatted||c.cnpj}</option>`).join("")}</select>`}
           </label>
           <label>Chave de acesso (44 dígitos)<input class="kt-input" name="chave" id="chave" maxlength="44" required></label>
-          <div class="flex gap-2">
+          <div class="flex gap-2 flex-wrap">
             <button class="kt-btn kt-btn-primary" type="submit">Ingerir chave</button>
             <button class="kt-btn kt-btn-outline" type="button" id="scan-btn">Ler código (câmera)</button>
+            <label class="kt-btn kt-btn-outline" id="scan-photo-label">Foto / arquivo
+              <input type="file" id="scan-photo" accept="image/*" capture="environment" hidden>
+            </label>
           </div>
           <div id="nfe-msg"></div>
         </form>
         <form id="xml-form" class="vilmo-card flex flex-col gap-3">
           <label>XML da NF-e (fallback)<input class="kt-input" type="file" name="file" accept=".xml"></label>
           <button class="kt-btn kt-btn-outline" type="submit">Enviar XML</button>
-          <div class="camera-box hidden" id="camera-wrap"><video id="cam" autoplay playsinline></video>
-            <button class="kt-btn kt-btn-sm mt-2" type="button" id="close-cam">Fechar câmera</button></div>
         </form>
+      </div>
+      <div id="camera-overlay" class="camera-overlay hidden">
+        <div class="camera-panel">
+          <p id="scan-hint">Aponte para o código de barras ou QR da DANFE</p>
+          <div class="camera-view">
+            <video id="cam" autoplay playsinline muted></video>
+            <div class="viewfinder" aria-hidden="true"></div>
+          </div>
+          <div class="flex gap-2 flex-wrap">
+            <button class="kt-btn kt-btn-outline" type="button" id="flip-cam">Trocar câmera</button>
+            <button class="kt-btn kt-btn-primary" type="button" id="close-cam">Cancelar</button>
+          </div>
+        </div>
       </div>`);
   }
 
@@ -421,6 +435,20 @@ const Vilmo = (() => {
     };
     if ($("#scan-btn")) $("#scan-btn").onclick = () => startCamera();
     if ($("#close-cam")) $("#close-cam").onclick = stopCamera;
+    if ($("#flip-cam")) $("#flip-cam").onclick = () => flipCamera();
+    if ($("#scan-photo")) $("#scan-photo").onchange = async (e) => {
+      const file = e.target.files && e.target.files[0];
+      e.target.value = "";
+      if (!file || !window.VilmoNfeScan) return;
+      const chave = await VilmoNfeScan.fromFile(file);
+      const msg = document.getElementById("nfe-msg");
+      if (chave) {
+        document.getElementById("chave").value = chave;
+        if (msg) msg.innerHTML = `<div class="kt-alert kt-alert-success">Chave lida da imagem. Confira e toque em Ingerir chave.</div>`;
+      } else if (msg) {
+        msg.innerHTML = `<div class="kt-alert kt-alert-danger">Código não é chave NF-e. Use o código de 44 dígitos ou o QR da DANFE.</div>`;
+      }
+    };
     if ($("#product-form")) $("#product-form").onsubmit = async (e) => {
       e.preventDefault();
       const fd = new FormData(e.target);
@@ -480,39 +508,49 @@ const Vilmo = (() => {
     };
   }
 
-  let mediaStream;
+  function scanCallbacks() {
+    return {
+      video: document.getElementById("cam"),
+      onChave(chave) {
+        const input = document.getElementById("chave");
+        if (input) input.value = chave;
+        const msg = document.getElementById("nfe-msg");
+        if (msg) msg.innerHTML = `<div class="kt-alert kt-alert-success">Chave lida. Confira e toque em Ingerir chave.</div>`;
+        stopCamera();
+      },
+      onInvalid() {
+        const hint = document.getElementById("scan-hint");
+        if (hint) hint.textContent = "Código não é chave NF-e. Aponte para o código de 44 dígitos ou o QR da DANFE.";
+      }
+    };
+  }
+
   async function startCamera() {
-    const wrap = document.getElementById("camera-wrap");
-    wrap.classList.remove("hidden");
-    mediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-    const video = document.getElementById("cam");
-    video.srcObject = mediaStream;
-    if ("BarcodeDetector" in window) {
-      const det = new BarcodeDetector({ formats: ["code_128", "qr_code"] });
-      const loop = async () => {
-        if (!mediaStream) return;
-        try {
-          const codes = await det.detect(video);
-          for (const c of codes) {
-            const digits = (c.rawValue || "").replace(/\D/g, "");
-            let chave = digits.length >= 44 ? digits.slice(-44) : "";
-            if (digits.includes("chNFe")) chave = (c.rawValue.match(/chNFe=(\d{44})/) || [])[1] || chave;
-            if (chave.length === 44) {
-              document.getElementById("chave").value = chave;
-              stopCamera();
-              return;
-            }
-          }
-        } catch { /* keep scanning */ }
-        requestAnimationFrame(loop);
-      };
-      requestAnimationFrame(loop);
+    const overlay = document.getElementById("camera-overlay");
+    const hint = document.getElementById("scan-hint");
+    if (overlay) overlay.classList.remove("hidden");
+    if (hint) hint.textContent = "Aponte para o código de barras ou QR da DANFE";
+    if (!window.VilmoNfeScan) {
+      alert("Leitor de código não carregou. Digite a chave de 44 dígitos.");
+      return;
+    }
+    try {
+      await VilmoNfeScan.start(scanCallbacks());
+    } catch (err) {
+      stopCamera();
+      const msg = document.getElementById("nfe-msg");
+      if (msg) msg.innerHTML = `<div class="kt-alert kt-alert-danger">Permita a câmera nas configurações do navegador. Você ainda pode digitar a chave.</div>`;
     }
   }
+  async function flipCamera() {
+    if (!window.VilmoNfeScan) return;
+    const hint = document.getElementById("scan-hint");
+    if (hint) hint.textContent = "Trocando câmera…";
+    try { await VilmoNfeScan.flip(scanCallbacks()); } catch { /* keep current */ }
+  }
   function stopCamera() {
-    mediaStream?.getTracks().forEach(t => t.stop());
-    mediaStream = null;
-    document.getElementById("camera-wrap")?.classList.add("hidden");
+    if (window.VilmoNfeScan) VilmoNfeScan.stop();
+    document.getElementById("camera-overlay")?.classList.add("hidden");
   }
 
   return { bootLogin, bootApp };

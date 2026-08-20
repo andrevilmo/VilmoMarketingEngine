@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <title>nfe-scan decode test</title>
+</head>
+<body>
+  <pre id="out">running…</pre>
+  <canvas id="c"></canvas>
+  <script src="/src/Vilmo.Web/wwwroot/js/vendor/zxing.min.js"></script>
+  <script src="/src/Vilmo.Web/wwwroot/js/nfe-scan.js"></script>
+  <script>
+    const CHAVE = "42260868431371000161555001000000001123456788";
+    const files = [
+      "/tests/nfe-scan-fixtures/danfe_qr_p.png",
+      "/tests/nfe-scan-fixtures/danfe_qr_chnfe.png",
+      "/tests/nfe-scan-fixtures/danfe_code128.png"
+    ];
+    async function loadImg(src) {
+      const img = new Image();
+      img.src = src;
+      await img.decode();
+      return img;
+    }
+    (async () => {
+      const lines = [];
+      let failed = 0;
+      for (const src of files) {
+        try {
+          const img = await loadImg(src);
+          const chave = await VilmoNfeScan.decodeImageSource(img);
+          const ok = chave === CHAVE;
+          if (!ok) failed++;
+          lines.push((ok ? "PASS" : "FAIL") + " " + src + " -> " + chave);
+        } catch (e) {
+          failed++;
+          lines.push("FAIL " + src + " " + e.message);
+        }
+      }
+      const summary = failed ? "FAIL " + failed : "PASS";
+      document.getElementById("out").textContent = summary + "\n" + lines.join("\n");
+      document.title = summary;
+      await fetch("/report?s=" + encodeURIComponent(summary + " | " + lines.join(" ; ")));
+    })();
+  </script>
+</body>
+</html>

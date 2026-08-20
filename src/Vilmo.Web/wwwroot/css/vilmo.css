@@ -13,6 +13,27 @@
 .menu-link { display: flex; align-items: center; gap: .6rem; padding: .55rem .75rem; border-radius: 8px; color: #4b5563; text-decoration: none; }
 .menu-link.active, .menu-link:hover { background: #f3f4f6; color: #111827; }
 .camera-box video { width: 100%; max-width: 420px; border-radius: 12px; background: #111; }
+.camera-overlay {
+  position: fixed; inset: 0; z-index: 80;
+  background: rgba(15, 23, 42, 0.72);
+  display: flex; align-items: center; justify-content: center;
+  padding: 1rem;
+}
+.camera-overlay.hidden { display: none; }
+.camera-panel {
+  width: min(640px, 100%);
+  background: #0f172a; color: #e2e8f0;
+  border-radius: 16px; padding: 1rem 1.1rem 1.15rem;
+}
+.camera-panel p { margin: 0 0 0.75rem; font-size: 0.95rem; }
+.camera-view { position: relative; border-radius: 12px; overflow: hidden; background: #000; }
+.camera-view video { width: 100%; display: block; max-height: 55vh; object-fit: cover; }
+.viewfinder {
+  position: absolute; inset: 18% 8%;
+  border: 2px solid rgba(255,255,255,0.85);
+  border-radius: 12px; pointer-events: none;
+  box-shadow: 0 0 0 999px rgba(0,0,0,0.25);
+}
 .kt-alert { padding: .75rem 1rem; border-radius: 8px; }
 .kt-alert-danger { background: #fef2f2; color: #991b1b; }
 .kt-alert-success { background: #ecfdf5; color: #065f46; }

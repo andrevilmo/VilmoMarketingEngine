@@ -29,6 +29,24 @@ public class DomainTests
         Assert.Equal(chave, n);
     }
 
+    [Theory]
+    [InlineData("42260868431371000161555001000000001123456788")]
+    [InlineData("4226 0868 4313 7100 0161 5550 0100 0000 0011 2345 6788")]
+    [InlineData("https://www.fazenda.pr.gov.br/nfce/qrcode?p=42260868431371000161555001000000001123456788|2|1|1|ABCDEF")]
+    [InlineData("http://nfe.fazenda.sp.gov.br/qrcode?chNFe=42260868431371000161555001000000001123456788&nVersao=100&tpAmb=1")]
+    public void Chave_extracts_from_danfe_payloads(string payload)
+    {
+        Assert.True(ChaveAcesso.TryExtractFromPayload(payload, out var chave));
+        Assert.Equal("42260868431371000161555001000000001123456788", chave);
+    }
+
+    [Fact]
+    public void Chave_extract_rejects_invalid_dv()
+    {
+        Assert.False(ChaveAcesso.TryExtractFromPayload("42260868431371000161555001000000001123456780", out _));
+        Assert.False(ChaveAcesso.TryExtractFromPayload("not a chave", out _));
+    }
+
     [Fact]
     public void Cfop_inbound_when_company_is_dest()
     {

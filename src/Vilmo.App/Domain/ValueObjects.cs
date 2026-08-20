@@ -54,6 +54,33 @@ public static class ChaveAcesso
         return Dv(chave[..43]) == chave[43] - '0';
     }
 
+    /// <summary>
+    /// Pull a valid 44-digit NF-e chave from a DANFE barcode/QR payload (raw digits, chNFe=, NFC-e p=).
+    /// </summary>
+    public static bool TryExtractFromPayload(string? raw, out string chave)
+    {
+        chave = "";
+        if (string.IsNullOrWhiteSpace(raw)) return false;
+
+        var chNfe = Regex.Match(raw, @"chNFe=(\d{44})", RegexOptions.IgnoreCase);
+        if (chNfe.Success && TryNormalize(chNfe.Groups[1].Value, out chave)) return true;
+
+        var pQuery = Regex.Match(raw, @"[?&]p=([^&]+)", RegexOptions.IgnoreCase);
+        if (pQuery.Success)
+        {
+            var p = Uri.UnescapeDataString(pQuery.Groups[1].Value.Replace("+", "%20"));
+            var head = p.Split('|')[0];
+            if (TryNormalize(head, out chave)) return true;
+        }
+
+        var digits = Digits(raw);
+        for (var i = 0; i + 44 <= digits.Length; i++)
+        {
+            if (TryNormalize(digits.Substring(i, 44), out chave)) return true;
+        }
+        return false;
+    }
+
     public static int Dv(string first43)
     {
         var weight = 2;
