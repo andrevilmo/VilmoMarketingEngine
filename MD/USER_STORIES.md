@@ -81,7 +81,7 @@ Metronic `demo1/authentication/branded/sign-in.html`. After success, store token
 | Marketplaces catalog | Yes (`POST /marketplaces`) | No | No |
 | Company marketplace apps | Yes — **edit connection fields** (US-15) | Yes — **this CNPJ only** (US-15) | Own shop links only. **Cannot** edit company ClientId / PartnerKey |
 | Products / **stock** / sale price | Selected company | **This CNPJ only** | **Hidden** |
-| Ingest NF-e (CNPJ + chave) | Yes | Yes (own CNPJ locked) | **Hidden** |
+| Ingest NF-e (CNPJ + chave + **câmera**) | Yes | Yes (own CNPJ locked) | **Hidden** |
 | Advertisements | Selected company | This CNPJ | Own ads only |
 | Sales | Selected company, or admin search-all | **All vendors** of this CNPJ | **Own** sales only |
 | Sale status, NF-e, label | Same scope | All of this CNPJ | Own sales |
@@ -494,7 +494,7 @@ Metronic DataTables (demo1 members table). Price as currency input. Sidebar **Es
 ## US-14 — Ingest NF-e by CNPJ and chave to increase stock
 
 **As** an **admin** or **company** user  
-**I want** a screen where I enter the **company CNPJ** and the NF-e **chave de acesso** so Vilmo reads the XML from SEFAZ (Receita / DistDFe) and **adds the items to this company’s stock**  
+**I want** a screen where I enter the **company CNPJ** and the NF-e **chave de acesso** (typed **or scanned from the printed DANFE with the webcam**) so Vilmo reads the XML from SEFAZ (Receita / DistDFe) and **adds the items to this company’s stock**  
 **So that** catalog and quantities come from real inbound invoices, not from typing products by hand.
 
 **Vendor: hidden.** Same as US-13.
@@ -504,7 +504,8 @@ Metronic DataTables (demo1 members table). Price as currency input. Sidebar **Es
 | Field | Admin | Company user |
 | --- | --- | --- |
 | **CNPJ** | Searchable **Empresa** select (fantasia + CNPJ). Sets `X-Company-Id`. Do not type a CNPJ that is not a tenant. | **Locked** to their company CNPJ (read-only). |
-| **Chave de acesso** | 44 digits, checksum. Required. | Same |
+| **Chave de acesso** | 44 digits, checksum. Required. Type **or** scan (camera). | Same |
+| **Ler código** | Webcam: barcode (Code 128) or QR on the DANFE → fills the 44 digits | Same |
 | XML file | Optional fallback Dropzone if DistDFe cannot return the XML | Same |
 
 Submit: `POST /nfe/chaves/{chave}/ingest` + `Idempotency-Key`. Body may include `cnpj` only as a check; it **must** equal `Company.Cnpj` for the active company (`400 CnpjMismatch` otherwise).
@@ -517,6 +518,68 @@ If this CNPJ is emitente of a **sale** NF-e, **do not** add qty (US-06 / CFOP po
 
 Without A1: DistDFe fails with `CertificateNotConfigured`; XML upload still allowed if emit/dest CNPJ matches the company.
 
+### Camera — read chave from DANFE barcode or QR
+
+Typing 44 digits is error-prone. The Ingerir NF-e screen **opens the device camera** and reads the **código de barras** or **QR Code** printed on the nota / DANFE, then fills **Chave de acesso**. Ingest to SEFAZ still uses the same `POST /nfe/chaves/{chave}/ingest`.
+
+This is **browser-only**. The video stream never goes to `vilmo-api`. Only the 44 digits (after validation) are submitted.
+
+#### Procedure (UI)
+
+```
+User taps [Ler código (câmera)]
+        │
+        ▼
+navigator.mediaDevices.getUserMedia
+  video: facingMode environment (rear camera on phone; user-facing on desktop if only one cam)
+        │
+        ├── Permission denied / no device
+        │     → toast: permita a câmera nas configurações do navegador
+        │     → keep the typed chave field (always available)
+        │
+        └── Overlay: live preview + viewfinder
+              “Aponte para o código de barras ou QR da DANFE”
+              [Trocar câmera]  [Cancelar]
+                    │
+                    ▼
+              Decode each frame in the tab
+              (BarcodeDetector if present, else ZXing / html5-qrcode)
+              formats: code_128, qr_code, itf (Interleaved 2 of 5)
+                    │
+                    ├── payload → extract 44-digit chave + DV
+                    │     stop tracks, fill input, optional beep
+                    │     user still taps [Ingerir] (no auto-POST)
+                    └── invalid / no 44 digits
+                          stay in preview, hint “código não é chave NF-e”
+```
+
+HTTPS is required for `getUserMedia` (already true on `vilmomkt.com`). `localhost` is allowed in development.
+
+Optional fallback on phones: `<input type="file" accept="image/*" capture="environment">` — pick or take a photo and decode the still image with the same parser (iOS Safari quirks). Not a substitute for the live camera path.
+
+#### Extract chave from the scan payload
+
+DANFE **barcode** is usually **Code 128** of the 44 numeric digits (spaces ignored).
+
+DANFE / NFC-e **QR** is often a URL, not the raw chave. Parser (pure function, unit-tested):
+
+| Payload | Chave |
+| --- | --- |
+| 44 digits (optional spaces/dots) | those digits |
+| URL query `chNFe=` / `chNFe` | value, 44 digits |
+| NFC-e / QR `p=` (`chave\|versao\|…`) | first 44 digits of `p` |
+| Any string with ≥44 consecutive digits | first 44, then DV |
+
+Then: length 44, numeric, **check digit** (`ChaveAcesso`). Fail → do not fill the field.
+
+Do **not** follow the QR URL in the browser (no consulta SEFAZ portal). DistDFe remains the ingest path.
+
+#### Camera hygiene
+
+- On success, Cancel, or leaving the page: `MediaStream.getTracks().forEach(t => t.stop())` so the LED turns off.
+- Do not record, upload, or log frames.
+- Vendor never sees this control (page already `404`).
+
 ### Acceptance
 
 - Company user cannot ingest into another CNPJ (locked field + server check).
@@ -524,10 +587,11 @@ Without A1: DistDFe fails with `CertificateNotConfigured`; XML upload still allo
 - Vendor cannot open the page (`404`).
 - After success, US-13 table shows new/updated SKUs and higher **Saldo**.
 - Unknown chave / SEFAZ timeout → row `nfe_documents.status = Failed` with `xMotivo`; saldo unchanged.
+- Camera: permission denied still allows typing the chave. Scan of a valid DANFE barcode or QR fills 44 digits and DV; garbage payload does not. Stream is stopped after read/cancel. Video is not POSTed.
 
 ### UI
 
-Layout-1 form: CNPJ (select or locked) + chave 44 + Ingerir + Dropzone XML. Status list of recent chaves for **this company only**.
+Layout-1 form: CNPJ (select or locked) + chave 44 + **Ler código (câmera)** + Ingerir + Dropzone XML. Status list of recent chaves for **this company only**. Camera overlay: live `<video>` + viewfinder.
 
 ---
 
@@ -1070,7 +1134,7 @@ See [UI.md](./UI.md) for file sources. Behavior:
 | Create vendor | US-10, US-11 | Admin or Company. Selected marketplaces + Connect |
 | Sidebar | US-02 | Admin / Company / Vendor menus |
 | **Estoque** | US-13 | Admin + Company. Vendor hidden. Inline **preço de venda**. |
-| **Ingerir NF-e** | US-14 | CNPJ select (admin) or locked (company) + chave 44 |
+| **Ingerir NF-e** | US-14 | CNPJ select (admin) or locked (company) + chave 44 + **webcam barcode/QR** |
 
 ---
 
@@ -1088,6 +1152,7 @@ See [UI.md](./UI.md) for file sources. Behavior:
 - Emit: Testcontainers + stub `INfeAuthorizer` (do not call SEFAZ in CI); assert status `PreparingForDispatch` and XML stored; missing CEP → 400.
 - Label: generated PDF page size 100×150 mm (±1 mm); contains recipient name, CEP, sender CNPJ; reprint same sha256.
 - Idempotency: double-click Emitir NF-e does not send two lotes.
+- Chave from camera (US-14): unit-test extract from raw 44 digits, Code-128 style spaces, QR `chNFe=`, NFC-e `p=chave|…`; reject short/invalid DV. Do not require a real webcam in CI.
 
 ---
 

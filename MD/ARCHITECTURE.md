@@ -276,12 +276,16 @@ Reject: `InvoiceRejected`; emit button stays. Upload failure does not roll back 
 ```mermaid
 sequenceDiagram
   participant User
+  participant Cam as Webcam in browser
   participant Api as vilmo-api
   participant Redis
   participant Nfe as vilmo-nfe
   participant Sefaz as SEFAZ
   participant Pg as postgres
 
+  User->>Cam: Ler codigo barcode or QR
+  Cam-->>User: 44 digit chave in the form
+  Note over Cam,User: video stays in the tab never uploaded
   User->>Api: POST /nfe/chaves/chave/ingest Admin or Company only
   Note over User,Api: Vendor 404. CNPJ must equal Company.Cnpj
   Api->>Redis: SET NX idempotency companyId chave
@@ -293,7 +297,7 @@ sequenceDiagram
   Nfe->>Pg: inbound CFOP InventoryMovement NfeInbound on_hand plus qCom
 ```
 
-XML upload skips DistDFe when there is no A1. Company user sees **this CNPJ only**. Same chave twice does not increase saldo again.
+XML upload skips DistDFe when there is no A1. Company user sees **this CNPJ only**. Same chave twice does not increase saldo again. Chave may be typed or **scanned from the DANFE** (webcam) before the POST.
 
 ---
 

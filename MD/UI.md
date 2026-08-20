@@ -57,7 +57,7 @@ Do not serve the 10GB-class template tree from Docker. `vilmo-web` is a small st
 | A1 certificate | settings form + Dropzone | Required for `ready_to_invoice`. |
 | Products | store-inventory **Product List / Details / Create** (HTML tables from demo1 members datatable + store-client `product-details.html` for the detail chrome) | Post items when `ready_to_list`. |
 | Inventory | store-inventory **All Stock / Current** | **US-13.** Admin + Company only. **Saldo** + inline **preço de venda**. Vendor: hidden. |
-| Ingest NF-e | custom form on layout-1 | **US-14.** Admin: Empresa/CNPJ select + chave 44. Company: CNPJ **locked**. Optional XML Dropzone. Vendor: hidden. |
+| Ingest NF-e | custom form on layout-1 + camera overlay | **US-14.** Admin: Empresa/CNPJ select + chave 44. **Ler código (câmera):** `getUserMedia` + Code 128 / QR → 44 digits. Company: CNPJ **locked**. Optional XML Dropzone. Vendor: hidden. |
 | Advertisements | product list + “publish” modal with marketplace checkboxes | Default **linked** channels; optional `marketplaceCodes`. Vendor: own listings. |
 | **Sales list** | store-inventory **Order List** (DataTables) | Company: all vendors. Vendor: own (US-12). Status in PT. |
 | **Sale detail** | store-inventory **Order Details** | Common fields + accordion **Dados do marketplace** (EAV). Chips: canonical + raw. |
@@ -84,6 +84,7 @@ Sale detail buttons follow [USER_STORIES.md](./USER_STORIES.md) US-06 and US-07.
 - DataTables for vendors, products, stock, **sales**. ApexCharts only if a dashboard chart is needed (not required for v1).
 - TinyMCE only if product description needs rich text; otherwise a textarea.
 - Label print: iframe + `window.print()` with `@page` size matching 100×150 mm (or 138×106). No A4 wrapper.
+- **Ingerir NF-e camera:** `getUserMedia` + `BarcodeDetector` (fallback ZXing in the `vilmo-web` slice only). Decode in the tab. POST only the 44-digit chave. Stop tracks on close.
 
 ## Docker
 
@@ -100,3 +101,4 @@ Nginx or YARP in `vilmo-web` (or a gateway) serves `/` from Metronic and proxies
 - Do not use `store-client` checkout as the seller console.
 - Do not put `node_modules` or the full `template-metronic` tree inside the `vilmo-web` image.
 - Do not duplicate Metronic into git twice; reference `template-metronic/` and copy the slice at build time.
+- Do not upload webcam frames or photos of the DANFE to `vilmo-api`; only the parsed chave.

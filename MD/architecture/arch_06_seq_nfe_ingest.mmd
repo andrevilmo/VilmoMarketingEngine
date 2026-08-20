@@ -1,6 +1,7 @@
 sequenceDiagram
   autonumber
   participant User
+  participant Cam as Webcam in browser
   participant Api as vilmo-api
   participant Redis
   participant Nfe as vilmo-nfe
@@ -8,6 +9,9 @@ sequenceDiagram
   participant Pg as postgres
 
   Note over User,Api: Admin or Company only. Vendor 404
+  User->>Cam: Ler codigo barcode or QR
+  Cam-->>User: 44 digit chave in the form
+  Note over Cam,User: video stays in the tab never uploaded
   User->>Api: POST /nfe/chaves/chave/ingest CNPJ equals company
   Api->>Redis: SET NX idempotency companyId chave
   Api->>Pg: INSERT nfe_documents unique company chave

@@ -15,7 +15,7 @@ Portuguese labels in the product. Images in [`wireframes/`](./wireframes/).
 | [wf_07_sale_paid_nfe.png](./wireframes/wf_07_sale_paid_nfe.png) | Sale **Pago** → Emitir NF-e | US-06 |
 | [wf_08_sale_label.png](./wireframes/wf_08_sale_label.png) | **Preparando para envio** → etiqueta 10×15 | US-07 |
 | ASCII in this file | **Estoque** + preço de venda | US-13 |
-| ASCII in this file | **Ingerir NF-e** (CNPJ + chave) | US-14 |
+| ASCII in this file | **Ingerir NF-e** (CNPJ + chave + **câmera**) | US-14 |
 | ASCII in this file | **Marketplaces da empresa** — connection fields | US-15 |
 
 ---
@@ -225,13 +225,22 @@ Admin and Company only. Vendor: no menu.
 ┌ Ingerir NF-e ───────────────────────────────────────┐
 │ CNPJ da empresa  [ select / locked ]                │
 │ Chave de acesso  [ 44 dígitos                    ]  │
+│ [Ler código (câmera)]  barcode / QR da DANFE        │
 │ [Ingerir na Receita / SEFAZ]                        │
 │ XML (opcional)   [ Dropzone ]                       │
 │ Resultado: +12 CAM1, +3 CAL2  | chave ABC…          │
 └─────────────────────────────────────────────────────┘
+
+┌ Câmera ─────────────────────────────────────────────┐
+│  [ live preview + viewfinder ]                      │
+│  Aponte para o código de barras ou QR da DANFE      │
+│  [Trocar câmera]                        [Cancelar]  │
+└─────────────────────────────────────────────────────┘
 ```
 
 - Admin: pick existing company (shows CNPJ). Company: CNPJ locked.
+- **Ler código** opens the **webcam** (`getUserMedia`). Decode Code 128 / QR in the browser → 44-digit chave. User still taps Ingerir.
+- Permission denied: type the chave. Video is not uploaded.
 - DistDFe with **that** company's A1. Inbound items **increase** saldo.
 - Same chave twice does not add qty again.
 
