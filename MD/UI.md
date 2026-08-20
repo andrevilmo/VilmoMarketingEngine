@@ -39,7 +39,7 @@ Do not serve the 10GB-class template tree from Docker. `vilmo-web` is a small st
 
 | Screen | Metronic source to clone/adapt | Notes |
 | --- | --- | --- |
-| **Public commercial index** (`/`) | Optional visual cues from `metronic-tailwind-nextjs-landings/saas` — **ship as static HTML** in `deploy/site/` | **US-17.** Not behind `/web`. Sticky header; **Entrar** top-right → `/web/`. Crawlable pt-BR copy for empresas, vendedores, dropshipping. SEO: title, description, OG, JSON-LD, sitemap, robots. **Do not** use the admin `index.html`. |
+| **Public commercial index** (`/` pt-BR, `/en/` en) | Optional visual cues from `metronic-tailwind-nextjs-landings/saas` — **ship as static HTML** in `deploy/site/` and `deploy/site/en/` | **US-17.** Not behind `/web`. Sticky header: **PT \| EN** then **Entrar / Sign in** → `/web/`. Full crawlable copy in **Portuguese and English**. SEO: title, description, OG, `hreflang`, JSON-LD, sitemap both URLs, robots. **Do not** use the admin `index.html`. |
 | Sign in | `demo1/authentication/branded/sign-in.html` | `POST /auth/login` (US-01). URL **`/web/`**. One screen for Admin / Company / Vendor. `noindex`. |
 | Sign up / invite | `demo1/authentication/branded/sign-up.html` | Invite token from US-08–US-10. Not public self-serve. |
 | Reset password | `demo1/authentication/branded/reset-password/*` | |
@@ -95,7 +95,7 @@ vilmo-web:   # Metronic HTML UI, e.g. :8081
 vilmo-api:   # already planned
 ```
 
-Nginx **gateway** serves **`/`** from `deploy/site/` (commercial index, US-17). **`/web/`** is the Metronic app (`vilmo-web`). **`/api`** proxies to `vilmo-api`. Do not 302 `/` to `/web/`.
+Nginx **gateway** serves **`/`** (pt-BR) and **`/en/`** (en) from `deploy/site/` (commercial index, US-17). **`/web/`** is the Metronic app (`vilmo-web`). **`/api`** proxies to `vilmo-api`. Do not 302 `/` to `/web/`.
 
 ## What not to do
 

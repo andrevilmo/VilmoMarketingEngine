@@ -15,7 +15,7 @@ A .NET API, run entirely from Docker Compose, that:
 3. Talks to SEFAZ through [ZeusAutomacao/DFe.NET](https://github.com/ZeusAutomacao/DFe.NET). **Each company has its own A1 certificate** (CNPJ-bound). XML upload remains a fallback.
 4. Each vendor publishes advertisements to **Mercado Livre**, **Shopee**, **SHEIN**, and **Magalu** using **their** subaccount on each channel (default: all marketplaces).
 5. Accepts a fifth marketplace **without a rebuild**: insert a `marketplace` row + bindings + parameter definitions (admin UI). **Each company edits that channel’s connection fields** on Marketplaces da empresa (US-15). Existing vendors get a `user_detail_marketplace` when the company enables that code.
-6. Ships a **Metronic 9.5.0 HTML** admin UI (default templates from `template-metronic/.../metronic-v9.5.0/`). See [UI.md](./UI.md). The **public homepage** `https://vilmomkt.com/` is a **commercial one-page site** (US-17): SEO copy for dropship companies and vendor users; header **Entrar** (top right) goes to `/web/`. The authenticated console stays under the `/web` slug.
+6. Ships a **Metronic 9.5.0 HTML** admin UI (default templates from `template-metronic/.../metronic-v9.5.0/`). See [UI.md](./UI.md). The **public homepage** is a **commercial one-page site in Portuguese and English** (US-17): SEO copy for dropship companies and vendor users; header **Entrar / Sign in** (top right) goes to `/web/`. Default locale **`/` = pt-BR**; English is **`/en/`**. The authenticated console stays under the `/web` slug.
 7. Logs users in as **Admin** (see all), **Company** (see all of that CNPJ's users and sales), or **Vendor** (see only own sales and marketplace links).
 8. Keeps marketplace orders in a **common `sales` table** plus **`sale_marketplace_attributes`** (`field_name`, `field_value`) for channel-only data. One **canonical `SaleStatus`** across ML, Shopee, SHEIN, Magalu.
 9. On **Pago**, shows **Emitir nota fiscal eletrônica**: ZeusAutomacao/DFe.NET `NFeAutorizacao` with sale dest/items and the **company** A1. Success → `PreparingForDispatch` (Preparando para envio).
@@ -34,7 +34,7 @@ KISS: four HTTP clients plus one fiscal SOAP client do not justify eight deploya
 | Deployable | Why it exists |
 | --- | --- |
 | `vilmo-api` | Public HTTP: commands, OAuth callbacks, webhook ACK. Must answer fast. |
-| `vilmo-gateway` | Public nginx only. Serves **commercial index at `/`** (US-17). Slugs `/web`, `/api`, `/nfe`, `/worker`. |
+| `vilmo-gateway` | Public nginx only. Serves **commercial index `/` (pt-BR) and `/en/` (en)** (US-17). Slugs `/web`, `/api`, `/nfe`, `/worker`. |
 | `vilmo-web` | Metronic HTML **app** behind `/web/`. |
 | `vilmo-worker` | Slow marketplace I/O, retries, stock fan-out. |
 | `vilmo-nfe` | DFe.NET: DistDFe ingest **and** `NFeAutorizacao` emit, **per-company** A1, SEFAZ rate limits. Isolated so a SEFAZ outage does not take the API down. |
@@ -220,13 +220,30 @@ On implement: seed this company from `MD/seed/first-company.json`, mount `.secre
 
 **Problem today:** `vilmo-gateway` does `302 / → /web/`. Google and visitors land on the **login shell**, which has no commercial copy and is a poor SEO homepage.
 
-**Target:** `https://vilmomkt.com/` (and `www`, canonical to apex) is a **single-scroll commercial page** that explains Vilmo to **empresas de dropshipping**, **empresas (CNPJ)** and **usuários vendedores**. Top-right **Entrar** is a real link to **`/web/`** (login US-01). No JWT, no API, no stock/sales data on this page.
+**Target:** `https://vilmomkt.com/` (Portuguese) and `https://vilmomkt.com/en/` (English) — plus `www`, canonical to the matching apex URL — are the **same single-scroll commercial page in two languages**. They explain Vilmo to **dropship companies**, **CNPJ companies**, and **vendor users**. Top-right **Entrar** / **Sign in** is a real link to **`/web/`** (login US-01). No JWT, no API, no stock/sales data on this page.
 
 Depth: [USER_STORIES.md](./USER_STORIES.md) US-17. Screen IA: [UI.md](./UI.md). Sitemap: [WIREFRAMES.md](./WIREFRAMES.md).
 
+#### Languages (Portuguese and English — required)
+
+| Locale | URL | `<html lang>` | Login CTA |
+| --- | --- | --- | --- |
+| Brazilian Portuguese (**default**) | `https://vilmomkt.com/` | `pt-BR` | **Entrar** → `/web/` |
+| English | `https://vilmomkt.com/en/` | `en` | **Sign in** → `/web/` |
+
+Files: `deploy/site/index.html` (pt-BR) and `deploy/site/en/index.html` (en). Same sections, **translated commercial copy** (not machine-paste in the HTML the crawler sees). Legal footer keeps razão social + CNPJ on both.
+
+**Do not** implement i18n as a single HTML file that swaps strings in JavaScript. Each language must be a **distinct indexable URL** with its own title, description, `og:locale`, and JSON-LD.
+
+Header includes a language switcher **next to Entrar** (right cluster: `PT | EN` then the login button). `PT` → `/`, `EN` → `/en/`. Mark the active locale (`aria-current="page"`). Do **not** auto-redirect by `Accept-Language` (that hides a language from Google). Optional: remember the last **clicked** locale in `localStorage` only to highlight the switcher, never to block `/` or `/en/`.
+
+Fragment ids stay **language-neutral** (`#benefits`, `#companies`, `#vendors`, `#dropshipping`, `#how`, `#faq`) so a switcher can keep the hash.
+
+The **Metronic app at `/web/`** stays Portuguese in this slice (US-01). Bilingual applies to the **public index only**.
+
 #### SPA vs SEO (do not ship a blank JS shell)
 
-Call it a **SPA-style one-pager** (one URL, in-page sections, sticky header). **Do not** ship a client-only React/Vue app whose `<div id="root">` is empty until JavaScript runs. Crawlers and social scrapers must see the Portuguese commercial text in the **first HTML**.
+Call it a **SPA-style one-pager** (one URL per language, in-page sections, sticky header). **Do not** ship a client-only React/Vue app whose `<div id="root">` is empty until JavaScript runs. Crawlers and social scrapers must see the commercial text of **that URL’s language** in the **first HTML**.
 
 | Approach | Use? |
 | --- | --- |
@@ -235,20 +252,21 @@ Call it a **SPA-style one-pager** (one URL, in-page sections, sticky header). **
 | CSR SPA (Vite/React) without prerender | **No.** Fails title/description/body indexing. |
 | Same Metronic **admin** `index.html` at `/` | **No.** Console stays under `/web/`. |
 
-`try_files` / hash sections (`#empresas`, `#vendedores`, `#dropshipping`) are fine. History API routing is unnecessary for v1 (one page).
+`try_files` / hash sections (`#companies`, `#vendors`, `#dropshipping`) are fine. History API routing is unnecessary for v1 (one page per language).
 
 #### Gateway (replace the `/` redirect)
 
 ```
 GET  /health              → vilmo-gateway (unchanged)
-GET  /                    → deploy/site/index.html   (200, text/html)
+GET  /                    → deploy/site/index.html        (200, pt-BR)
+GET  /en/                 → deploy/site/en/index.html     (200, en)
 GET  /robots.txt          → public robots
-GET  /sitemap.xml         → public sitemap (only / )
+GET  /sitemap.xml         → public sitemap (`/` and `/en/`)
 GET  /web/                → vilmo-web (login + app)
 GET  /api/ /nfe/ /worker/ /webhooks/ /oauth/  → unchanged
 ```
 
-`www.vilmomkt.com` serves the same files. Canonical link: `https://vilmomkt.com/`. **Do not** 302 `/` to `/web/` after this ships.
+`www.vilmomkt.com` serves the same files. Canonical: `https://vilmomkt.com/` for PT, `https://vilmomkt.com/en/` for EN. **Do not** 302 `/` to `/web/` after this ships. **Do not** 302 `/` to `/en/` by browser language.
 
 `robots.txt`: `Allow: /` ; `Disallow: /web/`, `/api/`, `/nfe/`, `/worker/`, `/oauth/`, `/webhooks/` ; `Sitemap: https://vilmomkt.com/sitemap.xml`.
 
@@ -257,26 +275,26 @@ Authenticated HTML (`/web/login.html`, app pages) should send `X-Robots-Tag: noi
 #### Header (required)
 
 ```
-[Logo Vilmo]     Benefícios  Empresas  Vendedores  Dropshipping     [ Entrar ]
+[Logo Vilmo]     Benefícios/Benefits …          PT | EN    [ Entrar / Sign in ]
 ```
 
-- **Entrar** is top-**right**, always visible (including mobile: logo left, Entrar right; hamburger for section links).
-- `href="/web/"` (trailing slash). Optional `href="/web/login.html"` if the app does not rewrite `/web/` to login for anonymous users — pick **one** URL and keep it.
-- Button is a normal `<a>`. Do not open a modal login on `/` (keeps the homepage crawlable and the app origin clear).
+- Right cluster: **language switcher** then **login**. Login is the rightmost control (top-**right**), always visible (mobile: logo left, `PT|EN` + Entrar/Sign in right; hamburger for section links).
+- Login `href="/web/"` (trailing slash). Label **Entrar** on `/`, **Sign in** on `/en/`.
+- Button is a normal `<a>`. Do not open a modal login on `/` or `/en/` (keeps the homepage crawlable and the app origin clear).
 
-#### Commercial copy (pt-BR, three audiences)
+#### Commercial copy (pt-BR **and** en, three audiences)
 
-Write for **conversion**, not for internal US numbers. One `h1` only.
+Write for **conversion**, not for internal US numbers. One `h1` per page. English is a **full translation** of the same structure (not a shorter stub).
 
-| Block | Job |
+| Block | Job (PT / EN) |
 | --- | --- |
-| **Hero** | Promise: one platform so a **CNPJ** owns stock (NF-e) and **vendedores** sell on Mercado Livre, Shopee, SHEIN, Magalu without seeing company inventory. |
-| **#empresas** | Benefits for the **company**: estoque real from inbound NF-e, preço de venda, Paid sale decrements stock, emitir NF-e, etiqueta 10×15, one CNPJ / many vendors. |
-| **#vendedores** | Benefits for the **vendor user**: own ads, own sales/status, connect own marketplace subaccounts; no access to company stock, A1, or app secrets. |
-| **#dropshipping** | Benefits for **dropship operations**: company keeps the warehouse and fiscal identity; vendors are the storefronts; stock is canonical so two vendors cannot oversell the same on-hand; marketplaces stay in sync after Paid. Honest: this is **company-owned stock + multi-vendor**, not a third-party supplier network. |
-| **How it works** | 4 steps: company connects channels + A1 → vendors link shops → NF-e fills stock → sale Paid → NF-e out + label. |
-| **FAQ** | Login vs homepage; who sees stock; which marketplaces; NF-e inbound vs outbound. |
-| **Footer** | Razão social + CNPJ `68.431.371/0001-61`, Florianópolis/SC, link Entrar `/web/`. |
+| **Hero** | Promise: one platform so a **CNPJ** owns stock (NF-e) and **vendors** sell on Mercado Livre, Shopee, SHEIN, Magalu without seeing company inventory. |
+| **#companies** | Benefits for the **company**: real stock from inbound NF-e, sale price, Paid decrements stock, emit NF-e, 10×15 label, one CNPJ / many vendors. |
+| **#vendors** | Benefits for the **vendor user**: own ads, own sales/status, own marketplace subaccounts; no company stock, A1, or app secrets. |
+| **#dropshipping** | Benefits for **dropship operations**: company keeps warehouse + fiscal identity; vendors are storefronts; canonical stock so two vendors cannot oversell; marketplaces sync after Paid. Honest: **company-owned stock + multi-vendor**, not a third-party supplier network. |
+| **#how** | 4 steps: company connects channels + A1 → vendors link shops → NF-e fills stock → sale Paid → NF-e out + label. |
+| **#faq** | Login vs homepage; who sees stock; which marketplaces; inbound vs outbound NF-e. |
+| **Footer** | Razão social + CNPJ `68.431.371/0001-61`, Florianópolis/SC, login link `/web/`. |
 
 Do not put bootstrap passwords, A1, or AWS on this page. Do not claim live SEFAZ/ML if a given environment is still demo.
 
@@ -284,19 +302,20 @@ Do not put bootstrap passwords, A1, or AWS on this page. Do not claim live SEFAZ
 
 | Resource | Rule |
 | --- | --- |
-| `<html lang="pt-BR">` | Required |
-| `<title>` | Unique, ~50–60 chars, commercial (not “Login”). Example pattern: `Vilmo — estoque NF-e e vendas para empresas e vendedores` |
-| `meta name="description"` | Unique, ~140–160 chars, includes dropshipping + empresa + vendedor + marketplaces |
-| Canonical | `https://vilmomkt.com/` |
-| Open Graph + Twitter | `og:type=website`, `og:url`, `og:title`, `og:description`, `og:locale=pt_BR`, `og:image` (1200×630, real photo/brand, not a login screenshot) |
-| JSON-LD | `Organization` (legal name, CNPJ as identifier, url, logo) + `WebSite` + `SoftwareApplication` (applicationCategory BusinessApplication) + `FAQPage` for the FAQ block |
+| `<html lang>` | `pt-BR` on `/`, `en` on `/en/` |
+| `<title>` + description | Unique **per language**, ~50–60 / ~140–160 chars. Not “Login”. |
+| Canonical | Self-canonical per URL (`/` or `/en/`) |
+| `hreflang` | On **both** pages: `pt-BR` → `/`, `en` → `/en/`, `x-default` → `/` (Portuguese is the default market) |
+| Open Graph + Twitter | `og:locale=pt_BR` or `en_US`; `og:locale:alternate` the other; `og:url` matches the page; `og:image` 1200×630 |
+| JSON-LD | `Organization` + `WebSite` + `SoftwareApplication` + `FAQPage` **in that page’s language** |
 | Headings | One `h1` in hero; `h2` per audience section; no skip levels |
-| Images | `alt` in Portuguese; compress; width/height to avoid CLS |
-| Performance | Homepage **must not** load the Metronic admin JS/CSS bundle. Own small CSS. Target LCP from text or one hero image |
-| Internal links | Section anchors + one CTA to `/web/`. Do not deep-link `/api` |
-| `www` | Same body; canonical apex |
+| Images | `alt` in **that page’s language**; compress; width/height to avoid CLS |
+| Performance | Must **not** load the Metronic admin JS/CSS bundle |
+| Internal links | Section anchors + CTA to `/web/`. Do not deep-link `/api` |
+| `www` | Same bodies; canonical apex |
+| `sitemap.xml` | Both `/` and `/en/` with xhtml `hreflang` annotations |
 
-Optional later (not v1 blockers): Google Search Console, Bing Webmaster, `hreflang` only if a second language exists.
+Optional later (not v1 blockers): Google Search Console, Bing Webmaster.
 
 #### What not to do
 
@@ -304,6 +323,8 @@ Optional later (not v1 blockers): Google Search Console, Bing Webmaster, `hrefla
 - Do not put the landing inside `vilmo-web/wwwroot/index.html` if that file is the **logged-in** shell (today it is). Keep `deploy/site/` separate.
 - Do not index `/web/` as the marketing homepage.
 - Do not require cookies or JS to read the benefits text.
+- Do not ship English-only or Portuguese-only. Both languages are in v1.
+- Do not use `?lang=` or a cookie-only language as the **only** switch (not indexable as two pages).
 
 ### Per-company A1 (SEFAZ)
 
@@ -545,7 +566,7 @@ Full investigation and screen map: [UI.md](./UI.md).
 - Inventory / products / orders **information architecture** comes from the React concept `store-inventory`, rebuilt as HTML tables — do not run the Vite/Next apps.
 - `vilmo-web` copies a **slice** of assets + mapped pages. It does not ship all 10 demos or the React packages.
 - Sidebar: Dashboard, **Estoque**, **Ingerir NF-e**, Products, Advertisements, **Sales**, Vendors, Marketplaces, Settings (+ Companies for super user). Vendor sidebar: Dashboard, My sales, My advertisements, My marketplaces, Profile — **no Estoque**. Sale detail: **Emitir NF-e** when `Paid`; **Imprimir etiqueta para envio** when `PreparingForDispatch`. Paid already decreased company stock.
-- **Public `/` (US-17):** static commercial HTML in `deploy/site/`, baked into `vilmo-gateway`. Not the Metronic app. Header **Entrar** → `/web/`. See §3.7.
+- **Public `/` and `/en/` (US-17):** static commercial HTML in `deploy/site/` (pt-BR + en), baked into `vilmo-gateway`. Not the Metronic app. Header **PT | EN** + **Entrar / Sign in** → `/web/`. See §3.7.
 
 ---
 
@@ -714,7 +735,7 @@ Do not build four C# marketplace projects. Build the **generic engine** first, t
 1. **Foundation** — solution, Docker Compose (postgres + redis + empty API), BuildingBlocks (Result, company-scoped idempotency, streams), health checks.
 2. **Identity + tenancy** — `Company`, `User`, `UserCompany`, JWT/`X-Company-Id`, seed `admin@vilmomkt.com` + company CNPJ `68431371000161`. Login US-01, home by level US-02. Admin creates companies (US-03, readiness flags), company users (US-09, `user_company_marketplace`), vendors on **selected** marketplaces (US-10, `PendingConnect` until OAuth). Company users create vendors for their CNPJ (US-11). Vendor sees only own sales (US-12). Row filters by `company_id`.
 3. **Metronic UI shell** — `vilmo-web` from HTML starter layout-1 + demo1 sign-in and members datatable, behind **`/web/`**. Company switcher for super user. Role-based sidebar. **Marketplaces da empresa (US-15):** one form per `code` with connection fields from `marketplace_parameter_definition` (ClientId, PartnerKey, …). Admin/Company only. Same fields on US-03 wizard step 3. See [UI.md](./UI.md).
-3a. **Public commercial index (US-17)** — stop `302 / → /web/`. Gateway serves `deploy/site/index.html` at `/` with crawlable pt-BR copy (empresas, vendedores, dropshipping), SEO tags, `robots.txt`, `sitemap.xml`. Sticky header, **Entrar** top-right → `/web/`. Do not load admin Metronic on `/`. See §3.7.
+3a. **Public commercial index (US-17)** — stop `302 / → /web/`. Gateway serves `deploy/site/index.html` at `/` (pt-BR) and `deploy/site/en/index.html` at `/en/` (en), with crawlable copy (companies, vendors, dropshipping), `hreflang`, SEO tags, `robots.txt`, `sitemap.xml` (both URLs). Sticky header: **PT | EN** then **Entrar / Sign in** → `/web/`. Do not load admin Metronic on `/`. See §3.7.
 4. **Catalog + inventory domain** — Product (`sale_price`), identifiers, movements (`NfeInbound` / `SalePaid`), balances, uniqueness all include `company_id`. Vendor has no stock book.
 5. **NF-e ingest + Estoque UI** — HTML: CNPJ (admin select / company locked) + chave 44 (**webcam** barcode/QR or type) → DistDFe; stock table with **preço de venda**. Admin/Company only. Paid sale decrements on-hand (US-13, US-14). Camera uses `getUserMedia` in the browser; do not upload video. **US-16:** separate MAUI iOS/Android app scans DANFE, encrypted CNPJ cache (default last filled), `POST /nfe/mobile/ingest` (AES-GCM envelope) into the same pipeline.
 6. **Marketplace engine** — `IAuthProtocol` pack (`OAuth2AuthorizationCode`, `HmacSha256`, `BearerToken`, `ApiKeyHeader`), generic HTTP executor, JSON mappings, definition cache. Commands carry `CompanyId`, `VendorUserId`, and string `marketplace_code`. Advertisement publish: `marketplaceCodes` default all.
@@ -734,7 +755,7 @@ Each step stays shippable. Step 5 already gives "company user reads chave / XML 
 - Unit: `ChaveAcesso` DV, extract chave from QR/`chNFe`/`p=` fixtures, AES-GCM mobile envelope round-trip, CFOP policy, idempotency state machine (`companyId` in the Redis key), translators, authorization (admin vs company vs vendor), `SaleStatus` map, CEP 8 digits, label page size.
 - Contract: generic executor against recorded HTTP fixtures keyed by `marketplace_code` (no live ML/Shopee in CI). Sale normalizer fixtures → `sales` + EAV rows.
 - Integration: Testcontainers for Postgres + Redis; two companies; ingest a sample `procNFe` XML into A and assert B's inventory is empty; ingest the same chave twice does not double qty; Paid twice does not double-decrement; vendor JWT `GET /inventory` is `404`; company A cannot `PUT` sale-price on company B SKU; same `Idempotency-Key` on A and B both succeed; company A Shopee `PartnerId` does not leak into company B; **GET company marketplace params never returns full secrets**; **PUT** connection fields without a secret key keeps the previous secret; config read hits Redis on the second call; `PUT` config deletes the cache key; vendor cannot `PUT /companies/{id}/marketplaces/{code}` (`404`); creating a vendor twice with the same key does not duplicate `user_detail_marketplace`; publish with omitted `marketplaceCodes` fans out to all vendor subaccounts; **inserting a fifth `marketplace` row** (no code change) lets a company enable it, **shows the new connection fields**, and provision vendor subaccounts; vendor A `GET /sales` does not include vendor B; stub `INfeAuthorizer` emit moves `Paid` → `PreparingForDispatch` **without** a second stock decrement; second emit `409`; label PDF 100×150 contains sender CNPJ and recipient CEP.
-- Public index (US-17): `GET /` is **200** HTML (not 302 to `/web/`); body contains `href="/web/"` and the three audience headings; `GET /robots.txt` disallows `/web/` and `/api/`; view-source without JS still shows commercial copy.
+- Public index (US-17): `GET /` and `GET /en/` are **200** HTML (not 302 to `/web/`); PT body has `lang="pt-BR"` and **Entrar**; EN body has `lang="en"` and **Sign in**; both link `href="/web/"`; both include `hreflang` for `pt-BR`, `en`, and `x-default`; `sitemap.xml` lists `/` and `/en/`; view-source without JS still shows that language’s commercial copy.
 - SEFAZ: optional manual homologation with CNPJ `68431371000161`'s A1; never call production SEFAZ from CI; never check a real `.pfx` into the repo.
 
 ---
@@ -776,7 +797,7 @@ Outbound **NF-e de saída** from a paid sale (DFe.NET `NFeAutorizacao`) **is in 
 
 ## 15. What "done" looks like for the first vertical
 
-Docker Compose up → open **`/`** (commercial index, US-17) → **Entrar** → `/web/` Metronic sign-in (`demo1` branded):
+Docker Compose up → open **`/`** (PT) or **`/en/`** (EN) commercial index, US-17 → **Entrar / Sign in** → `/web/` Metronic sign-in (`demo1` branded):
 
 1. **Admin** logs in (US-01) → sees all companies (US-02) → **creates a company** with legal + selected marketplaces **(connection fields per channel)** + A1 (US-03, US-15) so list/sync/invoice flags can turn green.
 2. Admin (or company user) opens **Marketplaces da empresa**, **edits** ClientId / PartnerKey / … per channel, **Conectar** until `Linked`.

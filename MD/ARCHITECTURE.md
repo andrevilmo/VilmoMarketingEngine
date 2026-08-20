@@ -29,7 +29,7 @@ KISS: split only where failure domains differ. There is **no** container per mar
 ```mermaid
 flowchart TB
   subgraph clients ["Clients"]
-    visitor["Visitor commercial /"]
+    visitor["Visitor / pt-BR  /en English"]
     browser["Browser Admin / Empresa / Vendedor /web"]
     mobile["Vilmo NF-e iOS Android MAUI"]
     mpHook["Marketplace webhooks"]
@@ -37,7 +37,7 @@ flowchart TB
   end
 
   subgraph edge ["Edge"]
-    gw["vilmo-gateway :80  / commercial  /web app"]
+    gw["vilmo-gateway :80  / and /en commercial  /web app"]
     web["vilmo-web Metronic HTML"]
     api["vilmo-api :8080 JWT X-Company-Id Idempotency-Key"]
   end
@@ -64,7 +64,7 @@ flowchart TB
     sefaz["SEFAZ DistDFe NFeAutorizacao"]
   end
 
-  visitor -->|"GET /"| gw
+  visitor -->|"GET / or /en/"| gw
   browser -->|"GET /web/"| gw
   gw --> web
   gw -->|"/api /webhooks /oauth"| api
@@ -92,7 +92,7 @@ flowchart TB
 
 | Service | Port | Responsibility | Must not |
 | --- | --- | --- | --- |
-| `vilmo-gateway` | 80 | Public nginx. **`/` commercial index (US-17)**; slugs `/web` `/api` `/nfe` `/worker` | 302 `/` to `/web/` after US-17 |
+| `vilmo-gateway` | 80 | Public nginx. **`/` pt-BR and `/en/` en commercial index (US-17)**; slugs `/web` `/api` `/nfe` `/worker` | 302 `/` to `/web/` after US-17 |
 | `vilmo-web` | 8081 | Metronic HTML **app** at `/web/`. | Store marketplace secrets in the browser |
 | **Vilmo NF-e app** | — | MAUI iOS/Android scanner (US-16). Encrypted ingest. | Unwrap private keys; Vendor ingest |
 | `vilmo-api` | 8080 | Auth, CRUD, OAuth callback, webhook **ACK only** | Call marketplace GET inside the webhook thread (ML 500 ms) |

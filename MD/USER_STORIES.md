@@ -21,37 +21,40 @@ Index: [US-17](#us-17--public-commercial-homepage) public `/` · [US-01](#us-01-
 ## US-17 — Public commercial homepage
 
 **As** a visitor (dropship operator, company, or future vendor)  
-**I want** `https://vilmomkt.com/` to explain Vilmo in commercial Portuguese, with search-engine metadata  
-**So that** I understand the product **before** I sign in, and Google indexes benefits instead of the login screen.
+**I want** `https://vilmomkt.com/` in **Portuguese** and `https://vilmomkt.com/en/` in **English**, with search-engine metadata for each  
+**So that** I understand the product **before** I sign in, in my language, and Google indexes both locales instead of the login screen.
 
 Plan: [PLAN.md](./PLAN.md) §3.7. UI: [UI.md](./UI.md).
 
 ### Flow
 
 ```
-GET  https://vilmomkt.com/          → 200 static HTML (deploy/site/)
+GET  https://vilmomkt.com/          → 200 static HTML pt-BR (deploy/site/index.html)
+GET  https://vilmomkt.com/en/       → 200 static HTML en    (deploy/site/en/index.html)
         │
-        ├── Header right: Entrar → GET /web/   (US-01)
-        └── Sections: empresas, vendedores, dropshipping, como funciona, FAQ
-GET  /web/                          → Metronic login (noindex)
+        ├── Header: PT | EN  then  Entrar / Sign in → GET /web/   (US-01)
+        └── Sections: #companies, #vendors, #dropshipping, #how, #faq
+GET  /web/                          → Metronic login (noindex; Portuguese app UI)
 ```
 
 ### Rules
 
-- Copy is in the **HTML** (not loaded only after JS). One `h1`. `lang="pt-BR"`.
-- **Entrar** is top-right (`<a href="/web/">`). No login modal on `/`.
+- Copy is in the **HTML** of that URL (not loaded only after JS). One `h1` per page. `lang="pt-BR"` or `lang="en"`.
+- **Entrar** (PT) / **Sign in** (EN) is top-right (`<a href="/web/">`). No login modal on `/` or `/en/`.
+- Language switcher is a pair of links, not a JS-only dictionary. No `Accept-Language` auto-redirect.
 - No JWT, no `/api` calls, no secrets, no stock numbers from production.
-- `robots.txt` allows `/` and disallows `/web/`, `/api/`, `/nfe/`, `/worker/`, `/oauth/`, `/webhooks/`.
-- `sitemap.xml` lists `/` only (v1). Canonical `https://vilmomkt.com/`.
-- Honest dropship pitch: company owns inventory (NF-e) and vendors sell on marketplaces; not a third-party supplier catalog.
+- `robots.txt` allows `/` and `/en/`; disallows `/web/`, `/api/`, `/nfe/`, `/worker/`, `/oauth/`, `/webhooks/`.
+- `sitemap.xml` lists `/` and `/en/` with `hreflang`. Canonical is self per URL. `x-default` → `/`.
+- Honest dropship pitch in **both** languages: company owns inventory (NF-e) and vendors sell on marketplaces; not a third-party supplier catalog.
 
 ### SEO acceptance
 
-- View-source (JS off) still shows the commercial paragraphs.
-- Unique `<title>` + meta description.
-- `Organization` + `WebSite` + `FAQPage` JSON-LD.
-- Open Graph tags + `og:image`.
-- `/` is HTTP 200, **not** 302 to `/web/`.
+- View-source (JS off) still shows that language’s commercial paragraphs.
+- Unique `<title>` + meta description **per language**.
+- `hreflang` `pt-BR`, `en`, `x-default` on both pages.
+- `Organization` + `WebSite` + `FAQPage` JSON-LD in that language.
+- Open Graph tags + `og:locale` / `og:locale:alternate` + `og:image`.
+- `/` and `/en/` are HTTP 200, **not** 302 to `/web/`.
 
 ---
 

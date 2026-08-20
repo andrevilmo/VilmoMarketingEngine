@@ -6,7 +6,7 @@ Portuguese labels in the product. Images in [`wireframes/`](./wireframes/).
 
 | File | Screen | Stories |
 | --- | --- | --- |
-| ASCII in this file | **Public commercial index** (`/`) + **Entrar** → `/web/` | US-17 |
+| ASCII in this file | **Public commercial index** (`/` pt-BR, `/en/` en) + **Entrar / Sign in** → `/web/` | US-17 |
 | [wf_01_login.png](./wireframes/wf_01_login.png) | Login (one screen, three levels) at `/web/` | US-01 |
 | [wf_02_admin_companies.png](./wireframes/wf_02_admin_companies.png) | Admin: companies + readiness | US-02, US-03 |
 | [wf_03_create_company.png](./wireframes/wf_03_create_company.png) | Admin: nova empresa wizard | US-03 |
@@ -26,8 +26,8 @@ Portuguese labels in the product. Images in [`wireframes/`](./wireframes/).
 
 ```mermaid
 flowchart TD
-  home["/ commercial index US-17"]
-  home -->|Entrar top right| login[Login único /web]
+  home["/ pt-BR  /en English  US-17"]
+  home -->|Entrar / Sign in| login[Login único /web]
   login -->|Admin| empresas[Empresas]
   login -->|Company| dashEmp[Dashboard CNPJ]
   login -->|Vendor| minhasVendas[Minhas vendas]
@@ -85,27 +85,26 @@ Company switcher in the header: **Admin only** (any CNPJ). Company/Vendor: name 
 
 ---
 
-## 0. Public commercial index (`/` — US-17)
+## 0. Public commercial index (`/` + `/en/` — US-17)
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  VILMO     Benefícios  Empresas  Vendedores  Dropshipping    │
-│                                                    [ Entrar ]│  ← /web/
+│  VILMO     Benefícios …     PT | EN              [ Entrar ]  │  ← /web/
 ├──────────────────────────────────────────────────────────────┤
-│  h1  Estoque por NF-e. Vendas nos marketplaces.              │
-│      Empresas dropship + vendedores no mesmo CNPJ.           │
-│      [Como funciona]                                         │
+│  h1  (Portuguese on /  ·  English on /en/)                   │
+│      Companies + vendors + dropship                          │
+│      [Como funciona / How it works]                          │
 ├──────────────────────────────────────────────────────────────┤
-│  #empresas     estoque, preço, NF-e, etiqueta                │
-│  #vendedores   anúncios e vendas próprias, sem estoque       │
-│  #dropshipping empresa guarda o estoque; vendedores vendem   │
-│  FAQ + rodapé (razão social + CNPJ)                          │
+│  #companies    stock, price, NF-e, label                     │
+│  #vendors      own ads and sales, no company stock           │
+│  #dropshipping company holds stock; vendors sell             │
+│  FAQ + footer (razão social + CNPJ)                          │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-- `GET /` is **200 HTML**, not a redirect to login.
-- **Entrar** is top-right on desktop and mobile.
-- Copy is in the HTML (SEO). `/web/` stays `noindex`.
+- `GET /` = pt-BR **200 HTML**; `GET /en/` = en **200 HTML**. Neither redirects to login.
+- Right cluster: **PT | EN** then **Entrar** (PT) or **Sign in** (EN).
+- Each language’s copy is in that HTML (SEO + `hreflang`). `/web/` stays `noindex`.
 
 ---
 
@@ -113,7 +112,7 @@ Company switcher in the header: **Admin only** (any CNPJ). Company/Vendor: name 
 
 ![Login](./wireframes/wf_01_login.png)
 
-- One URL for login: **`/web/`**. Public **`/`** is the commercial index (US-17). No `/admin` login.
+- One URL for login: **`/web/`**. Public **`/`** (pt-BR) and **`/en/`** (en) are the commercial index (US-17). No `/admin` login.
 - Email + senha → JWT. Wrong credentials: same generic error.
 - After success: Admin → Empresas; Company → Dashboard; Vendor → Minhas vendas.
 
