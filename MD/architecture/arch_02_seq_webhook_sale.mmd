@@ -16,3 +16,8 @@ sequenceDiagram
   Worker->>MPAPI: FetchOrder generic binding
   MPAPI-->>Worker: order JSON
   Worker->>Pg: UPSERT sales items attributes SaleStatus
+  alt status becomes Paid
+    Worker->>Pg: InventoryMovement SalePaid unique company sale sku
+    Worker->>Pg: inventory_balance on_hand minus qty
+    Worker->>Redis: XADD stock.publish.requested
+  end

@@ -14,6 +14,8 @@ Portuguese labels in the product. Images in [`wireframes/`](./wireframes/).
 | [wf_06_vendor_sales.png](./wireframes/wf_06_vendor_sales.png) | Vendor: minhas vendas | US-12 |
 | [wf_07_sale_paid_nfe.png](./wireframes/wf_07_sale_paid_nfe.png) | Sale **Pago** → Emitir NF-e | US-06 |
 | [wf_08_sale_label.png](./wireframes/wf_08_sale_label.png) | **Preparando para envio** → etiqueta 10×15 | US-07 |
+| ASCII in this file | **Estoque** + preço de venda | US-13 |
+| ASCII in this file | **Ingerir NF-e** (CNPJ + chave) | US-14 |
 
 ---
 
@@ -30,16 +32,23 @@ flowchart TD
   empresas --> users[Usuários]
   users --> userEmp[Usuário empresa + canais]
   users --> vendorA[Novo vendedor + canais]
+  empresas --> estoqueA[Estoque + preço de venda]
+  estoqueA --> ingestA[Ingerir NF-e CNPJ + chave]
 
   dashEmp --> vendedores[Vendedores]
   vendedores --> vendorC[Novo vendedor da minha empresa]
+  dashEmp --> estoqueC[Estoque só deste CNPJ]
+  estoqueC --> ingestC[Ingerir NF-e CNPJ locked]
   dashEmp --> vendasEmp[Vendas de todos os vendedores]
   vendasEmp --> detalhe[Detalhe da venda]
 
   minhasVendas --> detalhe
   detalhe -->|Pago| nfe[Emitir NF-e]
+  detalhe -->|Pago| stockDown[Saldo da empresa diminui]
   detalhe -->|Preparando envio| etiqueta[Imprimir etiqueta]
 ```
+
+Vendor has **no** Estoque / Ingerir NF-e nodes. Paid decreases **company** stock, not a vendor warehouse.
 
 ---
 
@@ -57,8 +66,8 @@ flowchart TD
 
 | Role | Badge | Sidebar (nothing else) |
 | --- | --- | --- |
-| **Admin** | Admin | Empresas, Usuários, Dashboard, NF-e / Estoque, Produtos, Anúncios, **Vendas**, Vendedores, Marketplaces, Configurações |
-| **Company** | Empresa | Dashboard, NF-e / Estoque, Produtos, Anúncios, **Vendas**, Vendedores, Marketplaces, Configurações |
+| **Admin** | Admin | Empresas, Usuários, Dashboard, **Estoque**, **Ingerir NF-e**, Produtos, Anúncios, **Vendas**, Vendedores, Marketplaces, Configurações |
+| **Company** | Empresa | Dashboard, **Estoque**, **Ingerir NF-e**, Produtos, Anúncios, **Vendas**, Vendedores, Marketplaces, Configurações |
 | **Vendor** | Vendedor | Dashboard, **Minhas vendas**, Meus anúncios, Meus marketplaces, Perfil |
 
 Company switcher in the header: **Admin only** (any CNPJ). Company/Vendor: name of their CNPJ, not a picker of other legal entities.
@@ -112,6 +121,7 @@ Traffic lights on the right stay gray until each block is complete. **Salvar ras
 
 - Badge **Empresa**. No Empresas catalog, no creating other CNPJs.
 - Sales table includes a **Vendedor** column (Ana, Carlos, …) — this is how “check all his sales” is visible.
+- **Estoque** and **Ingerir NF-e** are in the sidebar (US-13, US-14). This CNPJ’s stock only. Vendors of this company do not see those menus.
 - **Novo vendedor** → form with **Empresa locked** to this CNPJ (US-11). Admin uses a **company select** instead (US-10).
 
 ---
@@ -188,16 +198,39 @@ Confirm modal before emit: dest name, CPF/CNPJ, CEP, items, emitente **company C
 
 ## Other screens (structure only — same shell)
 
-### NF-e / Estoque — ingest
+### NF-e / Estoque — saldo e preço (US-13)
+
+Admin and Company only. Vendor: no menu.
 
 ```
-┌ NF-e / Estoque ─────────────────────────────────────┐
-│ Tabs: Saldo | Entradas | Saídas | Ingerir           │
-│ Ingerir: [chave 44        ] [Ingerir]               │
-│          Dropzone XML                               │
-│ Table movimentos: data, CFOP, sku, ± qtd, chave     │
+┌ Estoque  (Empresa: VILMO … 68.431.371/0001-61) ─────┐
+│ SKU │ Descrição      │ Saldo │ Preço de venda │     │
+│ CAM1│ Camiseta preta │   12  │ [ R$ 89,90  ]  │     │
+│ CAL2│ Calça jeans    │    3  │ [ R$ 159,00 ]  │     │
+│                    [Salvar preços]  [Ingerir NF-e]  │
 └─────────────────────────────────────────────────────┘
 ```
+
+- **Saldo** = actual on-hand (`inventory_balance.on_hand`).
+- **Preço de venda** editable. Saved with `PUT /products/{sku}/sale-price`.
+- Company user: this CNPJ only. Admin: header company switcher.
+- When a sale becomes **Pago**, saldo **decreases by the sold qty** (not again at emit NF-e).
+
+### Ingerir NF-e — CNPJ + chave (US-14)
+
+```
+┌ Ingerir NF-e ───────────────────────────────────────┐
+│ CNPJ da empresa  [ select / locked ]                │
+│ Chave de acesso  [ 44 dígitos                    ]  │
+│ [Ingerir na Receita / SEFAZ]                        │
+│ XML (opcional)   [ Dropzone ]                       │
+│ Resultado: +12 CAM1, +3 CAL2  | chave ABC…          │
+└─────────────────────────────────────────────────────┘
+```
+
+- Admin: pick existing company (shows CNPJ). Company: CNPJ locked.
+- DistDFe with **that** company's A1. Inbound items **increase** saldo.
+- Same chave twice does not add qty again.
 
 ### Produtos / Anúncios
 

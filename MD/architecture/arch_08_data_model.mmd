@@ -18,6 +18,7 @@ erDiagram
   PRODUCT ||--o{ PRODUCT_IDENTIFIER : ids
   PRODUCT ||--o{ INVENTORY_BALANCE : stock
   PRODUCT ||--o{ INVENTORY_MOVEMENT : movements
+  SALES ||--o{ INVENTORY_MOVEMENT : sale_paid
   PRODUCT ||--o{ LISTING : ads
   USER_DETAIL_MARKETPLACE ||--o{ LISTING : shop
   COMPANY ||--o{ SALES : orders
@@ -78,4 +79,14 @@ erDiagram
     uuid company_id FK
     string chave_acesso
     string kind
+  }
+  PRODUCT {
+    uuid company_id FK
+    string sku
+    numeric sale_price
+  }
+  INVENTORY_BALANCE {
+    uuid company_id FK
+    string sku
+    numeric on_hand
   }

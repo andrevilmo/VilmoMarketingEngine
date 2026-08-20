@@ -21,6 +21,7 @@ sequenceDiagram
   Nfe->>Sefaz: NFeAutorizacao DFe.NET
   Sefaz-->>Nfe: cStat 100
   Nfe->>Pg: XML chave status PreparingForDispatch
+  Note over Nfe,Pg: no second stock decrement qty left at Paid
   Nfe->>Redis: XADD marketplace.upload_invoice
   Worker->>MPAPI: UploadInvoice XML
   User->>Web: Imprimir etiqueta 100x150 mm

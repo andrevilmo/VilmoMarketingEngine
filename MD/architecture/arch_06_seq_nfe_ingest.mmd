@@ -7,11 +7,12 @@ sequenceDiagram
   participant Sefaz as SEFAZ
   participant Pg as postgres
 
-  User->>Api: POST /nfe/chaves/chave/ingest
+  Note over User,Api: Admin or Company only. Vendor 404
+  User->>Api: POST /nfe/chaves/chave/ingest CNPJ equals company
   Api->>Redis: SET NX idempotency companyId chave
   Api->>Pg: INSERT nfe_documents unique company chave
   Api->>Redis: XADD nfe.ingest.requested
   Nfe->>Pg: load A1 for companyId
   Nfe->>Sefaz: DistDFe consChNFe
   Sefaz-->>Nfe: nfeProc XML
-  Nfe->>Pg: CFOP policy InventoryMovement InventoryBalance
+  Nfe->>Pg: inbound CFOP NfeInbound on_hand plus qCom

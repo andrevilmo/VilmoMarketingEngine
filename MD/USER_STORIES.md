@@ -1,18 +1,18 @@
 # User stories — login, roles, provisioning, sales, NF-e, labels
 
-This document is the **depth plan** for identity, company/vendor provisioning, sales, outbound invoice, and shipping labels. It extends [PLAN.md](./PLAN.md) and [MarketPlaceEngine.MD](./MarketPlaceEngine.MD). No application code in this revision.
+This document is the **depth plan** for identity, company/vendor provisioning, **company stock + sale price**, inbound NF-e ingest, sales, outbound invoice, and shipping labels. It extends [PLAN.md](./PLAN.md) and [MarketPlaceEngine.MD](./MarketPlaceEngine.MD). No application code in this revision.
 
 UI copy in Portuguese; API codes in English.
 
 | Login level | Profile | After login, sees |
 | --- | --- | --- |
 | **Admin** | `IsPlatformSuperUser` (`admin@vilmomkt.com`) | All companies, all users, all sales. Can **create companies** and **create users** (company + vendor). |
-| **Company** | `CompanyAdmin` on `UserCompany` | Everything of **that CNPJ**: vendors, marketplace links, **all their sales**. Can **create vendor users** for this company. |
-| **Vendor** | `UserProfile.Vendor` | Own marketplace links and **own sales** (status, items, NF-e, labels). Cannot create users or companies. |
+| **Company** | `CompanyAdmin` on `UserCompany` | Everything of **that CNPJ**: vendors, marketplace links, **all their sales**, **stock and sale prices**. Can **create vendor users** for this company. |
+| **Vendor** | `UserProfile.Vendor` | Own marketplace links and **own sales** (status, items, NF-e, labels). Cannot create users or companies. **No stock, no sale price, no NF-e ingest.** |
 
 `Operator` / `Viewer` are staff profiles (warehouse / read-only), not a fourth login persona.
 
-Index: [US-01](#us-01--login-as-a-user) login · [US-02](#us-02--show-information-at-my-user-level) home by level · [US-03](#us-03--admin-creates-a-company-ready-to-operate) admin creates company · [US-08](#us-08--admin-creates-users) admin creates users · [US-09](#us-09--admin-creates-a-company-user-with-marketplace-access) admin creates company user · [US-10](#us-10--admin-creates-a-vendor-user-and-related-marketplace-users) admin creates vendor · [US-11](#us-11--company-user-creates-vendors-and-checks-their-sales) company creates vendors · [US-12](#us-12--vendor-checks-own-sales-and-status) vendor sales · [US-04](#us-04--sales-stay-in-sync-common-table--per-marketplace-attributes)–[US-07](#us-07--after-preparando-para-envio-print-correios-format-shipping-label) sales / NF-e / label.
+Index: [US-01](#us-01--login-as-a-user) login · [US-02](#us-02--show-information-at-my-user-level) home by level · [US-03](#us-03--admin-creates-a-company-ready-to-operate) admin creates company · [US-08](#us-08--admin-creates-users) admin creates users · [US-09](#us-09--admin-creates-a-company-user-with-marketplace-access) admin creates company user · [US-10](#us-10--admin-creates-a-vendor-user-and-related-marketplace-users) admin creates vendor · [US-11](#us-11--company-user-creates-vendors-and-checks-their-sales) company creates vendors · [US-12](#us-12--vendor-checks-own-sales-and-status) vendor sales · [US-13](#us-13--admin-and-company-see-stock-and-set-sale-price) stock + sale price · [US-14](#us-14--ingest-nf-e-by-cnpj-and-chave-to-increase-stock) NF-e ingest to stock · [US-04](#us-04--sales-stay-in-sync-common-table--per-marketplace-attributes)–[US-07](#us-07--after-preparando-para-envio-print-correios-format-shipping-label) sales / NF-e / label. Paid sales **decrease company stock** (US-13).
 
 **Screens:** [WIREFRAMES.md](./WIREFRAMES.md). **First company seed:** [FirstCompany.md](./FirstCompany.md).
 
@@ -80,7 +80,9 @@ Metronic `demo1/authentication/branded/sign-in.html`. After success, store token
 | Create vendor | Yes, for selected company (US-10) | Yes, for **my** company (US-11) | No |
 | Marketplaces catalog | Yes (`POST /marketplaces`) | No | No |
 | Company marketplace apps | Yes (selected company) | Yes (this CNPJ) | Read own shop links only |
-| Products / inventory / ads | Selected company | This CNPJ | Own ads only |
+| Products / **stock** / sale price | Selected company | **This CNPJ only** | **Hidden** |
+| Ingest NF-e (CNPJ + chave) | Yes | Yes (own CNPJ locked) | **Hidden** |
+| Advertisements | Selected company | This CNPJ | Own ads only |
 | Sales | Selected company, or admin search-all | **All vendors** of this CNPJ | **Own** sales only |
 | Sale status, NF-e, label | Same scope | All of this CNPJ | Own sales |
 | A1 certificate | Yes | Yes | No |
@@ -90,7 +92,7 @@ Wrong-tenant read: **`404`**, never `403` with a leaked id.
 ### Home widgets
 
 - **Admin** (after picking a company, or a global strip): companies count, users count, open sales by status, marketplaces with broken tokens.
-- **Company**: sales by status (all vendors), stock alerts, vendors pending marketplace link, NF-e pending.
+- **Company**: sales by status (all vendors), **stock alerts**, vendors pending marketplace link, NF-e pending.
 - **Vendor**: my sales by status, my unpaid / paid / preparing for dispatch counts, my pending marketplace links.
 
 Sidebar: [UI.md](./UI.md).
@@ -413,10 +415,119 @@ Route: `POST /vendors` (company implied) or `POST /companies/{myId}/vendors`.
 - Buttons: **Emitir NF-e** / **Imprimir etiqueta** on **own** sales only, same guards as US-06/US-07 (company A1 still signs).
 - **My marketplaces**: list `user_detail_marketplace` with `link_status` (no secrets). Can click Connect if `PendingConnect`.
 - Cannot: create users, create companies, list other vendors, change company A1 or company app ClientId.
+- **Cannot** open **Estoque**, set **preço de venda**, or ingest NF-e (US-13, US-14). Menu hidden; API `404`.
 
 ### UI
 
 Sidebar: Dashboard, My sales, My advertisements, My marketplaces, Profile.
+
+---
+
+## US-13 — Admin and company see stock and set sale price
+
+**As** an **admin** or **company** user  
+**I want** a page of **actual on-hand stock** for the company, where I can **view and set the sale price** of each product  
+**So that** vendors sell from company inventory at prices we control, and a vendor never sees or edits another company’s (or the company’s) stock book.
+
+### Who
+
+| Level | Sees | Edits sale price |
+| --- | --- | --- |
+| **Admin** | Stock of the **selected** company (`X-Company-Id`). Switcher required. | Yes |
+| **Company** | Stock of **their CNPJ only**. No other company. | Yes |
+| **Vendor** | Nothing. No menu, `GET /inventory` → `404`. | No |
+
+Stock is **company-owned**, not vendor-owned. Several vendors of the same CNPJ sell from the same `inventory_balance` rows.
+
+### Screen — Estoque (Portuguese)
+
+DataTable, one row per SKU of that company:
+
+| Column | Source |
+| --- | --- |
+| SKU | `product.sku` unique `(company_id, sku)` |
+| Descrição | `product.name` (from NF-e `xProd` on first ingest, editable later) |
+| EAN / NCM | identifiers |
+| **Saldo** | `inventory_balance.on_hand` — actual count |
+| **Preço de venda** | `product.sale_price` (BRL). Inline edit or drawer. Required before publish ads |
+| Última entrada | last inbound NF-e chave (short) |
+
+Empty company: CTA **Ingerir NF-e** (US-14).
+
+`PUT /products/{sku}/sale-price` `{ "amount": 129.90, "currency": "BRL" }` + `Idempotency-Key`. Admin/Company only. `400` if amount ≤ 0.
+
+This price is the default unit price on advertisements and on outbound NF-e `vUnCom` unless a sale line already has a marketplace-agreed price.
+
+### When a sale becomes Paid — decrease stock
+
+Canonical `Paid` (US-05) **decreases company on-hand by the sale quantity**. Same transaction / same worker as the status write:
+
+```
+status → Paid
+  for each sale_items line:
+    INSERT InventoryMovement kind=SalePaid
+      unique (company_id, sale_id, sku)
+    on_hand -= qty
+```
+
+- Retry / second webhook must **not** subtract twice (unique movement key).
+- `on_hand` must not go negative. If qty > on_hand: keep the sale import, do **not** set `Paid` (or roll back that status write); set attribute `stock_short = true` and leave previous status. UI chip **sem estoque**. Company/admin must ingest stock (US-14) or adjust; then `POST /sales/{id}/commit-stock` retries the decrement.
+- **Cancelled** / **Returned** after a successful `SalePaid` posts `SalePaidReversal` (+qty). Unique `(company_id, sale_id, sku, SalePaidReversal)`.
+- Outbound NF-e (US-06) does **not** subtract quantity again. It only stores the fiscal XML. The stock effect of the sale already happened at `Paid`.
+
+Fan-out: after a successful decrement, enqueue `stock.publish.requested` so marketplace listings of that company get the new qty.
+
+### Acceptance
+
+- Vendor JWT cannot `GET /inventory` or `PUT` sale-price (`404`).
+- Company A cannot see company B SKUs (`404`).
+- Admin without `X-Company-Id` on this screen → `400 CompanyRequired`.
+- Same sale becoming Paid twice does not double-decrement.
+- Setting sale price does not change on-hand.
+
+### UI
+
+Metronic DataTables (demo1 members table). Price as currency input. Sidebar **Estoque** for Admin and Company only.
+
+---
+
+## US-14 — Ingest NF-e by CNPJ and chave to increase stock
+
+**As** an **admin** or **company** user  
+**I want** a screen where I enter the **company CNPJ** and the NF-e **chave de acesso** so Vilmo reads the XML from SEFAZ (Receita / DistDFe) and **adds the items to this company’s stock**  
+**So that** catalog and quantities come from real inbound invoices, not from typing products by hand.
+
+**Vendor: hidden.** Same as US-13.
+
+### Screen — Ingerir NF-e
+
+| Field | Admin | Company user |
+| --- | --- | --- |
+| **CNPJ** | Searchable **Empresa** select (fantasia + CNPJ). Sets `X-Company-Id`. Do not type a CNPJ that is not a tenant. | **Locked** to their company CNPJ (read-only). |
+| **Chave de acesso** | 44 digits, checksum. Required. | Same |
+| XML file | Optional fallback Dropzone if DistDFe cannot return the XML | Same |
+
+Submit: `POST /nfe/chaves/{chave}/ingest` + `Idempotency-Key`. Body may include `cnpj` only as a check; it **must** equal `Company.Cnpj` for the active company (`400 CnpjMismatch` otherwise).
+
+vilmo-nfe: DistDFe `consChNFe` with **that company’s A1**. Parse `det/prod`. For inbound CFOP (purchase / return to us as dest): create/update `product` by `(company_id, EAN)` else `(company_id, cProd + emit CNPJ)`; `InventoryMovement` kind `NfeInbound` unique `(company_id, chave, n_item, NfeInbound)`; **on_hand += qCom**.
+
+Same chave ingested twice → replay, no second increase.
+
+If this CNPJ is emitente of a **sale** NF-e, **do not** add qty (US-06 / CFOP policy). This screen is for **filling stock**, i.e. inbound documents where the company is destinatário (or a documented return). Show the classified movement in the result: `+N` / ignored / error.
+
+Without A1: DistDFe fails with `CertificateNotConfigured`; XML upload still allowed if emit/dest CNPJ matches the company.
+
+### Acceptance
+
+- Company user cannot ingest into another CNPJ (locked field + server check).
+- Admin ingest uses the selected company’s cert, never a neighbour’s.
+- Vendor cannot open the page (`404`).
+- After success, US-13 table shows new/updated SKUs and higher **Saldo**.
+- Unknown chave / SEFAZ timeout → row `nfe_documents.status = Failed` with `xMotivo`; saldo unchanged.
+
+### UI
+
+Layout-1 form: CNPJ (select or locked) + chave 44 + Ingerir + Dropzone XML. Status list of recent chaves for **this company only**.
 
 ---
 
@@ -683,11 +794,14 @@ Stream nfe.emit.requested { companyId, saleId }
         ▼
 vilmo-nfe  (DFe.NET NFeAutorizacao, this company's A1)
         │
-        ├── Authorized → save XML/chave, inventory outbound confirm,
+        ├── Authorized → save XML/chave,
+        │                **no second stock decrement** (qty already left at Paid, US-13),
         │                status → PreparingForDispatch
         │                outbox: marketplace.upload_invoice { saleId }
         └── Rejected / timeout → InvoiceRejected (sale stays payable for retry)
 ```
+
+Inventory: on-hand already decreased at `Paid` (`SalePaid`, US-13). Authorized NF-e stores XML/chave and may link `nfe_document_id` for audit — it does **not** post a second quantity movement.
 
 After authorization the worker **uploads the XML** to the channel when the binding exists:
 
@@ -698,8 +812,6 @@ After authorization the worker **uploads the XML** to the channel when the bindi
 Upload failure does **not** roll back the NF-e. Sale stays `PreparingForDispatch`; UI shows a warning chip **XML pendente no marketplace**.
 
 Idempotency: unique `(company_id, sale_id)` on outbound `nfe_documents` of kind `OutboundSale`. Retry of the same HTTP key replays the stored result. A second emit on an authorized sale → `409 AlreadyInvoiced`.
-
-Inventory: reservation happened at `Paid`. Authorized NF-e posts the immutable outbound `InventoryMovement` (CFOP sale) for this company only.
 
 ---
 
@@ -802,6 +914,8 @@ v1 does not talk IPP/raw ZPL unless we add it later. The operator prints the PDF
 | Users of company | yes | yes | no | no |
 | Vendor subaccounts | yes | yes | own only | no |
 | Company marketplace apps | yes | yes | no | no |
+| **Estoque + preço de venda** | selected company | **this CNPJ only** | **no** | no |
+| **Ingerir NF-e** (CNPJ + chave) | yes | yes (own CNPJ) | **no** | no |
 | Sales list | selected company / admin search-all | **all vendors** of CNPJ | own `vendor_user_id` | no |
 | Emit NF-e | yes | yes | own sale | no |
 | Print label | yes | yes | own sale | no |
@@ -828,6 +942,12 @@ Mutating business calls: JWT + company context + `Idempotency-Key` (not on login
 | `POST` | `/companies/{id}/users` | Admin | Company user + `user_company_marketplace` (US-09) |
 | `POST` | `/companies/{id}/vendors` | Admin / Company (own id) | Vendor + related marketplace users (US-10, US-11) |
 | `PUT` | `/companies/{id}/vendors/{userId}/marketplaces/{code}` | Admin / Company | Extra channel for existing vendor |
+| `GET` | `/inventory` | Admin/Company | US-13 on-hand + sale price for active company. Vendor `404`. |
+| `PUT` | `/products/{sku}/sale-price` | Admin/Company | Set BRL sale price. Idempotent. |
+| `POST` | `/nfe/chaves/{chaveAcesso}/ingest` | Admin/Company | US-14. CNPJ must match company. Vendor `404`. |
+| `POST` | `/nfe/xml` | Admin/Company | XML fallback. |
+| `GET` | `/nfe/chaves/{chaveAcesso}` | Admin/Company | Ingestion status, this company only. |
+| `POST` | `/sales/{id}/commit-stock` | Admin/Company | Retry SalePaid decrement after restock. |
 | `GET` | `/sales` | Admin/Company: company. Vendor: own | Filter `status`, `marketplace_code`, `vendorUserId` |
 | `GET` | `/sales/{saleId}` | Owner per matrix | Common + items + EAV + `remote_status` |
 | `POST` | `/sales/{saleId}/sync` | Admin/Company | Enqueue FetchOrder |
@@ -855,6 +975,8 @@ See [UI.md](./UI.md) for file sources. Behavior:
 | Create company user | US-09 | Admin. Marketplace checkboxes |
 | Create vendor | US-10, US-11 | Admin or Company. Selected marketplaces + Connect |
 | Sidebar | US-02 | Admin / Company / Vendor menus |
+| **Estoque** | US-13 | Admin + Company. Vendor hidden. Inline **preço de venda**. |
+| **Ingerir NF-e** | US-14 | CNPJ select (admin) or locked (company) + chave 44 |
 
 ---
 
@@ -862,7 +984,9 @@ See [UI.md](./UI.md) for file sources. Behavior:
 
 - Unit: CEP 8 digits, status map, state machine (cannot emit from `PendingPayment`; cannot skip NF-e to `PreparingForDispatch` unless `invoiced_by_marketplace`).
 - Login: wrong password `401`; vendor JWT cannot `POST /companies`; company JWT cannot create vendor for another CNPJ (`403`).
-- Tenancy: vendor A cannot `GET` vendor B sale (404). Company A cannot see company B sale. Admin with `X-Company-Id` of A sees A's sales only in that list; admin search-all is a separate route.
+- Tenancy: vendor A cannot `GET` vendor B sale (404). Company A cannot see company B sale **or stock**. Vendor cannot `GET /inventory` (404). Admin with `X-Company-Id` of A sees A's sales and stock only in that list.
+- Stock: ingest inbound NF-e twice does not double qty; Paid twice does not double-decrement; company B saldo unchanged.
+- Price: `PUT` sale-price as vendor → 404; as company A on company B sku → 404.
 - Provisioning: create vendor with two codes → two `user_detail_marketplace` `PendingConnect`; OAuth callback sets `Linked`. Same idempotency key does not duplicate. Create company user with a code not enabled on the company → `400`.
 - Company readiness: no A1 → `ready_to_invoice = false`; emit returns `409 CertificateNotConfigured`.
 - Import: fixture ML order → one `sales` row + attributes `shipment_id`; second webhook updates `remote_status` only.

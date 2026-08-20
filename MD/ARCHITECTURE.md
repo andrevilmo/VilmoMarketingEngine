@@ -117,7 +117,7 @@ Identity: `company`, `user`, `user_company`, `company_certificate`, `users_detai
 
 Marketplace data: `marketplace`, `marketplace_parameter_definition`, `marketplace_operation_binding`, `marketplace_webhook_binding`, `company_marketplace_config`, `company_marketplace_parameter`, `marketplace_sale_field_definition`, `marketplace_sale_status_map`.
 
-Catalog: `product`, `product_identifier`, `inventory_balance`, `inventory_movement`, `listing`.
+Catalog: `product` (`sale_price`), `product_identifier`, `inventory_balance` (`on_hand`), `inventory_movement` (`NfeInbound` / `SalePaid` / `SalePaidReversal`), `listing`.
 
 Sales: `sales`, `sale_items`, `sale_marketplace_attributes`, `nfe_documents`, `shipment_labels`.
 
@@ -218,9 +218,14 @@ sequenceDiagram
   Worker->>MPAPI: FetchOrder generic binding
   MPAPI-->>Worker: order JSON
   Worker->>Pg: UPSERT sales items attributes map SaleStatus
+  alt status becomes Paid
+    Worker->>Pg: InventoryMovement SalePaid unique company sale sku
+    Worker->>Pg: inventory_balance on_hand minus qty
+    Worker->>Redis: XADD stock.publish.requested
+  end
 ```
 
-Unknown shop: ACK already sent; park event; never attach to a random vendor.
+Unknown shop: ACK already sent; park event; never attach to a random vendor. **Paid** decreases **company** `on_hand` (not a vendor warehouse). Retry must not subtract twice.
 
 ---
 
@@ -251,6 +256,7 @@ sequenceDiagram
   Nfe->>Sefaz: NFeAutorizacao DFe.NET
   Sefaz-->>Nfe: cStat 100
   Nfe->>Pg: XML chave status PreparingForDispatch
+  Note over Nfe,Pg: no second stock decrement qty left at Paid
   Nfe->>Redis: XADD upload_invoice
   Worker->>MPAPI: UploadInvoice XML
   User->>Web: Imprimir etiqueta 10x15
@@ -259,7 +265,7 @@ sequenceDiagram
   Api-->>Web: label.pdf
 ```
 
-Reject: `InvoiceRejected`; emit button stays. Upload failure does not roll back the NF-e.
+Reject: `InvoiceRejected`; emit button stays. Upload failure does not roll back the NF-e. Stock qty already left at **Paid**; emit does not subtract again.
 
 ---
 
@@ -276,17 +282,42 @@ sequenceDiagram
   participant Sefaz as SEFAZ
   participant Pg as postgres
 
-  User->>Api: POST /nfe/chaves/chave/ingest
+  User->>Api: POST /nfe/chaves/chave/ingest Admin or Company only
+  Note over User,Api: Vendor 404. CNPJ must equal Company.Cnpj
   Api->>Redis: SET NX idempotency companyId chave
   Api->>Pg: INSERT nfe_documents unique company chave
   Api->>Redis: XADD nfe.ingest.requested
   Nfe->>Pg: load A1 for companyId
   Nfe->>Sefaz: DistDFe consChNFe
   Sefaz-->>Nfe: nfeProc XML
-  Nfe->>Pg: CFOP policy InventoryMovement InventoryBalance
+  Nfe->>Pg: inbound CFOP InventoryMovement NfeInbound on_hand plus qCom
 ```
 
-XML upload skips DistDFe when there is no A1.
+XML upload skips DistDFe when there is no A1. Company user sees **this CNPJ only**. Same chave twice does not increase saldo again.
+
+---
+
+## 6b. Sequence — Paid sale decreases company stock (US-13)
+
+Admin/Company **Estoque** is `GET /inventory` + `PUT /products/{sku}/sale-price`. Vendors cannot open it.
+
+```mermaid
+sequenceDiagram
+  participant Worker as vilmo-worker
+  participant Pg as postgres
+  participant Redis
+
+  Note over Worker,Pg: FetchOrder mapped SaleStatus to Paid
+  Worker->>Pg: INSERT SalePaid unique company sale sku
+  alt on_hand greater or equal qty
+    Worker->>Pg: on_hand minus qty
+    Worker->>Redis: XADD stock.publish.requested
+  else short stock
+    Worker->>Pg: keep previous status stock_short true
+  end
+```
+
+`POST /sales/{id}/commit-stock` retries after US-14 restock. Emit NF-e does not run this path.
 
 ---
 

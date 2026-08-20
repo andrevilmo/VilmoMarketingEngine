@@ -11,7 +11,7 @@ Referenced architecture: [MarketPlaceEngine.MD](./MarketPlaceEngine.MD) — **Op
 A .NET API, run entirely from Docker Compose, that:
 
 1. Serves **N companies**. Every business record belongs to a `CompanyId`. Users belong to companies. Users with profile **`Vendor`** sell through **per-marketplace subaccounts**. One platform super user sees all.
-2. Owns a **per-company** product inventory derived from Brazilian **NF-e** (ingest by **chave de acesso**).
+2. Owns a **per-company** product inventory derived from Brazilian **NF-e** (ingest by **CNPJ + chave de acesso** on a UI for **Admin and Company only**). **Estoque** screen shows actual on-hand and **preço de venda**. Vendors do not see stock. When a sale becomes **Paid**, company on-hand **decreases by sale qty** (US-13, US-14).
 3. Talks to SEFAZ through [ZeusAutomacao/DFe.NET](https://github.com/ZeusAutomacao/DFe.NET). **Each company has its own A1 certificate** (CNPJ-bound). XML upload remains a fallback.
 4. Each vendor publishes advertisements to **Mercado Livre**, **Shopee**, **SHEIN**, and **Magalu** using **their** subaccount on each channel (default: all marketplaces).
 5. Accepts a fifth marketplace **without a rebuild**: insert a `marketplace` row + bindings + parameter definitions (admin UI). Existing vendors get a `user_detail_marketplace` when the company enables that code.
@@ -163,13 +163,13 @@ The product is multi-company from day one. There is no "default company" fallbac
 
 `CompanyRole` / `UserProfile`: `CompanyAdmin`, `Operator`, `Viewer`, **`Vendor`**.
 
-**Login personas (US-01, US-02, US-08–US-12):**
+**Login personas (US-01, US-02, US-08–US-14):**
 
 | Persona | Profile | Sees | Creates |
 | --- | --- | --- | --- |
-| Admin | `IsPlatformSuperUser` | All companies, all users, all sales | Companies, company users, vendors on a selected company |
-| Company | `CompanyAdmin` | All users of **this CNPJ**, **all of their sales** | Vendors linked to **this** company only |
-| Vendor user | `Vendor` | Own marketplace links + **own sales** | Nothing (users/companies) |
+| Admin | `IsPlatformSuperUser` | All companies, users, sales, **stock of selected CNPJ** | Companies, users, **sale prices**, NF-e ingest |
+| Company | `CompanyAdmin` | Users, sales, **stock of this CNPJ only** | Vendors for this company, **sale prices**, ingest for this CNPJ |
+| Vendor user | `Vendor` | Own marketplace links + **own sales** | Nothing. **No stock / no ingest / no price** |
 
 Login is one screen (`POST /auth/login`). `GET /me` returns the level so the Metronic shell hides menus. Depth: [USER_STORIES.md](./USER_STORIES.md).
 
@@ -345,7 +345,7 @@ Inbound NF-e (chave / XML / DistDFe) still builds **inventory**. A **paid market
 1. Guard: status `Paid` or `InvoiceRejected`; dest CEP 8 digits; company A1 present; items have NCM/tax profile.
 2. `POST /sales/{saleId}/nfe` → status `Invoicing` → `vilmo-nfe` builds `NFe.Classes.NFe` from the **common sale** (emit = **company CNPJ**, dest = buyer/recipient, det = `sale_items`).
 3. `ServicosNFe.NFeAutorizacao(lote, IndicadorSincronizacao.Sincrono, nfeList)`.
-4. Authorized (`cStat` 100/150) → store XML + chave, confirm outbound stock movement, status **`PreparingForDispatch`**. Then enqueue `UploadInvoice` to the channel (Shopee `upload_invoice_doc`, ML XML when shipment allows). Upload failure does not roll back the NF-e (chip “XML pendente no marketplace”).
+4. Authorized (`cStat` 100/150) → store XML + chave, status **`PreparingForDispatch`**. Stock qty already left at **Paid** (US-13); do not subtract again. Then enqueue `UploadInvoice` to the channel (Shopee `upload_invoice_doc`, ML XML when shipment allows). Upload failure does not roll back the NF-e (chip “XML pendente no marketplace”).
 5. Rejected → `InvoiceRejected`; button stays visible.
 
 Emitente is always the **company CNPJ** (A1). The vendor is the seller of the order, not a second emitente.
@@ -448,7 +448,7 @@ Full investigation and screen map: [UI.md](./UI.md).
 - Runtime uses **HTML only**: starter **layout-1** + **demo1** page patterns (sign-in branded, members datatable, settings, integrations).
 - Inventory / products / orders **information architecture** comes from the React concept `store-inventory`, rebuilt as HTML tables — do not run the Vite/Next apps.
 - `vilmo-web` copies a **slice** of assets + mapped pages. It does not ship all 10 demos or the React packages.
-- Sidebar: Dashboard, NF-e / Inventory, Products, Advertisements, **Sales**, Vendors, Marketplaces, Settings (+ Companies for super user). Vendor sidebar: Dashboard, My sales, My advertisements, My marketplaces, Profile. Sale detail: **Emitir NF-e** when `Paid`; **Imprimir etiqueta para envio** when `PreparingForDispatch`.
+- Sidebar: Dashboard, **Estoque**, **Ingerir NF-e**, Products, Advertisements, **Sales**, Vendors, Marketplaces, Settings (+ Companies for super user). Vendor sidebar: Dashboard, My sales, My advertisements, My marketplaces, Profile — **no Estoque**. Sale detail: **Emitir NF-e** when `Paid`; **Imprimir etiqueta para envio** when `PreparingForDispatch`. Paid already decreased company stock.
 
 ---
 
@@ -475,11 +475,14 @@ Auth: bearer session/JWT with `user_id`, `is_platform_super_user`, and membershi
 | `GET` | `/marketplaces` | List catalog (`marketplace` table). Super user sees inactive too. |
 | `POST` | `/marketplaces` | Super user: insert a new `code` + protocol + bindings. No deploy. Idempotent on `code`. |
 | `PUT` | `/marketplaces/{code}` | Super user: update definition, parameter keys, operation bindings; `DEL marketplace-definition:{code}`. |
-| `POST` | `/nfe/chaves/{chaveAcesso}/ingest` | Validate chave, enqueue fetch with **this company's** cert. Idempotency = `(companyId, chave)`. |
+| `GET` | `/inventory` | Admin/Company: on-hand + sale price (US-13). Vendor `404`. |
+| `PUT` | `/products/{sku}/sale-price` | Admin/Company. Vendor `404`. |
+| `POST` | `/nfe/chaves/{chaveAcesso}/ingest` | Validate chave, enqueue DistDFe with **this company's** A1. Body CNPJ must match company (US-14). Vendor `404`. |
 | `POST` | `/nfe/xml` | Upload XML fallback. Chave from XML must match; emit/dest CNPJ must be compatible with the company CNPJ. |
 | `GET` | `/nfe/chaves/{chaveAcesso}` | Ingestion status for **this company only**. |
-| `GET` | `/products` / `GET /products/{sku}` | Catalog of the active company. |
-| `GET` | `/inventory/{sku}` | On-hand, reserved, available for the active company. |
+| `POST` | `/sales/{saleId}/commit-stock` | Admin/Company: retry `SalePaid` after restock (`stock_short`). |
+| `GET` | `/products` / `GET /products/{sku}` | Catalog of the active company (includes `sale_price`). Admin/Company. |
+| `GET` | `/inventory/{sku}` | On-hand for the active company. Admin/Company. Vendor `404`. |
 | `POST` | `/marketplaces/{code}/connect` | Start OAuth/HMAC for **this company's** shop; `{code}` is the table PK, not an enum. |
 | `GET` | `/oauth/{code}/callback` | Store tokens as parameters; invalidate Redis. Same route for every future code. |
 | `POST` | `/webhooks/{code}` | Verify using that code's `marketplace_webhook_binding`, resolve company **and vendor**, enqueue, 200. |
@@ -528,8 +531,10 @@ vilmo-nfe
           match Product by (companyId, EAN) → (companyId, cProd+emit CNPJ)
           classify CFOP + emit/dest CNPJ vs Company.Cnpj
                 │
-                ├── Inbound purchase / return   → +quantity for this company
-                ├── Outbound sale / return      → −quantity for this company
+                ├── Inbound purchase / return (company is dest)
+                │     → +quantity for this company (US-14)
+                ├── Outbound sale NF-e of this company
+                │     → **ignore qty** (on-hand already left at Paid, US-13)
                 └── Ignore (transfer, etc.) until a rule exists
                 │
                 ▼
@@ -542,7 +547,9 @@ vilmo-nfe
 
 **Do not** apply movements to another company even if the XML CNPJ looks familiar. The authenticated/active `CompanyId` plus a CNPJ match check is required.
 
-Reservation: marketplace sales of that company decrement **available** via `reserved` when status becomes `Paid`, not on-hand, until the **outbound NF-e** (US-06) confirms the movement.
+**Paid marketplace sale (US-13):** when canonical status becomes `Paid`, insert `InventoryMovement` kind `SalePaid` unique `(company_id, sale_id, sku)` and **on_hand -= qty**. Do not go negative (`stock_short` instead of Paid). Retry must not subtract twice. Outbound NF-e (US-06) does **not** subtract again. Cancelled/Returned after `SalePaid` posts `SalePaidReversal` (+qty).
+
+Inbound NF-e (US-14 UI: **CNPJ + chave**, Admin/Company only) **increases** on-hand for purchase CFOP. Classification is a `CfopMovementPolicy` with explicit enums, not `if (cfop.StartsWith("5"))` scattered in parsers. The ingest screen is hidden from vendors.
 
 ---
 
@@ -552,7 +559,9 @@ Reservation: marketplace sales of that company decrement **available** via `rese
 | --- | --- | --- | --- |
 | HTTP | Redis | `idempotency:{companyId}:{clientKey}` | 24h |
 | NF-e ingest | PostgreSQL unique | `(company_id, chave_acesso)` | forever |
-| Movement | PostgreSQL unique | `(company_id, chave, n_item, kind)` | forever |
+| NfeInbound movement | PostgreSQL unique | `(company_id, chave, n_item, NfeInbound)` | forever |
+| SalePaid movement | PostgreSQL unique | `(company_id, sale_id, sku, SalePaid)` | forever |
+| SalePaidReversal | PostgreSQL unique | `(company_id, sale_id, sku, SalePaidReversal)` | forever |
 | Webhook | PostgreSQL unique | `(company_id, marketplace, event_id)` | forever |
 | Stream | processed table | `(company_id, message_id)` | 7 days |
 | Stock push | command id + remote version | `(company_id, listing_id, command_id)` | 24h Redis + unique command |
@@ -599,8 +608,8 @@ Do not build four C# marketplace projects. Build the **generic engine** first, t
 1. **Foundation** — solution, Docker Compose (postgres + redis + empty API), BuildingBlocks (Result, company-scoped idempotency, streams), health checks.
 2. **Identity + tenancy** — `Company`, `User`, `UserCompany`, JWT/`X-Company-Id`, seed `admin@vilmomkt.com` + company CNPJ `68431371000161`. Login US-01, home by level US-02. Admin creates companies (US-03, readiness flags), company users (US-09, `user_company_marketplace`), vendors on **selected** marketplaces (US-10, `PendingConnect` until OAuth). Company users create vendors for their CNPJ (US-11). Vendor sees only own sales (US-12). Row filters by `company_id`.
 3. **Metronic UI shell** — `vilmo-web` from HTML starter layout-1 + demo1 sign-in and members datatable, proxied to the API. Company switcher for super user. Role-based sidebar. See [UI.md](./UI.md).
-4. **Catalog + inventory domain** — Product, identifiers, movements, balances, uniqueness all include `company_id`.
-5. **NF-e ingest module** — `ChaveAcesso`, XML parse via DFe.NET, CFOP policy vs `Company.Cnpj`, ingest API, XML upload path. `ICompanyCertificateStore` + Zeus fetcher for companies that have an A1 (first tenant included). HTML ingest form (chave + Dropzone XML).
+4. **Catalog + inventory domain** — Product (`sale_price`), identifiers, movements (`NfeInbound` / `SalePaid`), balances, uniqueness all include `company_id`. Vendor has no stock book.
+5. **NF-e ingest + Estoque UI** — HTML: CNPJ (admin select / company locked) + chave 44 → DistDFe; stock table with **preço de venda**. Admin/Company only. Paid sale decrements on-hand (US-13, US-14).
 6. **Marketplace engine** — `IAuthProtocol` pack (`OAuth2AuthorizationCode`, `HmacSha256`, `BearerToken`, `ApiKeyHeader`), generic HTTP executor, JSON mappings, definition cache. Commands carry `CompanyId`, `VendorUserId`, and string `marketplace_code`. Advertisement publish: `marketplaceCodes` default all.
 7. **Seed four channels** — SQL/JSON fixtures for Mercado Livre, Magalu, Shopee, SHEIN (SHEIN may be `is_active = false` until Open Platform docs). Include `marketplace_sale_field_definition` and `marketplace_sale_status_map`. No per-brand class.
 8. **Sales sync** — `sales` + `sale_items` + `sale_marketplace_attributes`. Webhook → FetchOrder → upsert. Canonical `SaleStatus`. List/detail UI scoped by role.
@@ -617,7 +626,7 @@ Each step stays shippable. Step 5 already gives "company user reads chave / XML 
 
 - Unit: `ChaveAcesso` DV, CFOP policy, idempotency state machine (`companyId` in the Redis key), translators, authorization (admin vs company vs vendor), `SaleStatus` map, CEP 8 digits, label page size.
 - Contract: generic executor against recorded HTTP fixtures keyed by `marketplace_code` (no live ML/Shopee in CI). Sale normalizer fixtures → `sales` + EAV rows.
-- Integration: Testcontainers for Postgres + Redis; two companies; ingest a sample `procNFe` XML into A and assert B's inventory is empty; same `Idempotency-Key` on A and B both succeed; company A Shopee `PartnerId` does not leak into company B; config read hits Redis on the second call; `PUT` config deletes the cache key; creating a vendor twice with the same key does not duplicate `user_detail_marketplace`; publish with omitted `marketplaceCodes` fans out to all vendor subaccounts; **inserting a fifth `marketplace` row** (no code change) lets a company enable it and provision vendor subaccounts; vendor A `GET /sales` does not include vendor B; stub `INfeAuthorizer` emit moves `Paid` → `PreparingForDispatch`; second emit `409`; label PDF 100×150 contains sender CNPJ and recipient CEP.
+- Integration: Testcontainers for Postgres + Redis; two companies; ingest a sample `procNFe` XML into A and assert B's inventory is empty; ingest the same chave twice does not double qty; Paid twice does not double-decrement; vendor JWT `GET /inventory` is `404`; company A cannot `PUT` sale-price on company B SKU; same `Idempotency-Key` on A and B both succeed; company A Shopee `PartnerId` does not leak into company B; config read hits Redis on the second call; `PUT` config deletes the cache key; creating a vendor twice with the same key does not duplicate `user_detail_marketplace`; publish with omitted `marketplaceCodes` fans out to all vendor subaccounts; **inserting a fifth `marketplace` row** (no code change) lets a company enable it and provision vendor subaccounts; vendor A `GET /sales` does not include vendor B; stub `INfeAuthorizer` emit moves `Paid` → `PreparingForDispatch` **without** a second stock decrement; second emit `409`; label PDF 100×150 contains sender CNPJ and recipient CEP.
 - SEFAZ: optional manual homologation with CNPJ `68431371000161`'s A1; never call production SEFAZ from CI; never check a real `.pfx` into the repo.
 
 ---
@@ -661,9 +670,9 @@ Docker Compose up → open `vilmo-web` Metronic sign-in (`demo1` branded):
 2. Admin **creates a company user** on selected channels (US-09) and/or a **vendor** on selected marketplaces (US-10, `PendingConnect` → OAuth `Linked`).
 3. That **company user** logs in, **creates more vendors** for the same CNPJ, and sees **all their sales** (US-11).
 4. **Vendor** logs in and sees **only** his sales and status (US-12).
-5. Ingest NF-e (chave or XML) using that company's A1 → inventory **only** for that company.
+5. Ingest NF-e (**CNPJ + chave**) using that company's A1 → inventory **only** for that company. Open **Estoque**, set **preço de venda**.
 6. Vendor publishes an advertisement on **linked** channels.
-7. Webhook/import creates a **common sale** + EAV attributes; canonical status **Pago**.
-8. On that sale, **Emitir nota fiscal eletrônica** → DFe.NET authorizes → status **Preparando para envio**. Retry of the same key does not emit twice.
+7. Webhook/import creates a **common sale** + EAV attributes; when status becomes **Pago**, company stock **decreases by qty** (US-13).
+8. On that sale, **Emitir nota fiscal eletrônica** → DFe.NET authorizes → status **Preparando para envio**. **No second stock decrement.** Retry of the same key does not emit twice.
 9. **Imprimir etiqueta para envio** → PDF 10×15 (or 13.8×10.6) with sender CNPJ/address, recipient name/address/CEP. Status **Etiqueta impressa**.
-10. A second company cannot see those products or sales. Vendor B cannot open vendor A's sale (`404`).
+10. A second company cannot see those products, **stock**, or sales. Vendor B cannot open vendor A's sale (`404`). Vendor cannot open **Estoque**.

@@ -31,7 +31,7 @@ Use **HTML**, not React/Next.js, so the UI stays a thin client of the .NET API.
 
 Runtime app (`src/Vilmo.Web` when implementing): copy **assets** (`css`, `js`, `media`, `vendors`) + **one layout** + **only the pages we map**. Talk to `vilmo-api` with `Authorization` + `X-Company-Id` + `Idempotency-Key` on writes.
 
-**Wireframes (planning mockups):** [WIREFRAMES.md](./WIREFRAMES.md) — login, three role shells, company wizard, create vendor, sales, NF-e button, Correios 10×15 label.
+**Wireframes (planning mockups):** [WIREFRAMES.md](./WIREFRAMES.md) — login, three role shells, company wizard, create vendor, sales, NF-e button, Correios 10×15 label, **Estoque + preço**, **Ingerir NF-e**.
 
 Do not serve the 10GB-class template tree from Docker. `vilmo-web` is a small static/Razor site.
 
@@ -56,8 +56,8 @@ Do not serve the 10GB-class template tree from Docker. `vilmo-web` is a small st
 | Register marketplace (super user) | integrations + settings form | `POST /marketplaces` — new `code` at runtime, no deploy. |
 | A1 certificate | settings form + Dropzone | Required for `ready_to_invoice`. |
 | Products | store-inventory **Product List / Details / Create** (HTML tables from demo1 members datatable + store-client `product-details.html` for the detail chrome) | Post items when `ready_to_list`. |
-| Inventory | store-inventory **All Stock / Current / Inbound / Outbound** | NF-e movements. Inbound = purchase CFOP; outbound = sale CFOP (after emit). |
-| Ingest NF-e | custom form on layout-1 (chave 44 + XML Dropzone) | `POST /nfe/chaves/{chave}/ingest`, `POST /nfe/xml`. |
+| Inventory | store-inventory **All Stock / Current** | **US-13.** Admin + Company only. **Saldo** + inline **preço de venda**. Vendor: hidden. |
+| Ingest NF-e | custom form on layout-1 | **US-14.** Admin: Empresa/CNPJ select + chave 44. Company: CNPJ **locked**. Optional XML Dropzone. Vendor: hidden. |
 | Advertisements | product list + “publish” modal with marketplace checkboxes | Default **linked** channels; optional `marketplaceCodes`. Vendor: own listings. |
 | **Sales list** | store-inventory **Order List** (DataTables) | Company: all vendors. Vendor: own (US-12). Status in PT. |
 | **Sale detail** | store-inventory **Order Details** | Common fields + accordion **Dados do marketplace** (EAV). Chips: canonical + raw. |
@@ -69,8 +69,8 @@ Sidebar by role (replace Metronic demo links with these, nothing else):
 
 | Role | Items |
 | --- | --- |
-| **Admin** | Companies, Users, Dashboard, NF-e / Inventory, Products, Advertisements, **Sales**, Vendors, Marketplaces, Settings |
-| **Company** | Dashboard, NF-e / Inventory, Products, Advertisements, **Sales**, Vendors, Marketplaces, Settings |
+| **Admin** | Companies, Users, Dashboard, **Estoque**, **Ingerir NF-e**, Products, Advertisements, **Sales**, Vendors, Marketplaces, Settings |
+| **Company** | Dashboard, **Estoque**, **Ingerir NF-e**, Products, Advertisements, **Sales**, Vendors, Marketplaces, Settings |
 | **Vendor** | Dashboard, **My sales**, My advertisements, My marketplaces, Profile |
 
 Company users create vendors for their CNPJ and see **all** those sales. Vendors see only their own. Admin sees all after picking a company.

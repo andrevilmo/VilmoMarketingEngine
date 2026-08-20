@@ -35,9 +35,9 @@ Login personas (see [USER_STORIES.md](./USER_STORIES.md)):
 
 | Persona | Who | Visibility | Creates |
 | --- | --- | --- | --- |
-| **Admin** | `IsPlatformSuperUser` | **All** companies, users, sales | Companies, company users, vendors on a selected company |
-| **Company** | `CompanyAdmin` of a CNPJ | **All users of that company** and **all of their sales** | Vendors of **this** CNPJ |
-| **Vendor user** | `UserProfile.Vendor` | Own marketplace links + **own sales** only | — |
+| **Admin** | `IsPlatformSuperUser` | **All** companies, users, sales, **stock of selected CNPJ** | Companies, company users, vendors, **sale prices**, NF-e ingest |
+| **Company** | `CompanyAdmin` of a CNPJ | **All users of that company**, **all of their sales**, **stock of this CNPJ only** | Vendors of **this** CNPJ, **sale prices**, ingest for this CNPJ |
+| **Vendor user** | `UserProfile.Vendor` | Own marketplace links + **own sales** only | — **No stock, no sale price, no ingest** |
 
 Login is `POST /auth/login` (US-01). Home and menus follow the level (US-02). Creating a company includes legal + selected marketplace apps + A1 so listings, sale status, and NF-e can run (US-03). Creating a vendor on **selected** marketplaces inserts `user_detail_marketplace` and **connects** the remote shop user (US-10); production APIs do not silently register a seller. Depth: [USER_STORIES.md](./USER_STORIES.md).
 
@@ -59,10 +59,10 @@ Marketplaces never own product identity. The engine owns, **always scoped by `Co
 
 | Concept | Meaning | Identity |
 | --- | --- | --- |
-| `Product` | Sellable item in that company's catalog | `(companyId, sku)` |
+| `Product` | Sellable item in that company's catalog (`sale_price` BRL) | `(companyId, sku)` |
 | `ProductIdentifier` | EAN, `cProd` from NF-e, NCM, seller SKU | `(companyId, identifierKind, value)` |
 | `InventoryBalance` | Quantity that company can sell, per warehouse | `(companyId, sku, warehouse)` |
-| `InventoryMovement` | Immutable stock event | `(companyId, chaveAcesso, itemIndex, movementKind)` |
+| `InventoryMovement` | Immutable stock event (`NfeInbound`, `SalePaid`, `SalePaidReversal`, …) | NfeInbound `(companyId, chave, nItem, kind)`; SalePaid `(companyId, saleId, sku, kind)` |
 | `Offer` | Price + allocated stock for one channel | `(companyId, sku, marketplace, vendorSubaccount)` |
 | `Listing` | Remote advertisement published by a vendor subaccount | `(companyId, vendorUserId, marketplace, remoteListingId)` |
 | `Sale` | Normalized marketplace order (common columns) | `(companyId, id)` unique remote `(companyId, marketplaceCode, remoteOrderId)` |
@@ -199,6 +199,8 @@ Webhooks never persist marketplace JSON as the source of truth. `FetchOrder` + s
 
 Unique import: `(company_id, marketplace_code, remote_order_id)`. Re-delivery updates attributes and `remote_status`; canonical status follows `marketplace_sale_status_map` **and** the state machine (marketplace “invoice pending” ≠ our NF-e done).
 
+When status becomes **`Paid`**, company **on-hand decreases by sale qty** (`InventoryMovement` `SalePaid`, unique per sale+sku). Outbound NF-e does not subtract again. Stock screens and ingest (CNPJ + chave) are **Admin and Company only**; vendors never see `inventory`. Depth: [USER_STORIES.md](./USER_STORIES.md) US-13, US-14.
+
 `SaleStatus`: `PendingPayment` → `Paid` → `Invoicing` → `PreparingForDispatch` → `LabelPrinted` → `Shipped` → `Delivered` (+ `InvoiceRejected`, `Cancelled`, `Returning`, `Returned`).
 
 Buttons:
@@ -228,7 +230,9 @@ Every write that can be retried must be idempotent. Retries are normal (webhooks
 | Operation | Natural key |
 | --- | --- |
 | Ingest NF-e | `(company_id, chave_acesso)` |
-| Stock movement | `(company_id, chave_acesso, n_item, movement_kind)` |
+| NfeInbound movement | `(company_id, chave_acesso, n_item, NfeInbound)` |
+| SalePaid movement | `(company_id, sale_id, sku, SalePaid)` |
+| SalePaidReversal | `(company_id, sale_id, sku, SalePaidReversal)` |
 | Connect shop (company app) | `(company_id, marketplace_code)` |
 | Create vendor | `(company_id, user_id)` on `users_detail` |
 | Create vendor subaccount | `(company_id, user_id, marketplace_code)` on `user_detail_marketplace` |
