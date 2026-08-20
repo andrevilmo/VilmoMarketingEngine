@@ -1,0 +1,168 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Vilmo Marketing Engine on a single free-tier EC2 (t3.micro).
+  Only port 80 is public. Postgres/Redis/app ports stay on Docker.
+  Launch in sa-east-1 (Brazil) after signing in with MFA.
+  Domain vilmomkt.com and Google Workspace MX are a later DNS cutover.
+
+Parameters:
+  InstanceType:
+    Type: String
+    Default: t3.micro
+    AllowedValues: [t3.micro, t3.small]
+    Description: Free-plan eligible x86 types. t3.micro is 1 GiB RAM.
+
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+Resources:
+  VilmoRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Tags:
+        - { Key: Project, Value: VilmoMarketingEngine }
+
+  VilmoInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref VilmoRole]
+
+  VilmoSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Vilmo gateway HTTP only
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: HTTP nginx gateway
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS reserved for later ACM/nginx
+      Tags:
+        - { Key: Project, Value: VilmoMarketingEngine }
+
+  VilmoInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref VilmoInstanceProfile
+      SecurityGroupIds: [!Ref VilmoSecurityGroup]
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 16
+            VolumeType: gp3
+            Encrypted: true
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          set -euxo pipefail
+          mkdir -p /opt/vilmo
+          cat >/tmp/vilmo-stack.b64 <<'PAYLOAD'
+          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
+eAAA
+          PAYLOAD
+          tr -d '[:space:]' </tmp/vilmo-stack.b64 | base64 -d | tar -xz -C /opt/vilmo
+          chmod +x /opt/vilmo/aws/install.sh
+          /opt/vilmo/aws/install.sh
+      Tags:
+        - { Key: Name, Value: vilmo-gateway }
+        - { Key: Project, Value: VilmoMarketingEngine }
+
+  VilmoEip:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - { Key: Name, Value: vilmo-gateway }
+        - { Key: Project, Value: VilmoMarketingEngine }
+
+  VilmoEipAssoc:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt VilmoEip.AllocationId
+      InstanceId: !Ref VilmoInstance
+
+  VilmoBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: !Sub "${AWS::StackName}-free-tier-guard"
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit:
+          Amount: 5
+          Unit: USD
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 50
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: admin@vilmomkt.com
+
+Outputs:
+  PublicIp:
+    Description: Elastic IP. Point vilmomkt.com A records here later. Keep Google MX.
+    Value: !Ref VilmoEip
+  GatewayUrl:
+    Description: Temporary URL until DNS cutover
+    Value: !Sub "http://${VilmoEip}"
+  HealthUrl:
+    Value: !Sub "http://${VilmoEip}/health"
+  SlugWeb:
+    Value: !Sub "http://${VilmoEip}/web/"
+  SlugApi:
+    Value: !Sub "http://${VilmoEip}/api/"
+  SsmHint:
+    Description: Shell on the instance without opening SSH
+    Value: !Sub "aws ssm start-session --target ${VilmoInstance} --region ${AWS::Region}"

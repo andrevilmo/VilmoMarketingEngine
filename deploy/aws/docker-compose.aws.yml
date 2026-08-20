@@ -1,0 +1,35 @@
+# Low-memory overlay for a free-tier t3.micro (1 GiB).
+# Usage: docker compose -f docker-compose.yml -f aws/docker-compose.aws.yml up -d --build
+
+services:
+  postgres:
+    command:
+      - postgres
+      - -c
+      - shared_buffers=64MB
+      - -c
+      - effective_cache_size=128MB
+      - -c
+      - max_connections=20
+      - -c
+      - work_mem=2MB
+    mem_limit: 256m
+
+  redis:
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
+    mem_limit: 96m
+
+  vilmo-gateway:
+    mem_limit: 64m
+
+  vilmo-web:
+    mem_limit: 48m
+
+  vilmo-api:
+    mem_limit: 48m
+
+  vilmo-nfe:
+    mem_limit: 48m
+
+  vilmo-worker:
+    mem_limit: 48m

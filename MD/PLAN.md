@@ -2,7 +2,7 @@
 
 The nginx gateway Compose stack in [`deploy/docker-compose.yml`](../deploy/docker-compose.yml) is implemented (echo stubs behind slugs). Application code, .NET images, and certificates are not created until a later task explicitly asks to implement them.
 
-Referenced architecture: [MarketPlaceEngine.MD](./MarketPlaceEngine.MD) — **Opção A (in-house)** + **idempotency**. Service map, data model, Redis resources, and sequence diagrams: [ARCHITECTURE.md](./ARCHITECTURE.md). Default UI: [UI.md](./UI.md) (Metronic 9.5.0 HTML). CNPJ seller + developer apps: [HowToCreateCnpjMarketplaceAccounts.md](./HowToCreateCnpjMarketplaceAccounts.md). Depth on login roles, sales sync, outbound NF-e, and Correios labels: [USER_STORIES.md](./USER_STORIES.md). First tenant: [FirstCompany.md](./FirstCompany.md).
+Referenced architecture: [MarketPlaceEngine.MD](./MarketPlaceEngine.MD) — **Opção A (in-house)** + **idempotency**. Service map, data model, Redis resources, and sequence diagrams: [ARCHITECTURE.md](./ARCHITECTURE.md). Nginx gateway slugs: [ARCHITECTURE.md](./ARCHITECTURE.md). AWS free-plan host (MFA required to launch): [AWS.md](./AWS.md). Default UI: [UI.md](./UI.md) (Metronic 9.5.0 HTML). CNPJ seller + developer apps: [HowToCreateCnpjMarketplaceAccounts.md](./HowToCreateCnpjMarketplaceAccounts.md). Depth on login roles, sales sync, outbound NF-e, and Correios labels: [USER_STORIES.md](./USER_STORIES.md). First tenant: [FirstCompany.md](./FirstCompany.md).
 
 ---
 
@@ -417,6 +417,10 @@ deploy/
   stubs/Dockerfile
   stubs/echo.conf
   gateway-smoke.sh
+  aws/cloudformation.yml
+  aws/generate-cfn.py
+  aws/install.sh
+  aws/docker-compose.aws.yml
   api.Dockerfile
   worker.Dockerfile
   nfe.Dockerfile

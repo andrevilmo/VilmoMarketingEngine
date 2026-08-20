@@ -1,6 +1,6 @@
 # Architecture — services, resources, sequences
 
-Planning diagrams for the in-house engine. No containers are running yet; this is the target Compose topology. Contract: [MarketPlaceEngine.MD](./MarketPlaceEngine.MD). Plan: [PLAN.md](./PLAN.md). Stories: [USER_STORIES.md](./USER_STORIES.md).
+Planning diagrams for the in-house engine. Nginx gateway Compose: [deploy/docker-compose.yml](../deploy/docker-compose.yml). AWS free-plan host (launch after MFA): [AWS.md](./AWS.md). Contract: [MarketPlaceEngine.MD](./MarketPlaceEngine.MD). Plan: [PLAN.md](./PLAN.md). Stories: [USER_STORIES.md](./USER_STORIES.md).
 
 Rendered diagrams (Mermaid sources live next to each PNG under [`architecture/`](./architecture/)):
 
