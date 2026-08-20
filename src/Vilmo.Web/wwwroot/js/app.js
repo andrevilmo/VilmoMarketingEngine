@@ -97,11 +97,52 @@ const Vilmo = (() => {
     store.me = await api("/me");
     if (!store.companyId && store.me.memberships?.[0]) store.companyId = store.me.memberships[0].companyId;
     renderChrome();
-    window.addEventListener("hashchange", renderRoute);
+    bindMenuToggle();
+    window.addEventListener("hashchange", () => {
+      closeMobileMenu();
+      renderRoute();
+    });
     if (!location.hash) {
       location.hash = store.me.level === "Admin" ? "#/empresas" : (store.me.level === "Vendor" ? "#/vendas" : "#/dashboard");
     } else renderRoute();
     document.getElementById("logout").onclick = () => { store.token = null; location.href = "login.html"; };
+  }
+
+  function setMobileMenu(open) {
+    const sidebar = document.getElementById("sidebar");
+    const toggle = document.getElementById("menu-toggle");
+    const backdrop = document.getElementById("sidebar-backdrop");
+    if (!sidebar || !toggle || !backdrop) return;
+    sidebar.classList.toggle("mobile-open", open);
+    backdrop.classList.toggle("on", open);
+    toggle.setAttribute("aria-expanded", open ? "true" : "false");
+    toggle.setAttribute("aria-label", open ? "Fechar menu" : "Abrir menu");
+    document.body.classList.toggle("sidebar-open", open);
+  }
+
+  function closeMobileMenu() { setMobileMenu(false); }
+
+  function bindMenuToggle() {
+    const sidebar = document.getElementById("sidebar");
+    const toggle = document.getElementById("menu-toggle");
+    const backdrop = document.getElementById("sidebar-backdrop");
+    const closeBtn = document.getElementById("menu-close");
+    if (!sidebar || !toggle || !backdrop || toggle.dataset.bound) return;
+    toggle.dataset.bound = "1";
+    const onToggle = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setMobileMenu(!sidebar.classList.contains("mobile-open"));
+    };
+    toggle.addEventListener("click", onToggle);
+    if (closeBtn) closeBtn.addEventListener("click", (e) => { e.preventDefault(); closeMobileMenu(); });
+    backdrop.addEventListener("click", closeMobileMenu);
+    sidebar.addEventListener("click", (e) => {
+      if (e.target.closest("a.menu-link")) closeMobileMenu();
+    });
+    window.addEventListener("resize", () => {
+      if (window.matchMedia("(min-width: 1024px)").matches) closeMobileMenu();
+    });
   }
 
   function renderChrome() {

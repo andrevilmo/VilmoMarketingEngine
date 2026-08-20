@@ -3,7 +3,7 @@
 <head>
   <base href="/web/">
   <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
   <title>Vilmo</title>
   <link rel="shortcut icon" href="assets/media/app/favicon.ico"/>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
@@ -12,25 +12,27 @@
   <link href="css/vilmo.css" rel="stylesheet"/>
 </head>
 <body class="antialiased flex h-full text-base text-foreground bg-background">
-  <div class="flex grow">
-    <aside id="sidebar" class="kt-sidebar bg-background border-e border-e-border hidden lg:flex flex-col w-[260px] shrink-0">
+  <div class="flex grow min-h-0">
+    <div id="sidebar-backdrop" class="sidebar-backdrop"></div>
+    <aside id="sidebar" class="kt-sidebar bg-background border-e border-e-border flex flex-col w-[260px] shrink-0" aria-label="Menu">
       <div class="px-6 py-5 flex items-center gap-2">
         <div class="size-8 rounded-md bg-primary text-white flex items-center justify-center font-bold">V</div>
-        <div>
+        <div class="min-w-0 grow">
           <div class="font-semibold">Vilmo</div>
           <div class="text-xs text-muted-foreground">Marketing Engine</div>
         </div>
+        <button id="menu-close" class="menu-close kt-btn kt-btn-ghost kt-btn-icon" type="button" aria-label="Fechar menu">✕</button>
       </div>
       <nav id="menu" class="flex flex-col gap-0.5 px-3 pb-6 overflow-auto"></nav>
     </aside>
     <div class="flex flex-col grow min-w-0">
-      <header class="flex items-center justify-between gap-3 px-4 lg:px-8 py-3 border-b border-border bg-background">
-        <button id="menu-toggle" class="lg:hidden kt-btn kt-btn-ghost kt-btn-icon" type="button">☰</button>
-        <div class="flex items-center gap-3 ms-auto">
-          <select id="company-switcher" class="kt-select kt-select-sm min-w-[240px] hidden"></select>
-          <span id="role-badge" class="kt-badge kt-badge-primary">—</span>
-          <span id="user-name" class="text-sm font-medium"></span>
-          <button id="logout" class="kt-btn kt-btn-sm kt-btn-outline" type="button">Sair</button>
+      <header class="vilmo-header flex items-center gap-2 px-3 lg:px-8 py-3 border-b border-border bg-background">
+        <button id="menu-toggle" class="menu-toggle kt-btn kt-btn-ghost kt-btn-icon" type="button" aria-controls="sidebar" aria-expanded="false" aria-label="Abrir menu">☰</button>
+        <div class="flex items-center gap-2 ms-auto min-w-0">
+          <select id="company-switcher" class="kt-select kt-select-sm company-switcher hidden"></select>
+          <span id="role-badge" class="kt-badge kt-badge-primary shrink-0">—</span>
+          <span id="user-name" class="user-name text-sm font-medium"></span>
+          <button id="logout" class="kt-btn kt-btn-sm kt-btn-outline shrink-0" type="button">Sair</button>
         </div>
       </header>
       <main id="view" class="grow p-4 lg:p-8 overflow-auto"></main>
