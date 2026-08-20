@@ -1,6 +1,7 @@
 flowchart TB
   subgraph clients ["Clients"]
     browser["Browser Admin / Empresa / Vendedor"]
+    mobile["Vilmo NF-e iOS Android MAUI"]
     mpHook["Marketplace webhooks"]
     oauthUser["Seller OAuth browser"]
   end
@@ -33,6 +34,7 @@ flowchart TB
   end
 
   browser --> web
+  mobile -->|"TLS pin plus AES-GCM envelope"| api
   web --> api
   mpHook -->|"POST /webhooks/code ACK 200"| api
   oauthUser -->|"GET /oauth/code/callback"| api

@@ -201,7 +201,7 @@ Webhooks never persist marketplace JSON as the source of truth. `FetchOrder` + s
 
 Unique import: `(company_id, marketplace_code, remote_order_id)`. Re-delivery updates attributes and `remote_status`; canonical status follows `marketplace_sale_status_map` **and** the state machine (marketplace “invoice pending” ≠ our NF-e done).
 
-When status becomes **`Paid`**, company **on-hand decreases by sale qty** (`InventoryMovement` `SalePaid`, unique per sale+sku). Outbound NF-e does not subtract again. Stock screens and ingest (CNPJ + chave, **webcam barcode/QR** on Ingerir NF-e) are **Admin and Company only**; vendors never see `inventory`. Depth: [USER_STORIES.md](./USER_STORIES.md) US-13, US-14.
+When status becomes **`Paid`**, company **on-hand decreases by sale qty** (`InventoryMovement` `SalePaid`, unique per sale+sku). Outbound NF-e does not subtract again. Stock screens and ingest (CNPJ + chave, **webcam barcode/QR** on Ingerir NF-e, **US-16 encrypted mobile app**) are **Admin and Company only**; vendors never see `inventory`. Depth: [USER_STORIES.md](./USER_STORIES.md) US-13, US-14, US-16.
 
 `SaleStatus`: `PendingPayment` → `Paid` → `Invoicing` → `PreparingForDispatch` → `LabelPrinted` → `Shipped` → `Delivered` (+ `InvoiceRejected`, `Cancelled`, `Returning`, `Returned`).
 

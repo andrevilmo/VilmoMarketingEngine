@@ -11,7 +11,7 @@ Referenced architecture: [MarketPlaceEngine.MD](./MarketPlaceEngine.MD) — **Op
 A .NET API, run entirely from Docker Compose, that:
 
 1. Serves **N companies**. Every business record belongs to a `CompanyId`. Users belong to companies. Users with profile **`Vendor`** sell through **per-marketplace subaccounts**. One platform super user sees all.
-2. Owns a **per-company** product inventory derived from Brazilian **NF-e** (ingest by **CNPJ + chave de acesso** on a UI for **Admin and Company only**). The Ingerir NF-e screen can **open the webcam** to read the DANFE **barcode or QR** into the 44-digit chave. **Estoque** shows actual on-hand and **preço de venda**. Vendors do not see stock. When a sale becomes **Paid**, company on-hand **decreases by sale qty** (US-13, US-14).
+2. Owns a **per-company** product inventory derived from Brazilian **NF-e** (ingest by **CNPJ + chave de acesso** on a UI for **Admin and Company only**). The Ingerir NF-e **web** screen can **open the webcam**; a **separate iOS/Android app** (US-16) scans barcode/QR, caches CNPJs (last filled default), and POSTs an **encrypted** envelope into the same ingest. **Estoque** shows actual on-hand and **preço de venda**. Vendors do not see stock. When a sale becomes **Paid**, company on-hand **decreases by sale qty** (US-13, US-14).
 3. Talks to SEFAZ through [ZeusAutomacao/DFe.NET](https://github.com/ZeusAutomacao/DFe.NET). **Each company has its own A1 certificate** (CNPJ-bound). XML upload remains a fallback.
 4. Each vendor publishes advertisements to **Mercado Livre**, **Shopee**, **SHEIN**, and **Magalu** using **their** subaccount on each channel (default: all marketplaces).
 5. Accepts a fifth marketplace **without a rebuild**: insert a `marketplace` row + bindings + parameter definitions (admin UI). **Each company edits that channel’s connection fields** on Marketplaces da empresa (US-15). Existing vendors get a `user_detail_marketplace` when the company enables that code.
@@ -37,6 +37,7 @@ KISS: four HTTP clients plus one fiscal SOAP client do not justify eight deploya
 | `vilmo-web` | Metronic HTML UI. Proxies `/api` to `vilmo-api`. |
 | `vilmo-worker` | Slow marketplace I/O, retries, stock fan-out. |
 | `vilmo-nfe` | DFe.NET: DistDFe ingest **and** `NFeAutorizacao` emit, **per-company** A1, SEFAZ rate limits. Isolated so a SEFAZ outage does not take the API down. |
+| **Vilmo NF-e mobile** | **Client**, not a Compose service. .NET MAUI iOS + Android (US-16). Talks to `vilmo-api` only. |
 | `postgres` | Source of truth. |
 | `redis` | Idempotency keys, marketplace-config cache, **vendor-subaccount cache**, **Redis Streams**. |
 
@@ -407,6 +408,7 @@ src/
   Vilmo.Nfe.Zeus/                 # ISefazDocumentFetcher → DFe.NET
   Vilmo.Api/                      # ASP.NET Core
   Vilmo.Web/                      # Metronic HTML (layout-1 + demo1 page slice)
+  Vilmo.Nfe.Mobile/               # MAUI iOS + Android NF-e scanner (US-16); not Docker
   Vilmo.Worker/                   # marketplace + inventory consumers
   Vilmo.Nfe.Worker/               # SEFAZ ingest + outbound NFeAutorizacao / XML parse / movements
 tests/
@@ -482,6 +484,8 @@ Auth: bearer session/JWT with `user_id`, `is_platform_super_user`, and membershi
 | `GET` | `/inventory` | Admin/Company: on-hand + sale price (US-13). Vendor `404`. |
 | `PUT` | `/products/{sku}/sale-price` | Admin/Company. Vendor `404`. |
 | `POST` | `/nfe/chaves/{chaveAcesso}/ingest` | Validate chave, enqueue DistDFe with **this company's** A1. Body CNPJ must match company (US-14). Vendor `404`. |
+| `GET` | `/nfe/mobile/session` | Admin/Company: ephemeral RSA-OAEP public key for US-16. |
+| `POST` | `/nfe/mobile/ingest` | Encrypted AES-GCM envelope → unwrap → same as US-14 ingest. Pin TLS on the app. Vendor `404`. |
 | `POST` | `/nfe/xml` | Upload XML fallback. Chave from XML must match; emit/dest CNPJ must be compatible with the company CNPJ. |
 | `GET` | `/nfe/chaves/{chaveAcesso}` | Ingestion status for **this company only**. |
 | `POST` | `/sales/{saleId}/commit-stock` | Admin/Company: retry `SalePaid` after restock (`stock_short`). |
@@ -556,7 +560,7 @@ vilmo-nfe
 
 **Paid marketplace sale (US-13):** when canonical status becomes `Paid`, insert `InventoryMovement` kind `SalePaid` unique `(company_id, sale_id, sku)` and **on_hand -= qty**. Do not go negative (`stock_short` instead of Paid). Retry must not subtract twice. Outbound NF-e (US-06) does **not** subtract again. Cancelled/Returned after `SalePaid` posts `SalePaidReversal` (+qty).
 
-Inbound NF-e (US-14 UI: **CNPJ + chave**, Admin/Company only) **increases** on-hand for purchase CFOP. The chave may be **typed** or **scanned** (webcam barcode/QR on the DANFE); only the 44 digits are POSTed. Classification is a `CfopMovementPolicy` with explicit enums, not `if (cfop.StartsWith("5"))` scattered in parsers. The ingest screen is hidden from vendors.
+Inbound NF-e (US-14 UI: **CNPJ + chave**, Admin/Company only) **increases** on-hand for purchase CFOP. The chave may be **typed** or **scanned** (web webcam or **US-16 mobile app**). The mobile app POSTs an **encrypted** envelope (`POST /nfe/mobile/ingest`); after unwrap, the same DistDFe path runs. Only the 44 digits + CNPJ leave the device. Classification is a `CfopMovementPolicy` with explicit enums, not `if (cfop.StartsWith("5"))` scattered in parsers. The ingest screen and the mobile app are hidden from vendors.
 
 ---
 
@@ -585,6 +589,7 @@ Inbound NF-e (US-14 UI: **CNPJ + chave**, Admin/Company only) **increases** on-h
 | Marketplace config cache | Redis | `marketplace-config:{companyId}:{marketplaceCode}` | until write (optional 24h TTL) |
 | Marketplace definition cache | Redis | `marketplace-definition:{code}` | until super-user update |
 | Vendor subaccount cache | Redis | `vendor-marketplace:{companyId}:{userId}:{marketplaceCode}` | until write (optional 24h TTL) |
+| Mobile ingest wrap key | Redis | `nfe-mobile-session:{kid}` (private wrap key, TTL = session) | minutes |
 
 Two companies may reuse the same client `Idempotency-Key`. That is correct. A global Redis key without `companyId` is a bug.
 
@@ -604,6 +609,7 @@ Shopee/SHEIN HMAC failures are not retried blindly; they are `Failed` with a dis
 - HMAC signing goes through `HmacSha256AuthProtocol` (used by Shopee and SHEIN seed data). Partner keys stay in parameter rows.
 - SHEIN `secretKey` is a vendor/company parameter (`is_secret`), treated like a long-lived token until re-auth.
 - A1 password for CNPJ `68431371000161` lives only in gitignored `.env` / `.secrets/` (see [FirstCompany.md](./FirstCompany.md)). Never in git.
+- Mobile ingest (US-16): session wrap **private** keys only on `vilmo-api` / Redis TTL. Never in the MAUI binary. Pin the API TLS cert in the app. CNPJ history is device Keystore/Keychain only.
 - AWS Console (to publish this project later): root email `admin@vilmomkt.com`. Password is **not** in git (gitignored `.secrets/`). MFA is required; when AWS login is needed, **stop and ask the operator to enter the MFA code**. Do not attempt MFA bypass.
 
 ---
@@ -616,7 +622,7 @@ Do not build four C# marketplace projects. Build the **generic engine** first, t
 2. **Identity + tenancy** — `Company`, `User`, `UserCompany`, JWT/`X-Company-Id`, seed `admin@vilmomkt.com` + company CNPJ `68431371000161`. Login US-01, home by level US-02. Admin creates companies (US-03, readiness flags), company users (US-09, `user_company_marketplace`), vendors on **selected** marketplaces (US-10, `PendingConnect` until OAuth). Company users create vendors for their CNPJ (US-11). Vendor sees only own sales (US-12). Row filters by `company_id`.
 3. **Metronic UI shell** — `vilmo-web` from HTML starter layout-1 + demo1 sign-in and members datatable, proxied to the API. Company switcher for super user. Role-based sidebar. **Marketplaces da empresa (US-15):** one form per `code` with connection fields from `marketplace_parameter_definition` (ClientId, PartnerKey, …). Admin/Company only. Same fields on US-03 wizard step 3. See [UI.md](./UI.md).
 4. **Catalog + inventory domain** — Product (`sale_price`), identifiers, movements (`NfeInbound` / `SalePaid`), balances, uniqueness all include `company_id`. Vendor has no stock book.
-5. **NF-e ingest + Estoque UI** — HTML: CNPJ (admin select / company locked) + chave 44 (**webcam** barcode/QR or type) → DistDFe; stock table with **preço de venda**. Admin/Company only. Paid sale decrements on-hand (US-13, US-14). Camera uses `getUserMedia` in the browser; do not upload video.
+5. **NF-e ingest + Estoque UI** — HTML: CNPJ (admin select / company locked) + chave 44 (**webcam** barcode/QR or type) → DistDFe; stock table with **preço de venda**. Admin/Company only. Paid sale decrements on-hand (US-13, US-14). Camera uses `getUserMedia` in the browser; do not upload video. **US-16:** separate MAUI iOS/Android app scans DANFE, encrypted CNPJ cache (default last filled), `POST /nfe/mobile/ingest` (AES-GCM envelope) into the same pipeline.
 6. **Marketplace engine** — `IAuthProtocol` pack (`OAuth2AuthorizationCode`, `HmacSha256`, `BearerToken`, `ApiKeyHeader`), generic HTTP executor, JSON mappings, definition cache. Commands carry `CompanyId`, `VendorUserId`, and string `marketplace_code`. Advertisement publish: `marketplaceCodes` default all.
 7. **Seed four channels** — SQL/JSON fixtures for Mercado Livre, Magalu, Shopee, SHEIN (SHEIN may be `is_active = false` until Open Platform docs). Include `marketplace_sale_field_definition` and `marketplace_sale_status_map`. No per-brand class.
 8. **Sales sync** — `sales` + `sale_items` + `sale_marketplace_attributes`. Webhook → FetchOrder → upsert. Canonical `SaleStatus`. List/detail UI scoped by role.
@@ -631,7 +637,7 @@ Each step stays shippable. Step 5 already gives "company user reads chave / XML 
 
 ## 12. Testing strategy
 
-- Unit: `ChaveAcesso` DV, extract chave from QR/`chNFe`/`p=` fixtures, CFOP policy, idempotency state machine (`companyId` in the Redis key), translators, authorization (admin vs company vs vendor), `SaleStatus` map, CEP 8 digits, label page size.
+- Unit: `ChaveAcesso` DV, extract chave from QR/`chNFe`/`p=` fixtures, AES-GCM mobile envelope round-trip, CFOP policy, idempotency state machine (`companyId` in the Redis key), translators, authorization (admin vs company vs vendor), `SaleStatus` map, CEP 8 digits, label page size.
 - Contract: generic executor against recorded HTTP fixtures keyed by `marketplace_code` (no live ML/Shopee in CI). Sale normalizer fixtures → `sales` + EAV rows.
 - Integration: Testcontainers for Postgres + Redis; two companies; ingest a sample `procNFe` XML into A and assert B's inventory is empty; ingest the same chave twice does not double qty; Paid twice does not double-decrement; vendor JWT `GET /inventory` is `404`; company A cannot `PUT` sale-price on company B SKU; same `Idempotency-Key` on A and B both succeed; company A Shopee `PartnerId` does not leak into company B; **GET company marketplace params never returns full secrets**; **PUT** connection fields without a secret key keeps the previous secret; config read hits Redis on the second call; `PUT` config deletes the cache key; vendor cannot `PUT /companies/{id}/marketplaces/{code}` (`404`); creating a vendor twice with the same key does not duplicate `user_detail_marketplace`; publish with omitted `marketplaceCodes` fans out to all vendor subaccounts; **inserting a fifth `marketplace` row** (no code change) lets a company enable it, **shows the new connection fields**, and provision vendor subaccounts; vendor A `GET /sales` does not include vendor B; stub `INfeAuthorizer` emit moves `Paid` → `PreparingForDispatch` **without** a second stock decrement; second emit `409`; label PDF 100×150 contains sender CNPJ and recipient CEP.
 - SEFAZ: optional manual homologation with CNPJ `68431371000161`'s A1; never call production SEFAZ from CI; never check a real `.pfx` into the repo.
@@ -652,6 +658,7 @@ Each step stays shippable. Step 5 already gives "company user reads chave / XML 
 - Marketplace logistics PDFs may not be 10×15; if so, still send that official label to the printer (carrier scanning) and keep our layout for `SellerCorreios`.
 - Incomplete recipient address (CEP ≠ 8 digits) must block emit and label, not SEFAZ round-trips.
 - Webcam ingest needs **HTTPS** (`getUserMedia`). Denied permission must not block typed chave. `BarcodeDetector` is missing on some browsers — ship a ZXing fallback in `vilmo-web`. Do not upload camera frames.
+- Mobile ingest (US-16): pin TLS; never ship the unwrap private key in the app; CNPJ history is device-only (encrypted). App Store / Play camera permission strings are required. Jailbroken/rooted devices are out of scope for extra attestation in v1.
 
 ---
 
@@ -679,7 +686,7 @@ Docker Compose up → open `vilmo-web` Metronic sign-in (`demo1` branded):
 3. Admin **creates a company user** on selected channels (US-09) and/or a **vendor** on selected marketplaces (US-10, `PendingConnect` → OAuth `Linked`).
 4. That **company user** logs in, **creates more vendors** for the same CNPJ, and sees **all their sales** (US-11).
 5. **Vendor** logs in and sees **only** his sales and status (US-12). Vendor cannot open company connection fields.
-6. Ingest NF-e (**CNPJ + chave**, typed or **scanned from DANFE barcode/QR**) using that company's A1 → inventory **only** for that company. Open **Estoque**, set **preço de venda**.
+6. Ingest NF-e (**CNPJ + chave**, typed, **web webcam**, or **US-16 mobile scan + encrypted POST**) using that company's A1 → inventory **only** for that company. Open **Estoque**, set **preço de venda**. Mobile default CNPJ is the last filled on that device.
 7. Vendor publishes an advertisement on **linked** channels.
 8. Webhook/import creates a **common sale** + EAV attributes; when status becomes **Pago**, company stock **decreases by qty** (US-13).
 9. On that sale, **Emitir nota fiscal eletrônica** → DFe.NET authorizes → status **Preparando para envio**. **No second stock decrement.** Retry of the same key does not emit twice.

@@ -14,6 +14,7 @@ Rendered diagrams (Mermaid sources live next to each PNG under [`architecture/`]
 | [arch_04_seq_create_vendor.png](./architecture/arch_04_seq_create_vendor.png) | Admin creates vendor on existing company (US-10) |
 | [arch_02_seq_webhook_sale.png](./architecture/arch_02_seq_webhook_sale.png) | Webhook to canonical sale (US-04, US-05) |
 | [arch_06_seq_nfe_ingest.png](./architecture/arch_06_seq_nfe_ingest.png) | Inbound NF-e to inventory |
+| [arch_11_seq_mobile_nfe.png](./architecture/arch_11_seq_mobile_nfe.png) | Mobile encrypted ingest (US-16) |
 | [arch_03_seq_nfe.png](./architecture/arch_03_seq_nfe.png) | Emit NF-e then label (US-06, US-07) |
 | [arch_07_seq_publish.png](./architecture/arch_07_seq_publish.png) | Publish advertisement |
 
@@ -29,6 +30,7 @@ KISS: split only where failure domains differ. There is **no** container per mar
 flowchart TB
   subgraph clients ["Clients"]
     browser["Browser Admin / Empresa / Vendedor"]
+    mobile["Vilmo NF-e iOS Android MAUI"]
     mpHook["Marketplace webhooks"]
     oauthUser["Seller OAuth browser"]
   end
@@ -61,6 +63,7 @@ flowchart TB
   end
 
   browser --> web
+  mobile -->|"TLS pin plus AES-GCM envelope"| api
   web --> api
   mpHook -->|"POST /webhooks/code ACK 200"| api
   oauthUser -->|"GET /oauth/code/callback"| api
@@ -85,6 +88,7 @@ flowchart TB
 | Service | Port | Responsibility | Must not |
 | --- | --- | --- | --- |
 | `vilmo-web` | 8081 | Metronic HTML. Proxies `/api` to `vilmo-api`. | Store marketplace secrets in the browser |
+| **Vilmo NF-e app** | — | MAUI iOS/Android scanner (US-16). Encrypted ingest. | Unwrap private keys; Vendor ingest |
 | `vilmo-api` | 8080 | Auth, CRUD, OAuth callback, webhook **ACK only** | Call marketplace GET inside the webhook thread (ML 500 ms) |
 | `vilmo-worker` | — | FetchOrder, publish listing/stock, UploadInvoice, FetchShipmentLabel, token refresh | Own fiscal SOAP |
 | `vilmo-nfe` | — | DistDFe ingest, `NFeAutorizacao` emit, XML parse, CFOP movements | Use another company's A1 |
@@ -108,6 +112,7 @@ flowchart TB
 | Stream `nfe.emit.requested` | Outbound NF-e |
 | Stream `stock.publish.requested` | Fan-out stock |
 | Stream `marketplace.upload_invoice` | After authorized XML |
+| Redis `nfe-mobile-session:{kid}` | US-16 wrap private key, short TTL |
 
 ### Postgres (main tables)
 
@@ -297,7 +302,39 @@ sequenceDiagram
   Nfe->>Pg: inbound CFOP InventoryMovement NfeInbound on_hand plus qCom
 ```
 
-XML upload skips DistDFe when there is no A1. Company user sees **this CNPJ only**. Same chave twice does not increase saldo again. Chave may be typed or **scanned from the DANFE** (webcam) before the POST.
+XML upload skips DistDFe when there is no A1. Company user sees **this CNPJ only**. Same chave twice does not increase saldo again. Chave may be typed, **scanned on the web**, or sent from the **US-16 mobile app** (encrypted envelope, then this same POST).
+
+---
+
+## 6c. Sequence — mobile encrypted ingest (US-16)
+
+![Mobile NF-e ingest](./architecture/arch_11_seq_mobile_nfe.png)
+
+```mermaid
+sequenceDiagram
+  participant App as Vilmo NF-e MAUI
+  participant Cam as Phone camera
+  participant Api as vilmo-api
+  participant Redis
+  participant Nfe as vilmo-nfe
+  participant Sefaz as SEFAZ
+  participant Pg as postgres
+
+  App->>App: default CNPJ last filled from encrypted cache
+  App->>Cam: scan DANFE barcode or QR
+  Cam-->>App: 44 digit chave
+  App->>Api: GET /nfe/mobile/session JWT
+  Api-->>App: kid plus RSA public key
+  App->>Api: POST /nfe/mobile/ingest AES-GCM envelope
+  Api->>Api: unwrap then US-14
+  Api->>Redis: SET NX idempotency companyId chave
+  Api->>Pg: INSERT nfe_documents
+  Api->>Redis: XADD nfe.ingest.requested
+  Nfe->>Sefaz: DistDFe consChNFe
+  Nfe->>Pg: NfeInbound on_hand plus qCom
+```
+
+CNPJ history never leaves the phone. Vendor `404`. TLS pin on the app.
 
 ---
 

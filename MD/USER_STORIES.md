@@ -1,6 +1,6 @@
 # User stories — login, roles, provisioning, sales, NF-e, labels
 
-This document is the **depth plan** for identity, company/vendor provisioning, **per-company marketplace connection fields**, **company stock + sale price**, inbound NF-e ingest, sales, outbound invoice, and shipping labels. It extends [PLAN.md](./PLAN.md) and [MarketPlaceEngine.MD](./MarketPlaceEngine.MD). No application code in this revision.
+This document is the **depth plan** for identity, company/vendor provisioning, **per-company marketplace connection fields**, **company stock + sale price**, inbound NF-e ingest (**web + separate iOS/Android scanner**), sales, outbound invoice, and shipping labels. It extends [PLAN.md](./PLAN.md) and [MarketPlaceEngine.MD](./MarketPlaceEngine.MD). No application code in this revision.
 
 UI copy in Portuguese; API codes in English.
 
@@ -12,7 +12,7 @@ UI copy in Portuguese; API codes in English.
 
 `Operator` / `Viewer` are staff profiles (warehouse / read-only), not a fourth login persona.
 
-Index: [US-01](#us-01--login-as-a-user) login · [US-02](#us-02--show-information-at-my-user-level) home by level · [US-03](#us-03--admin-creates-a-company-ready-to-operate) admin creates company · [US-15](#us-15--edit-each-marketplace-connection-on-the-company) edit marketplace connections · [US-08](#us-08--admin-creates-users) admin creates users · [US-09](#us-09--admin-creates-a-company-user-with-marketplace-access) admin creates company user · [US-10](#us-10--admin-creates-a-vendor-user-and-related-marketplace-users) admin creates vendor · [US-11](#us-11--company-user-creates-vendors-and-checks-their-sales) company creates vendors · [US-12](#us-12--vendor-checks-own-sales-and-status) vendor sales · [US-13](#us-13--admin-and-company-see-stock-and-set-sale-price) stock + sale price · [US-14](#us-14--ingest-nf-e-by-cnpj-and-chave-to-increase-stock) NF-e ingest to stock · [US-04](#us-04--sales-stay-in-sync-common-table--per-marketplace-attributes)–[US-07](#us-07--after-preparando-para-envio-print-correios-format-shipping-label) sales / NF-e / label. Paid sales **decrease company stock** (US-13).
+Index: [US-01](#us-01--login-as-a-user) login · [US-02](#us-02--show-information-at-my-user-level) home by level · [US-03](#us-03--admin-creates-a-company-ready-to-operate) admin creates company · [US-15](#us-15--edit-each-marketplace-connection-on-the-company) edit marketplace connections · [US-08](#us-08--admin-creates-users) admin creates users · [US-09](#us-09--admin-creates-a-company-user-with-marketplace-access) admin creates company user · [US-10](#us-10--admin-creates-a-vendor-user-and-related-marketplace-users) admin creates vendor · [US-11](#us-11--company-user-creates-vendors-and-checks-their-sales) company creates vendors · [US-12](#us-12--vendor-checks-own-sales-and-status) vendor sales · [US-13](#us-13--admin-and-company-see-stock-and-set-sale-price) stock + sale price · [US-14](#us-14--ingest-nf-e-by-cnpj-and-chave-to-increase-stock) NF-e ingest to stock · [US-16](#us-16--iosandroid-app-scan-nfe-and-encrypted-ingest) iOS/Android NF-e scanner · [US-04](#us-04--sales-stay-in-sync-common-table--per-marketplace-attributes)–[US-07](#us-07--after-preparando-para-envio-print-correios-format-shipping-label) sales / NF-e / label. Paid sales **decrease company stock** (US-13).
 
 **Screens:** [WIREFRAMES.md](./WIREFRAMES.md). **First company seed:** [FirstCompany.md](./FirstCompany.md).
 
@@ -81,7 +81,7 @@ Metronic `demo1/authentication/branded/sign-in.html`. After success, store token
 | Marketplaces catalog | Yes (`POST /marketplaces`) | No | No |
 | Company marketplace apps | Yes — **edit connection fields** (US-15) | Yes — **this CNPJ only** (US-15) | Own shop links only. **Cannot** edit company ClientId / PartnerKey |
 | Products / **stock** / sale price | Selected company | **This CNPJ only** | **Hidden** |
-| Ingest NF-e (CNPJ + chave + **câmera**) | Yes | Yes (own CNPJ locked) | **Hidden** |
+| Ingest NF-e (CNPJ + chave + **câmera** / **app**) | Yes | Yes (own CNPJ locked) | **Hidden** |
 | Advertisements | Selected company | This CNPJ | Own ads only |
 | Sales | Selected company, or admin search-all | **All vendors** of this CNPJ | **Own** sales only |
 | Sale status, NF-e, label | Same scope | All of this CNPJ | Own sales |
@@ -415,7 +415,7 @@ Route: `POST /vendors` (company implied) or `POST /companies/{myId}/vendors`.
 - Buttons: **Emitir NF-e** / **Imprimir etiqueta** on **own** sales only, same guards as US-06/US-07 (company A1 still signs).
 - **My marketplaces**: list `user_detail_marketplace` with `link_status` (no secrets). Can click Connect if `PendingConnect`.
 - Cannot: create users, create companies, list other vendors, change company A1 or **company marketplace connection fields** (US-15).
-- **Cannot** open **Estoque**, set **preço de venda**, or ingest NF-e (US-13, US-14). Menu hidden; API `404`.
+- **Cannot** open **Estoque**, set **preço de venda**, ingest NF-e (US-13, US-14), or use the **Vilmo NF-e** mobile ingest (US-16). Menu hidden; API `404`.
 
 ### UI
 
@@ -593,6 +593,8 @@ Do **not** follow the QR URL in the browser (no consulta SEFAZ portal). DistDFe 
 
 Layout-1 form: CNPJ (select or locked) + chave 44 + **Ler código (câmera)** + Ingerir + Dropzone XML. Status list of recent chaves for **this company only**. Camera overlay: live `<video>` + viewfinder.
 
+Native warehouse scanning (iOS/Android, encrypted POST) is [US-16](#us-16--iosandroid-app-scan-nfe-and-encrypted-ingest). The web camera path stays.
+
 ---
 
 ## US-15 — Edit each marketplace connection on the company
@@ -682,6 +684,98 @@ Vendor JWT on these routes → `404`.
 ### UI
 
 Metronic `demo1/account/integrations.html` + settings form. Portuguese labels. Sidebar **Marketplaces** for Admin and Company. Admin catalog **Registrar marketplace** is a **separate** screen (`POST /marketplaces`).
+
+---
+
+## US-16 — iOS/Android app: scan NF-e and encrypted ingest
+
+**As** an **admin** or **company** user on the warehouse floor  
+**I want** a **separate mobile app** (iOS and Android) that reads the DANFE **barcode / QR**, lets me **fill and save CNPJs** (history on the device, **last filled is always the default**), and **sends the ingest encrypted** to the same stock pipeline as [US-14](#us-14--ingest-nf-e-by-cnpj-and-chave-to-increase-stock)  
+**So that** I do not type 44 digits at a desk browser, and chave + CNPJ are never stored or sent in plaintext on the phone.
+
+This is **not** Metronic / `vilmo-web`. It is a **native app** shipped to the App Store and Google Play. One codebase: **.NET MAUI** (`Vilmo.Nfe.Mobile`) sharing `ChaveAcesso` from BuildingBlocks. Not a second React Native stack.
+
+**Vendor: cannot use ingest.** Login as vendor → message **sem permissão**; no scanner.
+
+Web Ingerir NF-e (US-14) remains for XML upload and desktop webcam.
+
+### Screens (Portuguese)
+
+1. **Entrar** — same `POST /auth/login` as US-01. Tokens only in iOS Keychain / Android Keystore.
+2. **Ingerir NF-e** (home after login):
+   - **CNPJ** — 14 digits, checksum. Combobox: type a new one **or** pick from **history**.
+   - **Chave** — 44 digits (filled by scan or typed).
+   - **Ler código** — camera: Code 128 + QR, same extract rules as US-14.
+   - **Enviar** — encrypted ingest (below). Result: `+qCom` / ignored / error (same as web).
+
+### CNPJ history (app cache)
+
+All CNPJs the user **fills** on this device are kept **locally**, encrypted at rest. They are **not** a server API and **not** synced across phones.
+
+| Rule | Behavior |
+| --- | --- |
+| Save | On every successful **fill** (typed, pasted, or picked) — not only after a successful DistDFe. Unique by 14 digits. Cap e.g. 50, drop oldest. |
+| Default | **Always the last filled** CNPJ when the screen opens (including after kill/relaunch). |
+| Select later | Dropdown / search of the cached list (formatted `00.000.000/0000-00` + optional fantasia if `/me` knows it). Picking one counts as a new fill (becomes default). |
+| Empty | Prefill from `GET /me` if the user has exactly one membership; still save into history on first edit. |
+| Clear | Settings: **Limpar CNPJs deste aparelho**. Does not change Postgres companies. |
+| Logout | Wipe JWT. **Keep** CNPJ history unless the user cleared it. |
+
+Server still enforces US-14: company user sending another CNPJ → `400 CnpjMismatch`. Admin CNPJ must be a real tenant they may use. History is convenience, not authorization.
+
+### Encryption (mandatory)
+
+Plain JSON `{ cnpj, chave }` over TLS alone is **not** enough for this app. Three layers:
+
+| Layer | What |
+| --- | --- |
+| **TLS** | HTTPS only. **Certificate pinning** to `vilmomkt.com` (and the public API host). No cleartext HTTP. |
+| **Payload envelope** | AES-256-GCM of `{ cnpj, chaveAcesso, idempotencyKey }`. AES key wrapped with an ephemeral **RSA-OAEP-256** (or X25519) session key from the API. |
+| **At rest on device** | CNPJ history + refresh token in Keychain / Android Keystore (`EncryptedSharedPreferences`). Never `UserDefaults` / SharedPreferences plaintext. No photo/video of the DANFE kept after decode. |
+
+#### Encrypted ingest API (unwraps, then US-14)
+
+```
+GET  /nfe/mobile/session     JWT Admin/Company
+     → { kid, alg, publicKeySpki, expiresAt }     // short TTL, e.g. 15 min
+
+POST /nfe/mobile/ingest      JWT + encrypted body
+{
+  "kid": "…",
+  "wrappedKey": "<base64 AES key RSA-OAEP wrapped>",
+  "nonce": "<base64 12 bytes>",
+  "ciphertext": "<base64>",
+  "tag": "<base64 GCM tag>"
+}
+```
+
+`vilmo-api` decrypts → validates chave DV + CNPJ checksum → **same handler as** `POST /nfe/chaves/{chave}/ingest` (DistDFe, `NfeInbound`, `on_hand += qCom`). Idempotency from the inner `idempotencyKey` (`idempotency:{companyId}:{key}`).
+
+Vendor JWT → `404`. Wrong `kid` / expired session → `400 CryptoSessionExpired` (app refreshes session and retries once). Decrypt failure → `400` (do not leak padding details).
+
+Access/application logs must **not** print chave or CNPJ. Structured log: `companyId` + chave last 4 only if needed.
+
+Do **not** put the unwrap private key in the mobile app. Session private key lives only on `vilmo-api` (memory / KMS later). Rotate `kid`.
+
+### Camera
+
+Same payload parser as US-14 (unit tests shared). Native camera (MAUI Community Toolkit / ZXing.Net.MAUI). Rear camera. Stop preview after a valid chave. Permission copy for App Store / Play in Portuguese.
+
+### Acceptance
+
+- iOS and Android builds from one MAUI project.
+- Last filled CNPJ is preselected after relaunch.
+- History survives process death; tokens survive in Keychain/Keystore.
+- Charles/mitm without the pin fails; plaintext `{ chave }` must not appear on the wire after TLS termination at a dummy proxy the pin rejects.
+- Decrypt on server then ingest is identical to US-14 (same unique chave, no double qty).
+- Company A JWT + company B CNPJ in the envelope → `404`/`400`, no stock change.
+- Vendor cannot call `/nfe/mobile/*` (`404`).
+
+### Out of this app
+
+- Full Metronic sales/estoque UI.
+- XML Dropzone (web US-14).
+- Vendor features.
 
 ---
 
@@ -1070,6 +1164,7 @@ v1 does not talk IPP/raw ZPL unless we add it later. The operator prints the PDF
 | Company marketplace apps | yes — **edit fields** (US-15) | yes — **this CNPJ only** | **no** | no |
 | **Estoque + preço de venda** | selected company | **this CNPJ only** | **no** | no |
 | **Ingerir NF-e** (CNPJ + chave) | yes | yes (own CNPJ) | **no** | no |
+| **Mobile NF-e ingest** (US-16) | yes | yes (own CNPJ) | **no** | no |
 | Sales list | selected company / admin search-all | **all vendors** of CNPJ | own `vendor_user_id` | no |
 | Emit NF-e | yes | yes | own sale | no |
 | Print label | yes | yes | own sale | no |
@@ -1102,6 +1197,8 @@ Mutating business calls: JWT + company context + `Idempotency-Key` (not on login
 | `GET` | `/inventory` | Admin/Company | US-13 on-hand + sale price for active company. Vendor `404`. |
 | `PUT` | `/products/{sku}/sale-price` | Admin/Company | Set BRL sale price. Idempotent. |
 | `POST` | `/nfe/chaves/{chaveAcesso}/ingest` | Admin/Company | US-14. CNPJ must match company. Vendor `404`. |
+| `GET` | `/nfe/mobile/session` | Admin/Company | US-16 ephemeral wrap public key. Vendor `404`. |
+| `POST` | `/nfe/mobile/ingest` | Admin/Company | Encrypted envelope → same US-14 ingest. |
 | `POST` | `/nfe/xml` | Admin/Company | XML fallback. |
 | `GET` | `/nfe/chaves/{chaveAcesso}` | Admin/Company | Ingestion status, this company only. |
 | `POST` | `/sales/{id}/commit-stock` | Admin/Company | Retry SalePaid decrement after restock. |
@@ -1135,6 +1232,7 @@ See [UI.md](./UI.md) for file sources. Behavior:
 | Sidebar | US-02 | Admin / Company / Vendor menus |
 | **Estoque** | US-13 | Admin + Company. Vendor hidden. Inline **preço de venda**. |
 | **Ingerir NF-e** | US-14 | CNPJ select (admin) or locked (company) + chave 44 + **webcam barcode/QR** |
+| **Vilmo NF-e app** (iOS/Android) | US-16 | Scan DANFE, CNPJ history (last filled default), **encrypted** POST |
 
 ---
 
@@ -1153,6 +1251,7 @@ See [UI.md](./UI.md) for file sources. Behavior:
 - Label: generated PDF page size 100×150 mm (±1 mm); contains recipient name, CEP, sender CNPJ; reprint same sha256.
 - Idempotency: double-click Emitir NF-e does not send two lotes.
 - Chave from camera (US-14): unit-test extract from raw 44 digits, Code-128 style spaces, QR `chNFe=`, NFC-e `p=chave|…`; reject short/invalid DV. Do not require a real webcam in CI.
+- Mobile ingest (US-16): AES-GCM round-trip fixture decrypts to the same US-14 command; vendor JWT `404`; expired `kid` → `400 CryptoSessionExpired`; CNPJ history default is last filled (unit, in-memory fake store).
 
 ---
 

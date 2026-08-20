@@ -16,6 +16,7 @@ Portuguese labels in the product. Images in [`wireframes/`](./wireframes/).
 | [wf_08_sale_label.png](./wireframes/wf_08_sale_label.png) | **Preparando para envio** → etiqueta 10×15 | US-07 |
 | ASCII in this file | **Estoque** + preço de venda | US-13 |
 | ASCII in this file | **Ingerir NF-e** (CNPJ + chave + **câmera**) | US-14 |
+| ASCII in this file | **Vilmo NF-e** iOS/Android (scan + CNPJ cache) | US-16 |
 | ASCII in this file | **Marketplaces da empresa** — connection fields | US-15 |
 
 ---
@@ -28,6 +29,7 @@ flowchart TD
   login -->|Admin| empresas[Empresas]
   login -->|Company| dashEmp[Dashboard CNPJ]
   login -->|Vendor| minhasVendas[Minhas vendas]
+  login -->|Admin or Company phone| appNfe[App Vilmo NF-e iOS Android]
 
   empresas --> wizard[Nova empresa 4 passos]
   empresas --> users[Usuários]
@@ -45,13 +47,17 @@ flowchart TD
   dashEmp --> vendasEmp[Vendas de todos os vendedores]
   vendasEmp --> detalhe[Detalhe da venda]
 
+  appNfe --> scan[Camera barcode QR]
+  appNfe --> cnpjHist[CNPJ history last filled default]
+  scan --> encPost[Encrypted POST US-14 ingest]
+
   minhasVendas --> detalhe
   detalhe -->|Pago| nfe[Emitir NF-e]
   detalhe -->|Pago| stockDown[Saldo da empresa diminui]
   detalhe -->|Preparando envio| etiqueta[Imprimir etiqueta]
 ```
 
-Vendor has **no** Estoque / Ingerir NF-e / company marketplace-connection nodes. Paid decreases **company** stock, not a vendor warehouse.
+Vendor has **no** Estoque / Ingerir NF-e / company marketplace-connection / **Vilmo NF-e app ingest** nodes. Paid decreases **company** stock, not a vendor warehouse.
 
 ---
 
@@ -243,6 +249,25 @@ Admin and Company only. Vendor: no menu.
 - Permission denied: type the chave. Video is not uploaded.
 - DistDFe with **that** company's A1. Inbound items **increase** saldo.
 - Same chave twice does not add qty again.
+
+### App Vilmo NF-e — iOS / Android (US-16)
+
+Separate from Metronic. Same login (Admin / Empresa). Vendor: blocked.
+
+```
+┌ Vilmo NF-e ─────────────────────────────────────────┐
+│ CNPJ  [ 68.431.371/0001-61 ▾ ]  ← last filled       │
+│       histórico: 68.431…  |  12.345…  | + novo      │
+│ Chave [ 44 dígitos                               ]  │
+│ [Ler código]  câmera barcode / QR                   │
+│ [Enviar criptografado]                              │
+│ OK +12 CAM1                                         │
+└─────────────────────────────────────────────────────┘
+```
+
+- CNPJ history encrypted on the device. Default **always last filled**.
+- Enviar → `POST /nfe/mobile/ingest` (AES-GCM + TLS pin), then DistDFe as US-14.
+- Chave/CNPJ not stored as photos; tokens in Keychain/Keystore.
 
 ### Produtos / Anúncios
 
