@@ -215,12 +215,65 @@ public class ApiTests : IClassFixture<ApiFactory>
         req.Content = new StringContent(xml, Encoding.UTF8, "application/xml");
         var res = await _client.SendAsync(req);
         res.EnsureSuccessStatusCode();
+        using var ingestXml = JsonDocument.Parse(await res.Content.ReadAsStringAsync());
+        var xmlRunId = ingestXml.RootElement.GetProperty("runId").GetGuid();
         var invReq = Authed(HttpMethod.Get, "/inventory", token);
         invReq.Headers.Add("X-Company-Id", companyId.ToString());
         var inv = await _client.SendAsync(invReq);
         var body = await inv.Content.ReadAsStringAsync();
         Assert.Contains("CAMISETA-XML", body);
         Assert.Contains("\"onHand\":2", body.Replace(" ", ""));
+
+        var logsReq = Authed(HttpMethod.Get, $"/nfe/ingest-logs?runId={xmlRunId}", token);
+        logsReq.Headers.Add("X-Company-Id", companyId.ToString());
+        var logsRes = await _client.SendAsync(logsReq);
+        logsRes.EnsureSuccessStatusCode();
+        using var logsDoc = JsonDocument.Parse(await logsRes.Content.ReadAsStringAsync());
+        var items = logsDoc.RootElement.GetProperty("items");
+        Assert.True(items.GetArrayLength() >= 3);
+        var first = items[0];
+        Assert.Equal("stock_applied", first.GetProperty("stepCode").GetString());
+        Assert.Contains("Estoque atualizado", first.GetProperty("userMessage").GetString());
+        Assert.Contains("itemCount", first.GetProperty("technicalJson").GetString());
+        var times = items.EnumerateArray().Select(x => x.GetProperty("createdAt").GetDateTimeOffset()).ToList();
+        Assert.True(times.SequenceEqual(times.OrderByDescending(t => t)));
+    }
+
+    [Fact]
+    public async Task Vendor_cannot_read_ingest_logs()
+    {
+        var token = await LoginAsync("vendedor@vilmomkt.com");
+        var res = await _client.SendAsync(Authed(HttpMethod.Get, "/nfe/ingest-logs", token));
+        Assert.Equal(HttpStatusCode.NotFound, res.StatusCode);
+    }
+
+    [Fact]
+    public async Task Ingest_chave_logs_newest_step_first()
+    {
+        var token = await LoginAsync();
+        var me = await _client.SendAsync(Authed(HttpMethod.Get, "/me", token));
+        using var meDoc = JsonDocument.Parse(await me.Content.ReadAsStringAsync());
+        var companyId = meDoc.RootElement.GetProperty("memberships")[0].GetProperty("companyId").GetGuid();
+        var first43 = "4226086843137100016155500100000000212345678";
+        var chave = first43 + ChaveAcesso.Dv(first43);
+        var req = Authed(HttpMethod.Post, $"/nfe/chaves/{chave}/ingest", token, new { cnpj = "68431371000161" });
+        req.Headers.Add("X-Company-Id", companyId.ToString());
+        var res = await _client.SendAsync(req);
+        res.EnsureSuccessStatusCode();
+        using var ingestDoc = JsonDocument.Parse(await res.Content.ReadAsStringAsync());
+        var runId = ingestDoc.RootElement.GetProperty("runId").GetGuid();
+
+        var logsReq = Authed(HttpMethod.Get, $"/nfe/ingest-logs?runId={runId}", token);
+        logsReq.Headers.Add("X-Company-Id", companyId.ToString());
+        var logsRes = await _client.SendAsync(logsReq);
+        logsRes.EnsureSuccessStatusCode();
+        using var logsDoc = JsonDocument.Parse(await logsRes.Content.ReadAsStringAsync());
+        var items = logsDoc.RootElement.GetProperty("items");
+        Assert.True(items.GetArrayLength() >= 3);
+        Assert.Equal("queued", items[0].GetProperty("stepCode").GetString());
+        Assert.Equal("validated", items[1].GetProperty("stepCode").GetString());
+        Assert.Equal("received", items[2].GetProperty("stepCode").GetString());
+        Assert.DoesNotContain("password", items[0].GetProperty("technicalJson").GetString()!, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

@@ -8,6 +8,7 @@ const Vilmo = (() => {
     set companyId(v) { v ? sessionStorage.setItem("vilmo_company", v) : sessionStorage.removeItem("vilmo_company"); },
     me: null
   };
+  let ingestLogTimer = null;
 
   function uuid() { return crypto.randomUUID(); }
 
@@ -132,7 +133,90 @@ const Vilmo = (() => {
       <tbody>${rows.length ? rows.join("") : `<tr><td colspan="${headers.length}">Nenhum registro.</td></tr>`}</tbody></table></div>`;
   }
 
+  function esc(s) {
+    return String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  function stopIngestLogPoll() {
+    if (ingestLogTimer) {
+      clearInterval(ingestLogTimer);
+      ingestLogTimer = null;
+    }
+  }
+
+  function prettyTech(raw) {
+    if (!raw) return "{}";
+    try { return JSON.stringify(JSON.parse(raw), null, 2); } catch { return String(raw); }
+  }
+
+  function ingestProgressMeta(step, level) {
+    const order = ["received", "xml_received", "validated", "queued", "replayed", "worker_started", "waiting_distdfe", "certificate_missing", "xml_parsed", "stock_applied"];
+    const idx = order.indexOf(step);
+    const pct = idx < 0 ? (level === "error" ? 100 : 15) : Math.round(((idx + 1) / order.length) * 100);
+    const cls = level === "error" ? "error" : (level === "warning" ? "warn" : "");
+    return { pct, cls };
+  }
+
+  function renderIngestLogs(payload) {
+    const items = (payload && payload.items) || [];
+    const progressEl = document.getElementById("ingest-log-progress");
+    const tableEl = document.getElementById("ingest-log-table");
+    if (!progressEl || !tableEl) return;
+    if (!items.length) {
+      progressEl.innerHTML = `<div class="label text-sm text-muted-foreground">Nenhuma ingestão registrada ainda para esta empresa.</div>`;
+      tableEl.innerHTML = `<div class="overflow-auto"><table class="vilmo-table"><thead><tr><th>Quando</th><th>Situação</th><th>Mensagem</th><th>Detalhes técnicos</th></tr></thead>
+        <tbody><tr><td colspan="4">Nenhum registro.</td></tr></tbody></table></div>`;
+      return;
+    }
+    const latest = items[0];
+    const meta = ingestProgressMeta(latest.stepCode, latest.level);
+    progressEl.innerHTML = `<div class="label"><strong>Último passo:</strong> ${esc(latest.userMessage)}</div>
+      <div class="ingest-log-bar ${meta.cls}"><span style="width:${meta.pct}%"></span></div>`;
+    const rows = items.map((l, i) => {
+      const when = l.createdAt ? new Date(l.createdAt).toLocaleString("pt-BR") : "";
+      const tech = prettyTech(l.technicalJson);
+      const latestMark = i === 0 ? `<span class="badge-latest">último passo</span>` : "";
+      return `<tr class="${i === 0 ? "ingest-log-latest" : ""}">
+        <td class="whitespace-nowrap">${esc(when)}</td>
+        <td><span class="ingest-level ${esc(l.level)}">${esc(l.level)}</span><div class="text-xs text-muted-foreground">${esc(l.stepCode)}${latestMark}</div></td>
+        <td>${esc(l.userMessage)}${l.chaveAcesso ? `<div class="text-xs text-muted-foreground">${esc(l.chaveAcesso)}</div>` : ""}</td>
+        <td><details class="ingest-tech"><summary>Ver técnico</summary><pre>${esc(tech)}</pre></details></td>
+      </tr>`;
+    });
+    tableEl.innerHTML = `<div class="overflow-auto"><table class="vilmo-table"><thead><tr><th>Quando</th><th>Situação</th><th>Mensagem</th><th>Detalhes técnicos</th></tr></thead>
+      <tbody>${rows.join("")}</tbody></table></div>`;
+  }
+
+  async function loadIngestLogs(opts = {}) {
+    const tableEl = document.getElementById("ingest-log-table");
+    if (!tableEl) return;
+    const params = new URLSearchParams();
+    if (opts.runId) params.set("runId", opts.runId);
+    const chaveEl = document.getElementById("chave");
+    const chave = (chaveEl && chaveEl.value || "").replace(/\D/g, "");
+    if (chave.length === 44) params.set("chave", chave);
+    const qs = params.toString() ? `?${params}` : "";
+    try {
+      const data = await api(`/nfe/ingest-logs${qs}`);
+      renderIngestLogs(data);
+    } catch (ex) {
+      tableEl.innerHTML = `<div class="kt-alert kt-alert-danger">${esc(ex.message)}</div>`;
+    }
+  }
+
+  function startIngestLogPoll(runId) {
+    stopIngestLogPoll();
+    loadIngestLogs({ runId });
+    let ticks = 0;
+    ingestLogTimer = setInterval(() => {
+      ticks += 1;
+      loadIngestLogs({ runId });
+      if (ticks >= 20) stopIngestLogPoll();
+    }, 2000);
+  }
+
   async function renderRoute() {
+    stopIngestLogPoll();
     const view = document.getElementById("view");
     const route = (location.hash.replace("#/", "").split("?")[0] || "dashboard");
     document.querySelectorAll(".menu-link").forEach(a => a.classList.toggle("active", a.dataset.route === route.split("/")[0]));
@@ -251,7 +335,17 @@ const Vilmo = (() => {
         <form id="xml-form" class="vilmo-card flex flex-col gap-3">
           <label>XML da NF-e (fallback)<input class="kt-input" type="file" name="file" accept=".xml"></label>
           <button class="kt-btn kt-btn-outline" type="submit">Enviar XML</button>
+          <div id="xml-msg"></div>
         </form>
+      </div>
+      <div class="vilmo-card ingest-log-card">
+        <div class="flex items-center justify-between gap-3 mb-3">
+          <h2 class="font-medium">Andamento da ingestão</h2>
+          <button class="kt-btn kt-btn-sm kt-btn-outline" type="button" id="refresh-ingest-logs">Atualizar</button>
+        </div>
+        <p class="text-sm text-muted-foreground mb-3">O último passo executado aparece primeiro. Detalhes técnicos ficam ocultos em cada linha.</p>
+        <div id="ingest-log-progress" class="ingest-log-progress"></div>
+        <div id="ingest-log-table"></div>
       </div>
       <div id="camera-overlay" class="camera-overlay hidden">
         <div class="camera-panel">
@@ -421,7 +515,9 @@ const Vilmo = (() => {
       const msg = $("#nfe-msg");
       try {
         const r = await api(`/nfe/chaves/${chave}/ingest`, { method: "POST", body: { cnpj } });
-        msg.innerHTML = `<div class="kt-alert kt-alert-success">Status: ${r.status || "queued"} · ${r.chave || chave}</div>`;
+        const status = r.status || (r.replayed ? "replayed" : "queued");
+        msg.innerHTML = `<div class="kt-alert ${r.error ? "kt-alert-danger" : "kt-alert-success"}">${r.message || ("Status: " + status)} · ${r.chave || chave}</div>`;
+        startIngestLogPoll(r.runId);
       } catch (ex) { msg.innerHTML = `<div class="kt-alert kt-alert-danger">${ex.message}</div>`; }
     };
     if ($("#xml-form")) $("#xml-form").onsubmit = async (e) => {
@@ -430,9 +526,17 @@ const Vilmo = (() => {
       if (!file) return;
       const fd = new FormData();
       fd.append("file", file);
-      await api("/nfe/xml", { method: "POST", body: fd, headers: {} });
-      alert("XML ingerido.");
+      const xmlMsg = $("#xml-msg");
+      try {
+        const r = await api("/nfe/xml", { method: "POST", body: fd, headers: {} });
+        if (xmlMsg) xmlMsg.innerHTML = `<div class="kt-alert ${r.error ? "kt-alert-danger" : "kt-alert-success"}">${r.message || ("XML ingerido · " + (r.status || ""))}</div>`;
+        startIngestLogPoll(r.runId);
+      } catch (ex) {
+        if (xmlMsg) xmlMsg.innerHTML = `<div class="kt-alert kt-alert-danger">${ex.message}</div>`;
+      }
     };
+    if ($("#refresh-ingest-logs")) $("#refresh-ingest-logs").onclick = () => loadIngestLogs();
+    if ($("#ingest-log-table")) loadIngestLogs();
     if ($("#scan-btn")) $("#scan-btn").onclick = () => startCamera();
     if ($("#close-cam")) $("#close-cam").onclick = stopCamera;
     if ($("#flip-cam")) $("#flip-cam").onclick = () => flipCamera();

@@ -32,6 +32,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<SecretProtector>();
         services.AddScoped<AuthService>();
         services.AddScoped<InventoryService>();
+        services.AddScoped<NfeIngestLogService>();
         services.AddScoped<NfeIngestService>();
         services.AddScoped<SalesService>();
         services.AddScoped<LabelService>();

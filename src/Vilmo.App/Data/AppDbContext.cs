@@ -23,6 +23,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<SaleItem> SaleItems => Set<SaleItem>();
     public DbSet<SaleMarketplaceAttribute> SaleMarketplaceAttributes => Set<SaleMarketplaceAttribute>();
     public DbSet<NfeDocument> NfeDocuments => Set<NfeDocument>();
+    public DbSet<NfeIngestLog> NfeIngestLogs => Set<NfeIngestLog>();
     public DbSet<ShipmentLabel> ShipmentLabels => Set<ShipmentLabel>();
     public DbSet<WorkItem> WorkItems => Set<WorkItem>();
     public DbSet<IdempotencyRecord> IdempotencyRecords => Set<IdempotencyRecord>();
@@ -119,6 +120,13 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         {
             e.ToTable("nfe_documents");
             e.HasIndex(x => new { x.CompanyId, x.ChaveAcesso }).IsUnique();
+        });
+        b.Entity<NfeIngestLog>(e =>
+        {
+            e.ToTable("nfe_ingest_log");
+            e.HasIndex(x => new { x.CompanyId, x.CreatedAt });
+            e.HasIndex(x => new { x.CompanyId, x.ChaveAcesso, x.CreatedAt });
+            e.HasIndex(x => x.RunId);
         });
         b.Entity<ShipmentLabel>(e =>
         {

@@ -37,3 +37,28 @@
 .kt-alert { padding: .75rem 1rem; border-radius: 8px; }
 .kt-alert-danger { background: #fef2f2; color: #991b1b; }
 .kt-alert-success { background: #ecfdf5; color: #065f46; }
+.kt-alert-warning { background: #fffbeb; color: #92400e; }
+.ingest-log-card { margin-top: 1rem; }
+.ingest-log-progress { margin: 0 0 0.85rem; }
+.ingest-log-progress .label { font-size: 0.9rem; margin-bottom: 0.4rem; }
+.ingest-log-bar { height: 8px; background: #e5e7eb; border-radius: 999px; overflow: hidden; }
+.ingest-log-bar > span { display: block; height: 100%; background: #0f766e; border-radius: 999px; transition: width .3s ease; }
+.ingest-log-bar.error > span { background: #dc2626; }
+.ingest-log-bar.warn > span { background: #d97706; }
+.ingest-log-latest td { background: #f0fdfa; }
+.ingest-log-latest .badge-latest {
+  display: inline-block; margin-left: .4rem;
+  font-size: .65rem; text-transform: uppercase; letter-spacing: .04em;
+  background: #0f766e; color: #fff; border-radius: 999px; padding: .1rem .45rem;
+}
+.ingest-tech { margin-top: .35rem; }
+.ingest-tech summary { cursor: pointer; color: #6b7280; font-size: .8rem; }
+.ingest-tech pre {
+  margin: .4rem 0 0; padding: .6rem .7rem; max-height: 12rem; overflow: auto;
+  background: #0f172a; color: #e2e8f0; border-radius: 8px; font-size: .72rem;
+  white-space: pre-wrap; word-break: break-word;
+}
+.ingest-level { font-size: .7rem; text-transform: uppercase; letter-spacing: .03em; font-weight: 600; }
+.ingest-level.info { color: #0f766e; }
+.ingest-level.warning { color: #b45309; }
+.ingest-level.error { color: #b91c1c; }

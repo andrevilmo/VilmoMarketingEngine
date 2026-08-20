@@ -29,6 +29,8 @@ public sealed class WorkProcessor(AppDbContext db, NfeIngestService nfe, SalesSe
                 log.LogError(ex, "work {Id} {Kind} failed", item.Id, item.Kind);
                 item.Status = "Failed";
                 item.Error = ex.Message;
+                if (item.Kind == WorkKinds.NfeIngest)
+                    await nfe.LogWorkFailureAsync(item, ex, ct);
             }
             await db.SaveChangesAsync(ct);
         }

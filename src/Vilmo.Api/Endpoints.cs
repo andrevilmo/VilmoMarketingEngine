@@ -414,6 +414,49 @@ public static class Endpoints
             return doc is null ? Results.NotFound() : Results.Ok(new { doc.Id, doc.ChaveAcesso, doc.Status, doc.Error, doc.Kind });
         }).RequireAuthorization();
 
+        app.MapGet("/nfe/ingest-logs", async (string? chave, Guid? runId, int? limit, HttpContext http, AppDbContext db, CancellationToken ct) =>
+        {
+            var ctx = await NeedNotVendor(http, db, ct);
+            if (ctx is IResult r) return r;
+            var c = (CompanyContext)ctx;
+            var take = Math.Clamp(limit ?? 80, 1, 200);
+            var q = db.NfeIngestLogs.AsNoTracking().Where(l => l.CompanyId == c.CompanyId);
+            if (runId is Guid rid)
+                q = q.Where(l => l.RunId == rid);
+            var digits = string.IsNullOrWhiteSpace(chave) ? "" : ChaveAcesso.Digits(chave);
+            if (digits.Length == 44)
+                q = q.Where(l => l.ChaveAcesso == digits);
+            // SQLite cannot ORDER BY DateTimeOffset; Postgres can.
+            List<NfeIngestLog> items;
+            if (db.Database.IsNpgsql())
+            {
+                items = await q.OrderByDescending(l => l.CreatedAt).ThenByDescending(l => l.Id).Take(take).ToListAsync(ct);
+            }
+            else
+            {
+                items = (await q.ToListAsync(ct))
+                    .OrderByDescending(l => l.CreatedAt)
+                    .ThenByDescending(l => l.Id)
+                    .Take(take)
+                    .ToList();
+            }
+            return Results.Ok(new
+            {
+                items = items.Select(l => new
+                {
+                    l.Id,
+                    l.RunId,
+                    l.NfeDocumentId,
+                    l.ChaveAcesso,
+                    l.StepCode,
+                    l.Level,
+                    l.UserMessage,
+                    l.TechnicalJson,
+                    l.CreatedAt
+                })
+            });
+        }).RequireAuthorization();
+
         app.MapGet("/nfe/mobile/session", async (HttpContext http, AppDbContext db, CancellationToken ct) =>
         {
             var ctx = await NeedNotVendor(http, db, ct);

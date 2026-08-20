@@ -5,21 +5,57 @@ using Vilmo.Domain;
 
 namespace Vilmo.Services;
 
-public sealed class NfeIngestService(AppDbContext db, InventoryService inventory)
+public sealed class NfeIngestService(AppDbContext db, InventoryService inventory, NfeIngestLogService logs)
 {
     static readonly XNamespace Nfe = "http://www.portalfiscal.inf.br/nfe";
 
     public async Task<object> EnqueueChaveAsync(Guid companyId, string cnpj, string chaveRaw, CancellationToken ct)
     {
+        var runId = Guid.NewGuid();
         var company = await db.Companies.FirstAsync(c => c.Id == companyId, ct);
+        await logs.WriteAsync(companyId, runId, NfeIngestLogSteps.Received, "info",
+            "Recebemos o pedido de ingestão da nota.",
+            new { source = "chave", cnpjSubmitted = Cnpj.Digits(cnpj), chaveRawLength = chaveRaw?.Length ?? 0 },
+            null, ChaveAcesso.Digits(chaveRaw ?? ""), ct);
+
         if (Cnpj.Digits(cnpj) != company.Cnpj)
-            return new { error = "CnpjMismatch", message = "CNPJ não é desta empresa." };
-        if (!ChaveAcesso.TryNormalize(chaveRaw, out var chave))
-            return new { error = "InvalidChave", message = "Chave de acesso inválida (44 dígitos + DV)." };
+        {
+            await logs.WriteAsync(companyId, runId, NfeIngestLogSteps.CnpjMismatch, "error",
+                "O CNPJ informado não é desta empresa. Nada foi enviado à Receita.",
+                new { error = "CnpjMismatch", companyCnpj = company.Cnpj, submittedCnpj = Cnpj.Digits(cnpj) },
+                null, ChaveAcesso.Digits(chaveRaw ?? ""), ct);
+            return new { error = "CnpjMismatch", message = "CNPJ não é desta empresa.", runId };
+        }
+        if (!ChaveAcesso.TryNormalize(chaveRaw ?? "", out var chave))
+        {
+            await logs.WriteAsync(companyId, runId, NfeIngestLogSteps.InvalidChave, "error",
+                "A chave de acesso não é válida. Confira os 44 dígitos (incluindo o dígito verificador).",
+                new { error = "InvalidChave", chaveDigits = ChaveAcesso.Digits(chaveRaw ?? "") },
+                null, ChaveAcesso.Digits(chaveRaw ?? ""), ct);
+            return new { error = "InvalidChave", message = "Chave de acesso inválida (44 dígitos + DV).", runId };
+        }
+
+        await logs.WriteAsync(companyId, runId, NfeIngestLogSteps.Validated, "info",
+            "A chave de acesso está correta. Seguimos com a consulta.",
+            new { chave, cnpj = company.Cnpj },
+            null, chave, ct);
 
         var existing = await db.NfeDocuments.FirstOrDefaultAsync(d => d.CompanyId == companyId && d.ChaveAcesso == chave, ct);
         if (existing is not null)
-            return new { existing.Id, chave, existing.Status, replayed = true };
+        {
+            await logs.WriteAsync(companyId, runId, NfeIngestLogSteps.Replayed, "warning",
+                $"Esta chave já foi enviada. Situação atual: {NfeIngestLogService.StatusPt(existing.Status)}. O estoque não será alterado de novo.",
+                new
+                {
+                    error = (string?)null,
+                    replayed = true,
+                    nfeDocumentId = existing.Id,
+                    status = existing.Status,
+                    documentError = existing.Error
+                },
+                existing.Id, chave, ct);
+            return new { existing.Id, chave, existing.Status, replayed = true, runId };
+        }
 
         var doc = new NfeDocument
         {
@@ -29,25 +65,52 @@ public sealed class NfeIngestService(AppDbContext db, InventoryService inventory
             ChaveAcesso = chave,
             Status = "Queued"
         };
+        var workId = Guid.NewGuid();
         db.NfeDocuments.Add(doc);
         db.WorkItems.Add(new WorkItem
         {
-            Id = Guid.NewGuid(),
+            Id = workId,
             CompanyId = companyId,
             Kind = WorkKinds.NfeIngest,
-            PayloadJson = $"{{\"chave\":\"{chave}\",\"nfeDocumentId\":\"{doc.Id}\"}}"
+            PayloadJson = $"{{\"chave\":\"{chave}\",\"nfeDocumentId\":\"{doc.Id}\",\"runId\":\"{runId}\"}}"
         });
         await db.SaveChangesAsync(ct);
-        return new { doc.Id, chave, status = doc.Status };
+        await logs.WriteAsync(companyId, runId, NfeIngestLogSteps.Queued, "info",
+            "A nota entrou na fila para consulta à Receita (SEFAZ / DistDFe).",
+            new { nfeDocumentId = doc.Id, workItemId = workId, status = doc.Status, kind = WorkKinds.NfeIngest },
+            doc.Id, chave, ct);
+        return new { doc.Id, chave, status = doc.Status, runId };
     }
 
-    public async Task<object> IngestXmlAsync(Guid companyId, string xml, CancellationToken ct)
+    public async Task<object> IngestXmlAsync(Guid companyId, string xml, CancellationToken ct, Guid? runId = null)
     {
+        var id = runId ?? Guid.NewGuid();
         var parsed = Parse(xml);
-        if (parsed is null) return new { error = "InvalidXml", message = "XML NF-e não reconhecido." };
+        if (runId is null)
+        {
+            await logs.WriteAsync(companyId, id, NfeIngestLogSteps.XmlReceived, "info",
+                "Recebemos o arquivo XML da nota.",
+                new { source = "xml", xmlLength = xml?.Length ?? 0, chave = parsed?.Chave },
+                null, parsed?.Chave, ct);
+        }
+
+        if (parsed is null)
+        {
+            await logs.WriteAsync(companyId, id, NfeIngestLogSteps.InvalidXml, "error",
+                "Não reconhecemos este XML como uma NF-e. Envie o arquivo original da nota.",
+                new { error = "InvalidXml", xmlLength = xml?.Length ?? 0 },
+                null, null, ct);
+            return new { error = "InvalidXml", message = "XML NF-e não reconhecido.", runId = id };
+        }
         var company = await db.Companies.FirstAsync(c => c.Id == companyId, ct);
         if (parsed.EmitCnpj != company.Cnpj && parsed.DestCnpj != company.Cnpj)
-            return new { error = "CnpjMismatch", message = "XML não pertence ao CNPJ da empresa." };
+        {
+            await logs.WriteAsync(companyId, id, NfeIngestLogSteps.CnpjMismatch, "error",
+                "Este XML não pertence ao CNPJ da empresa selecionada.",
+                new { error = "CnpjMismatch", emitCnpj = parsed.EmitCnpj, destCnpj = parsed.DestCnpj, companyCnpj = company.Cnpj, chave = parsed.Chave },
+                null, parsed.Chave, ct);
+            return new { error = "CnpjMismatch", message = "XML não pertence ao CNPJ da empresa.", runId = id };
+        }
 
         var doc = await db.NfeDocuments.FirstOrDefaultAsync(d => d.CompanyId == companyId && d.ChaveAcesso == parsed.Chave, ct);
         if (doc is null)
@@ -65,19 +128,57 @@ public sealed class NfeIngestService(AppDbContext db, InventoryService inventory
         doc.Xml = xml;
         doc.Status = "Parsed";
         await db.SaveChangesAsync(ct);
+        await logs.WriteAsync(companyId, id, NfeIngestLogSteps.XmlParsed, "info",
+            $"Lemos a nota. Encontramos {parsed.Items.Count} item(ns).",
+            new
+            {
+                nfeDocumentId = doc.Id,
+                chave = parsed.Chave,
+                emitCnpj = parsed.EmitCnpj,
+                destCnpj = parsed.DestCnpj,
+                itemCount = parsed.Items.Count,
+                items = parsed.Items.Select(i => new { i.NItem, i.CProd, i.Cfop, i.Qty }).ToList()
+            },
+            doc.Id, parsed.Chave, ct);
+
         await ApplyItemsAsync(company, parsed, ct);
         doc.Status = "Applied";
         await db.SaveChangesAsync(ct);
-        return new { doc.Id, chave = parsed.Chave, status = doc.Status, items = parsed.Items.Count };
+        await logs.WriteAsync(companyId, id, NfeIngestLogSteps.StockApplied, "info",
+            "Estoque atualizado com os itens de entrada desta nota.",
+            new { nfeDocumentId = doc.Id, chave = parsed.Chave, status = doc.Status, itemCount = parsed.Items.Count },
+            doc.Id, parsed.Chave, ct);
+        return new { doc.Id, chave = parsed.Chave, status = doc.Status, items = parsed.Items.Count, runId = id };
     }
 
     public async Task ProcessQueuedAsync(WorkItem work, CancellationToken ct)
     {
-        var doc = await db.NfeDocuments.FirstOrDefaultAsync(d => d.Id.ToString() == Extract(work.PayloadJson, "nfeDocumentId"), ct);
-        if (doc is null) { work.Status = "Failed"; work.Error = "NfeNotFound"; return; }
+        var runId = Guid.TryParse(Extract(work.PayloadJson, "runId"), out var parsedRun) ? parsedRun : work.Id;
+        var chaveHint = Extract(work.PayloadJson, "chave");
+        var docIdRaw = Extract(work.PayloadJson, "nfeDocumentId");
+        Guid.TryParse(docIdRaw, out var docId);
+        var doc = docId == Guid.Empty
+            ? null
+            : await db.NfeDocuments.FirstOrDefaultAsync(d => d.Id == docId, ct);
+        if (doc is null)
+        {
+            work.Status = "Failed";
+            work.Error = "NfeNotFound";
+            await logs.WriteAsync(work.CompanyId, runId, NfeIngestLogSteps.Failed, "error",
+                "Não encontramos o registro da nota na fila. Tente enviar de novo.",
+                new { error = "NfeNotFound", workItemId = work.Id, payload = work.PayloadJson },
+                null, chaveHint, ct);
+            return;
+        }
+
+        await logs.WriteAsync(work.CompanyId, runId, NfeIngestLogSteps.WorkerStarted, "info",
+            "O serviço da nota começou a processar este pedido.",
+            new { workItemId = work.Id, nfeDocumentId = doc.Id, chave = doc.ChaveAcesso, hasXml = !string.IsNullOrEmpty(doc.Xml) },
+            doc.Id, doc.ChaveAcesso, ct);
+
         if (!string.IsNullOrEmpty(doc.Xml))
         {
-            await IngestXmlAsync(work.CompanyId, doc.Xml, ct);
+            await IngestXmlAsync(work.CompanyId, doc.Xml, ct, runId);
             work.Status = "Done";
             return;
         }
@@ -89,6 +190,37 @@ public sealed class NfeIngestService(AppDbContext db, InventoryService inventory
         work.Status = "Done";
         work.Error = doc.Status;
         await db.SaveChangesAsync(ct);
+        if (cert)
+        {
+            await logs.WriteAsync(work.CompanyId, runId, NfeIngestLogSteps.WaitingDistDFe, "warning",
+                "Aguardando o XML da Receita. Se a nota não aparecer no estoque, envie o arquivo XML.",
+                new
+                {
+                    nfeDocumentId = doc.Id,
+                    chave = doc.ChaveAcesso,
+                    status = doc.Status,
+                    sefaz = "DistDFe consChNFe not implemented; parking WaitingDistDFe",
+                    workItemId = work.Id
+                },
+                doc.Id, doc.ChaveAcesso, ct);
+        }
+        else
+        {
+            await logs.WriteAsync(work.CompanyId, runId, NfeIngestLogSteps.CertificateMissing, "warning",
+                "Falta o certificado digital A1 desta empresa. Envie o XML da nota para atualizar o estoque.",
+                new { nfeDocumentId = doc.Id, chave = doc.ChaveAcesso, status = doc.Status, workItemId = work.Id },
+                doc.Id, doc.ChaveAcesso, ct);
+        }
+    }
+
+    public async Task LogWorkFailureAsync(WorkItem work, Exception ex, CancellationToken ct)
+    {
+        var runId = Guid.TryParse(Extract(work.PayloadJson, "runId"), out var parsedRun) ? parsedRun : work.Id;
+        Guid? docId = Guid.TryParse(Extract(work.PayloadJson, "nfeDocumentId"), out var d) ? d : null;
+        await logs.WriteAsync(work.CompanyId, runId, NfeIngestLogSteps.Failed, "error",
+            "Não foi possível concluir a ingestão. Tente de novo ou envie o XML.",
+            new { error = ex.GetType().Name, message = ex.Message, workItemId = work.Id },
+            docId, Extract(work.PayloadJson, "chave"), ct);
     }
 
     async Task ApplyItemsAsync(Company company, ParsedNfe parsed, CancellationToken ct)

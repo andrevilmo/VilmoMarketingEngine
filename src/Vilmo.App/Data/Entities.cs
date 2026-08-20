@@ -242,6 +242,20 @@ public class NfeDocument
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
+public class NfeIngestLog
+{
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
+    public Guid RunId { get; set; }
+    public Guid? NfeDocumentId { get; set; }
+    public string? ChaveAcesso { get; set; }
+    public string StepCode { get; set; } = "";
+    public string Level { get; set; } = "info";
+    public string UserMessage { get; set; } = "";
+    public string TechnicalJson { get; set; } = "{}";
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
 public class ShipmentLabel
 {
     public Guid Id { get; set; }
