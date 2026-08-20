@@ -21,10 +21,10 @@ Index: [US-17](#us-17--public-commercial-homepage) public `/` · [US-01](#us-01-
 ## US-17 — Public commercial homepage
 
 **As** a visitor (dropship operator, company, or future vendor)  
-**I want** `https://vilmomkt.com/` in **Portuguese** and `https://vilmomkt.com/en/` in **English**, with search-engine metadata for each  
-**So that** I understand the product **before** I sign in, in my language, and Google indexes both locales instead of the login screen.
+**I want** `https://vilmomkt.com/` in **Portuguese** and `https://vilmomkt.com/en/` in **English**, with the operator company (CNPJ **68.431.371/0001-61**), cookie consent, privacy/terms, and contact **`admin@vilmomkt.com`**  
+**So that** I understand the product **before** I sign in, in my language, and can find who runs the site and how cookies/privacy work.
 
-Plan: [PLAN.md](./PLAN.md) §3.7. UI: [UI.md](./UI.md).
+Plan: [PLAN.md](./PLAN.md) §3.7. UI: [UI.md](./UI.md). Wireframe: [WIREFRAMES.md](./WIREFRAMES.md) `wf_00_index_spa.png`.
 
 ### Flow
 
@@ -33,7 +33,11 @@ GET  https://vilmomkt.com/          → 200 static HTML pt-BR (deploy/site/index
 GET  https://vilmomkt.com/en/       → 200 static HTML en    (deploy/site/en/index.html)
         │
         ├── Header: PT | EN  then  Entrar / Sign in → GET /web/   (US-01)
-        └── Sections: #companies, #vendors, #dropshipping, #how, #faq
+        ├── Sections: #companies #vendors #dropshipping #how #faq #company #contact
+        ├── Footer: Privacidade / Termos / Cookies / Contato
+        └── Cookie bar (LGPD) until Aceitar / Recusar opcionais
+GET  /privacidade/ /termos/ /cookies/ /contato/
+GET  /en/privacy/ /en/terms/ /en/cookies/ /en/contact/
 GET  /web/                          → Metronic login (noindex; Portuguese app UI)
 ```
 
@@ -42,9 +46,12 @@ GET  /web/                          → Metronic login (noindex; Portuguese app 
 - Copy is in the **HTML** of that URL (not loaded only after JS). One `h1` per page. `lang="pt-BR"` or `lang="en"`.
 - **Entrar** (PT) / **Sign in** (EN) is top-right (`<a href="/web/">`). No login modal on `/` or `/en/`.
 - Language switcher is a pair of links, not a JS-only dictionary. No `Accept-Language` auto-redirect.
+- **#company** shows VILMO COMERCIO… / A. VILMO PINHEIRO CARDOSO TECNOLOGIA LTDA / **CNPJ 68.431.371/0001-61** / address / **`admin@vilmomkt.com`**.
+- Cookie bar: necessary on; optional **off** until accept; 12-month consent record; link to cookie policy.
+- Privacy, terms of use, and cookie policy are default static pages in PT and EN. Controller e-mail **`admin@vilmomkt.com`**.
 - No JWT, no `/api` calls, no secrets, no stock numbers from production.
-- `robots.txt` allows `/` and `/en/`; disallows `/web/`, `/api/`, `/nfe/`, `/worker/`, `/oauth/`, `/webhooks/`.
-- `sitemap.xml` lists `/` and `/en/` with `hreflang`. Canonical is self per URL. `x-default` → `/`.
+- `robots.txt` allows `/`, `/en/`, and legal pages; disallows `/web/`, `/api/`, `/nfe/`, `/worker/`, `/oauth/`, `/webhooks/`.
+- `sitemap.xml` lists homes + legal/contact URLs with `hreflang`. Canonical is self per URL. `x-default` → `/`.
 - Honest dropship pitch in **both** languages: company owns inventory (NF-e) and vendors sell on marketplaces; not a third-party supplier catalog.
 
 ### SEO acceptance
@@ -55,6 +62,8 @@ GET  /web/                          → Metronic login (noindex; Portuguese app 
 - `Organization` + `WebSite` + `FAQPage` JSON-LD in that language.
 - Open Graph tags + `og:locale` / `og:locale:alternate` + `og:image`.
 - `/` and `/en/` are HTTP 200, **not** 302 to `/web/`.
+- Cookie bar visible until a choice; optional tags not loaded before accept.
+- Privacy, terms, cookies, contact URLs return 200 and name CNPJ **68.431.371/0001-61** and **`admin@vilmomkt.com`**.
 
 ---
 

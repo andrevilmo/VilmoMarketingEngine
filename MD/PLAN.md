@@ -237,7 +237,7 @@ Files: `deploy/site/index.html` (pt-BR) and `deploy/site/en/index.html` (en). Sa
 
 Header includes a language switcher **next to Entrar** (right cluster: `PT | EN` then the login button). `PT` → `/`, `EN` → `/en/`. Mark the active locale (`aria-current="page"`). Do **not** auto-redirect by `Accept-Language` (that hides a language from Google). Optional: remember the last **clicked** locale in `localStorage` only to highlight the switcher, never to block `/` or `/en/`.
 
-Fragment ids stay **language-neutral** (`#benefits`, `#companies`, `#vendors`, `#dropshipping`, `#how`, `#faq`) so a switcher can keep the hash.
+Fragment ids stay **language-neutral** (`#benefits`, `#companies`, `#vendors`, `#dropshipping`, `#how`, `#faq`, `#company`, `#contact`) so a switcher can keep the hash.
 
 The **Metronic app at `/web/`** stays Portuguese in this slice (US-01). Bilingual applies to the **public index only**.
 
@@ -260,8 +260,10 @@ Call it a **SPA-style one-pager** (one URL per language, in-page sections, stick
 GET  /health              → vilmo-gateway (unchanged)
 GET  /                    → deploy/site/index.html        (200, pt-BR)
 GET  /en/                 → deploy/site/en/index.html     (200, en)
+GET  /privacidade/ /termos/ /cookies/ /contato/           → PT legal/contact
+GET  /en/privacy/ /en/terms/ /en/cookies/ /en/contact/    → EN legal/contact
 GET  /robots.txt          → public robots
-GET  /sitemap.xml         → public sitemap (`/` and `/en/`)
+GET  /sitemap.xml         → `/`, `/en/`, legal + contact URLs
 GET  /web/                → vilmo-web (login + app)
 GET  /api/ /nfe/ /worker/ /webhooks/ /oauth/  → unchanged
 ```
@@ -275,12 +277,63 @@ Authenticated HTML (`/web/login.html`, app pages) should send `X-Robots-Tag: noi
 #### Header (required)
 
 ```
-[Logo Vilmo]     Benefícios/Benefits …          PT | EN    [ Entrar / Sign in ]
+[Logo Vilmo]     Benefícios … Contato          PT | EN    [ Entrar / Sign in ]
 ```
 
 - Right cluster: **language switcher** then **login**. Login is the rightmost control (top-**right**), always visible (mobile: logo left, `PT|EN` + Entrar/Sign in right; hamburger for section links).
 - Login `href="/web/"` (trailing slash). Label **Entrar** on `/`, **Sign in** on `/en/`.
 - Button is a normal `<a>`. Do not open a modal login on `/` or `/en/` (keeps the homepage crawlable and the app origin clear).
+
+#### Company on the public site (default CNPJ)
+
+The public site identifies the **seed company** from [FirstCompany.md](./FirstCompany.md). This is the operator on the homepage, footer, JSON-LD `Organization`, privacy/terms controller, and cookie banner — not a second invented brand.
+
+| Field | Public site value |
+| --- | --- |
+| Nome fantasia | **VILMO COMERCIO, REPRESENTACOES E INFORMATICA** |
+| Razão social | **A. VILMO PINHEIRO CARDOSO TECNOLOGIA LTDA** |
+| CNPJ | **68.431.371/0001-61** (`68431371000161`) |
+| Address | R VITOR KONDER, 223, SALA 1108, CENTRO, FLORIANÓPOLIS/SC, CEP **88015-400** |
+| Public contact e-mail | **`admin@vilmomkt.com`** (only address on the site; do not publish the cartão Gmail) |
+| Phone | (51) 8022-7183 |
+
+Place this block in **`#company`** on `/` and `/en/`, repeated in the footer in compact form. JSON-LD `Organization` uses legal name, CNPJ as identifier, address, `email: admin@vilmomkt.com`, `url: https://vilmomkt.com/`.
+
+#### Contact
+
+- Section **`#contact`** on the index (PT and EN) and optional pages `/contato/` · `/en/contact/`.
+- Primary CTA: `mailto:admin@vilmomkt.com`.
+- Show CNPJ + address next to the e-mail so LGPD “who is the controller” is visible without opening another tab.
+
+#### Default legal pages (site terms, privacy, cookies)
+
+Static HTML, **both languages**, same visual chrome as the index (header + footer + cookie banner). Not Metronic admin. **Indexable.**
+
+| PT | EN | Content (v1 default templates) |
+| --- | --- | --- |
+| `/privacidade/` | `/en/privacy/` | Privacy / LGPD: controller (razão social + CNPJ), what is collected (account, logs, necessary cookies; optional only after consent), purpose, retention, rights (access, correction, deletion, portability) via **`admin@vilmomkt.com`**, no sale of personal data, subprocessors listed when used |
+| `/termos/` | `/en/terms/` | Terms of use of **vilmomkt.com**: licence to use the site/app, accounts, acceptable use, marketplaces are third parties, no SLA in v1, Brazilian law, forum Florianópolis/SC |
+| `/cookies/` | `/en/cookies/` | Cookie policy: necessary vs optional, table of names/purpose/ttl, how to change consent, link back to the banner |
+
+Footer on **every** public page: Privacidade · Termos de uso · Cookies · Contato (`admin@vilmomkt.com`) · CNPJ 68.431.371/0001-61.
+
+`sitemap.xml` includes `/`, `/en/`, and these six legal/contact URLs (with `hreflang` pairs). `robots.txt` **allows** them.
+
+#### Default cookies acceptance (LGPD)
+
+Show a **first-visit cookie bar** on all public pages (`/`, `/en/`, legal pages). Do not block reading the page (bottom bar, not a full-screen wall).
+
+| Rule | Default |
+| --- | --- |
+| Necessary cookies | Always on (locale highlight, `vilmo_cookie_consent` record). No banner required to use the site. |
+| Optional cookies | **Off** until the visitor accepts (analytics/marketing). Do not pre-tick. Do not load GA/pixels before accept. |
+| Actions | **Aceitar todos / Accept all** · **Recusar opcionais / Reject optional** · **Preferências / Preferences** (toggle optional categories) |
+| Policy link | **Política de cookies** → `/cookies/` or `/en/cookies/` |
+| Storage | First-party cookie or `localStorage` key `vilmo_cookie_consent` `{ v, necessary: true, optional: bool, ts }` — ttl **12 months** |
+| Repeat | Hide the bar after a choice. Footer **Cookies** re-opens preferences. Changing language does not reset consent. |
+| App `/web/` | Same banner on public legal pages only; authenticated console may rely on the already-stored choice. No extra tracking cookies in v1 unless optional was accepted. |
+
+Do not put A1, `.pfx`, AWS, or bootstrap passwords on any public page.
 
 #### Commercial copy (pt-BR **and** en, three audiences)
 
@@ -294,7 +347,7 @@ Write for **conversion**, not for internal US numbers. One `h1` per page. Englis
 | **#dropshipping** | Benefits for **dropship operations**: company keeps warehouse + fiscal identity; vendors are storefronts; canonical stock so two vendors cannot oversell; marketplaces sync after Paid. Honest: **company-owned stock + multi-vendor**, not a third-party supplier network. |
 | **#how** | 4 steps: company connects channels + A1 → vendors link shops → NF-e fills stock → sale Paid → NF-e out + label. |
 | **#faq** | Login vs homepage; who sees stock; which marketplaces; inbound vs outbound NF-e. |
-| **Footer** | Razão social + CNPJ `68.431.371/0001-61`, Florianópolis/SC, login link `/web/`. |
+| **Footer** | Razão social, **CNPJ 68.431.371/0001-61**, Florianópolis/SC, **`admin@vilmomkt.com`**, links: Privacidade, Termos, Cookies, Contato, Entrar `/web/`. |
 
 Do not put bootstrap passwords, A1, or AWS on this page. Do not claim live SEFAZ/ML if a given environment is still demo.
 
@@ -313,7 +366,7 @@ Do not put bootstrap passwords, A1, or AWS on this page. Do not claim live SEFAZ
 | Performance | Must **not** load the Metronic admin JS/CSS bundle |
 | Internal links | Section anchors + CTA to `/web/`. Do not deep-link `/api` |
 | `www` | Same bodies; canonical apex |
-| `sitemap.xml` | Both `/` and `/en/` with xhtml `hreflang` annotations |
+| `sitemap.xml` | `/`, `/en/`, privacy, terms, cookies, contact (both languages) with xhtml `hreflang` |
 
 Optional later (not v1 blockers): Google Search Console, Bing Webmaster.
 
@@ -325,6 +378,8 @@ Optional later (not v1 blockers): Google Search Console, Bing Webmaster.
 - Do not require cookies or JS to read the benefits text.
 - Do not ship English-only or Portuguese-only. Both languages are in v1.
 - Do not use `?lang=` or a cookie-only language as the **only** switch (not indexable as two pages).
+- Do not pre-tick optional cookies. Do not load third-party scripts before **Aceitar**.
+- Do not put `andre.vilmo@gmail.com` on the public site; contact is **`admin@vilmomkt.com`**.
 
 ### Per-company A1 (SEFAZ)
 
@@ -735,7 +790,7 @@ Do not build four C# marketplace projects. Build the **generic engine** first, t
 1. **Foundation** — solution, Docker Compose (postgres + redis + empty API), BuildingBlocks (Result, company-scoped idempotency, streams), health checks.
 2. **Identity + tenancy** — `Company`, `User`, `UserCompany`, JWT/`X-Company-Id`, seed `admin@vilmomkt.com` + company CNPJ `68431371000161`. Login US-01, home by level US-02. Admin creates companies (US-03, readiness flags), company users (US-09, `user_company_marketplace`), vendors on **selected** marketplaces (US-10, `PendingConnect` until OAuth). Company users create vendors for their CNPJ (US-11). Vendor sees only own sales (US-12). Row filters by `company_id`.
 3. **Metronic UI shell** — `vilmo-web` from HTML starter layout-1 + demo1 sign-in and members datatable, behind **`/web/`**. Company switcher for super user. Role-based sidebar. **Marketplaces da empresa (US-15):** one form per `code` with connection fields from `marketplace_parameter_definition` (ClientId, PartnerKey, …). Admin/Company only. Same fields on US-03 wizard step 3. See [UI.md](./UI.md).
-3a. **Public commercial index (US-17)** — stop `302 / → /web/`. Gateway serves `deploy/site/index.html` at `/` (pt-BR) and `deploy/site/en/index.html` at `/en/` (en), with crawlable copy (companies, vendors, dropshipping), `hreflang`, SEO tags, `robots.txt`, `sitemap.xml` (both URLs). Sticky header: **PT | EN** then **Entrar / Sign in** → `/web/`. Do not load admin Metronic on `/`. See §3.7.
+3a. **Public commercial index (US-17)** — stop `302 / → /web/`. Gateway serves `deploy/site/index.html` at `/` (pt-BR) and `deploy/site/en/index.html` at `/en/` (en), plus legal pages (privacy, terms, cookies, contact). Crawlable copy (companies, vendors, dropshipping), **company block for CNPJ 68.431.371/0001-61**, contact **`admin@vilmomkt.com`**, LGPD cookie bar (optional off until accept), `hreflang`, SEO tags, `robots.txt`, `sitemap.xml`. Sticky header: **PT | EN** then **Entrar / Sign in** → `/web/`. Do not load admin Metronic on `/`. See §3.7.
 4. **Catalog + inventory domain** — Product (`sale_price`), identifiers, movements (`NfeInbound` / `SalePaid`), balances, uniqueness all include `company_id`. Vendor has no stock book.
 5. **NF-e ingest + Estoque UI** — HTML: CNPJ (admin select / company locked) + chave 44 (**webcam** barcode/QR or type) → DistDFe; stock table with **preço de venda**. Admin/Company only. Paid sale decrements on-hand (US-13, US-14). Camera uses `getUserMedia` in the browser; do not upload video. **US-16:** separate MAUI iOS/Android app scans DANFE, encrypted CNPJ cache (default last filled), `POST /nfe/mobile/ingest` (AES-GCM envelope) into the same pipeline.
 6. **Marketplace engine** — `IAuthProtocol` pack (`OAuth2AuthorizationCode`, `HmacSha256`, `BearerToken`, `ApiKeyHeader`), generic HTTP executor, JSON mappings, definition cache. Commands carry `CompanyId`, `VendorUserId`, and string `marketplace_code`. Advertisement publish: `marketplaceCodes` default all.
@@ -755,7 +810,7 @@ Each step stays shippable. Step 5 already gives "company user reads chave / XML 
 - Unit: `ChaveAcesso` DV, extract chave from QR/`chNFe`/`p=` fixtures, AES-GCM mobile envelope round-trip, CFOP policy, idempotency state machine (`companyId` in the Redis key), translators, authorization (admin vs company vs vendor), `SaleStatus` map, CEP 8 digits, label page size.
 - Contract: generic executor against recorded HTTP fixtures keyed by `marketplace_code` (no live ML/Shopee in CI). Sale normalizer fixtures → `sales` + EAV rows.
 - Integration: Testcontainers for Postgres + Redis; two companies; ingest a sample `procNFe` XML into A and assert B's inventory is empty; ingest the same chave twice does not double qty; Paid twice does not double-decrement; vendor JWT `GET /inventory` is `404`; company A cannot `PUT` sale-price on company B SKU; same `Idempotency-Key` on A and B both succeed; company A Shopee `PartnerId` does not leak into company B; **GET company marketplace params never returns full secrets**; **PUT** connection fields without a secret key keeps the previous secret; config read hits Redis on the second call; `PUT` config deletes the cache key; vendor cannot `PUT /companies/{id}/marketplaces/{code}` (`404`); creating a vendor twice with the same key does not duplicate `user_detail_marketplace`; publish with omitted `marketplaceCodes` fans out to all vendor subaccounts; **inserting a fifth `marketplace` row** (no code change) lets a company enable it, **shows the new connection fields**, and provision vendor subaccounts; vendor A `GET /sales` does not include vendor B; stub `INfeAuthorizer` emit moves `Paid` → `PreparingForDispatch` **without** a second stock decrement; second emit `409`; label PDF 100×150 contains sender CNPJ and recipient CEP.
-- Public index (US-17): `GET /` and `GET /en/` are **200** HTML (not 302 to `/web/`); PT body has `lang="pt-BR"` and **Entrar**; EN body has `lang="en"` and **Sign in**; both link `href="/web/"`; both include `hreflang` for `pt-BR`, `en`, and `x-default`; `sitemap.xml` lists `/` and `/en/`; view-source without JS still shows that language’s commercial copy.
+- Public index (US-17): `GET /` and `GET /en/` are **200** HTML (not 302 to `/web/`); PT/EN include CNPJ `68.431.371/0001-61` and `admin@vilmomkt.com`; legal URLs 200; cookie bar present until consent; optional scripts absent before Aceitar; `hreflang` on both homes; sitemap lists homes + legal pages.
 - SEFAZ: optional manual homologation with CNPJ `68431371000161`'s A1; never call production SEFAZ from CI; never check a real `.pfx` into the repo.
 
 ---

@@ -6,7 +6,7 @@ Portuguese labels in the product. Images in [`wireframes/`](./wireframes/).
 
 | File | Screen | Stories |
 | --- | --- | --- |
-| ASCII in this file | **Public commercial index** (`/` pt-BR, `/en/` en) + **Entrar / Sign in** → `/web/` | US-17 |
+| [wf_00_index_spa.png](./wireframes/wf_00_index_spa.png) | **Public commercial index** (`/` pt-BR, `/en/` en): header Entrar, company CNPJ, cookies, footer legal | US-17 |
 | [wf_01_login.png](./wireframes/wf_01_login.png) | Login (one screen, three levels) at `/web/` | US-01 |
 | [wf_02_admin_companies.png](./wireframes/wf_02_admin_companies.png) | Admin: companies + readiness | US-02, US-03 |
 | [wf_03_create_company.png](./wireframes/wf_03_create_company.png) | Admin: nova empresa wizard | US-03 |
@@ -28,6 +28,9 @@ Portuguese labels in the product. Images in [`wireframes/`](./wireframes/).
 flowchart TD
   home["/ pt-BR  /en English  US-17"]
   home -->|Entrar / Sign in| login[Login único /web]
+  home --> legal[Privacidade Termos Cookies]
+  home --> contato["Contato admin@vilmomkt.com"]
+  home --> cookiesBar[Cookie bar LGPD]
   login -->|Admin| empresas[Empresas]
   login -->|Company| dashEmp[Dashboard CNPJ]
   login -->|Vendor| minhasVendas[Minhas vendas]
@@ -87,24 +90,42 @@ Company switcher in the header: **Admin only** (any CNPJ). Company/Vendor: name 
 
 ## 0. Public commercial index (`/` + `/en/` — US-17)
 
+![Index SPA](./wireframes/wf_00_index_spa.png)
+
 ```
-┌──────────────────────────────────────────────────────────────┐
-│  VILMO     Benefícios …     PT | EN              [ Entrar ]  │  ← /web/
-├──────────────────────────────────────────────────────────────┤
-│  h1  (Portuguese on /  ·  English on /en/)                   │
-│      Companies + vendors + dropship                          │
-│      [Como funciona / How it works]                          │
-├──────────────────────────────────────────────────────────────┤
-│  #companies    stock, price, NF-e, label                     │
-│  #vendors      own ads and sales, no company stock           │
-│  #dropshipping company holds stock; vendors sell             │
-│  FAQ + footer (razão social + CNPJ)                          │
-└──────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│ VILMO   Benefícios Empresas Vendedores Dropshipping Contato   PT|EN [Entrar] │
+├──────────────────────────────────────────────────────────────────────────┤
+│ HERO  Estoque por NF-e. Vendas nos marketplaces.                         │
+│       [Como funciona]  [Entrar → /web/]                                  │
+├────────────┬────────────┬────────────┤
+│ Empresas   │ Vendedores │ Dropship   │
+├────────────┴────────────┴────────────┤
+│ Como funciona  1 empresa  2 vendors  3 NF-e  4 Pago                      │
+├──────────────────────────────────────────────────────────────────────────┤
+│ #company  VILMO COMERCIO, REPRESENTACOES E INFORMATICA                   │
+│           A. VILMO PINHEIRO CARDOSO TECNOLOGIA LTDA                      │
+│           CNPJ 68.431.371/0001-61                                        │
+│           R Vitor Konder 223 sl 1108 Centro Florianópolis/SC 88015-400   │
+│           Contato admin@vilmomkt.com  ·  (51) 8022-7183                  │
+├──────────────────────────────────────────────────────────────────────────┤
+│ #contact  mailto:admin@vilmomkt.com                                      │
+│ FAQ                                                                      │
+├──────────────────────────────────────────────────────────────────────────┤
+│ Footer: Privacidade · Termos de uso · Cookies · Contato                  │
+│         CNPJ 68.431.371/0001-61 · admin@vilmomkt.com                     │
+├──────────────────────────────────────────────────────────────────────────┤
+│ COOKIE BAR (first visit)                                                 │
+│ Necessários on. Opcionais off.                                           │
+│ [Aceitar todos] [Recusar opcionais] [Preferências]  Política de cookies  │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
 - `GET /` = pt-BR **200 HTML**; `GET /en/` = en **200 HTML**. Neither redirects to login.
-- Right cluster: **PT | EN** then **Entrar** (PT) or **Sign in** (EN).
-- Each language’s copy is in that HTML (SEO + `hreflang`). `/web/` stays `noindex`.
+- Right cluster: **PT | EN** then **Entrar** (PT) or **Sign in** (EN) → `/web/`.
+- Company block and footer always show **CNPJ 68.431.371/0001-61** and **`admin@vilmomkt.com`**.
+- Cookie bar until consent; legal pages `/privacidade/` `/termos/` `/cookies/` (EN under `/en/…`).
+- `/web/` stays `noindex`.
 
 ---
 
