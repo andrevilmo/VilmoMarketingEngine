@@ -464,9 +464,14 @@ Canonical `Paid` (US-05) **decreases company on-hand by the sale quantity**. Sam
 
 ```
 status → Paid
-  for each sale_items line:
-    INSERT InventoryMovement kind=SalePaid
-      unique (company_id, sale_id, sku)
+  expand each sale_items line through advertisement (company + sku, prefer sale vendor):
+    if the ad has advertisement_item rows:
+      need[componentSku] += item.quantity * saleLine.quantity
+    else:
+      need[saleLine.sku] += saleLine.quantity
+  if any component on_hand is short: do not write movements; keep PendingPayment; stock_short = sku
+  else for each needed sku:
+    INSERT InventoryMovement kind=SalePaid unique (company_id, sale_id, sku, kind)
     on_hand -= qty
 ```
 

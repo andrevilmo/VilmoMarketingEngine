@@ -317,12 +317,13 @@ Vendor subaccount params: Redis cache-aside `vendor-marketplace:{companyId}:{use
 
 **Publish advertisement:**
 
-- Body includes `sku` (or product id) and optional `marketplaceCodes`.
-- **Omitted or empty `marketplaceCodes` = all** enabled company marketplaces where this vendor has a subaccount.
-- Explicit list = only those channels (must belong to the vendor; unknown codes → `400`).
-- Enqueue one command per selected marketplace: `{ companyId, vendorUserId, sku, marketplaceCode }`.
-- Connector uses company app credentials **plus** that vendor's `user_detail_marketplace` parameters, executed through the **generic** binding for that `marketplace_code`.
-- Listing unique `(company_id, vendor_user_id, sku, marketplace_code)` so a retry does not double-publish.
+- `POST /advertisements` (alias `POST /listings`) publishes one **anúncio** for the **selected company** (`X-Company-Id`). Kind is `Product` (one SKU) or `Kit` (set of products as one listing).
+- Body: `title`, `description`, `price`, `availableQuantity` (how many ads/kits to sell), `condition`, `brand`, `gtin`, dimensions, optional `sku` (empty kit SKU → `KIT-…`), optional `vendorUserId` (admin/company), optional `marketplaceCodes`, `items: [{ sku, quantity }]`, `attributes: [{ marketplaceCode, fieldName, fieldValue }]`.
+- **Items:** a kit can have more than one SKU; each line `quantity` is how many stock units of that SKU leave inventory per 1 advertised unit sold. Two items with qty 2 and 1, sale qty 2 → decrement 4 and 2.
+- Common listing fields live on `advertisement`. Per-channel extras (ML category, Shopee `daysToShip`, …) live on `advertisement_attribute`. Catalog: `GET /marketplaces/listing-fields`.
+- **Omitted or empty `marketplaceCodes` = all** enabled company marketplaces (vendor: that vendor's subaccounts). Unknown codes → `400`.
+- One `listing` row per selected marketplace, unique `(company_id, vendor_user_id, sku, marketplace_code)`, FK `advertisement_id`.
+- Enqueue `{ listingId, advertisementId }` per channel. Connector uses company app credentials **plus** that vendor's `user_detail_marketplace` parameters.
 
 ### Sales: common table + marketplace-specific attributes (US-04, US-05)
 
@@ -490,14 +491,16 @@ Auth: bearer session/JWT with `user_id`, `is_platform_super_user`, and membershi
 | `POST` | `/nfe/xml` | Upload XML fallback. Chave from XML must match; emit/dest CNPJ must be compatible with the company CNPJ. |
 | `GET` | `/nfe/chaves/{chaveAcesso}` | Ingestion status for **this company only**. |
 | `POST` | `/sales/{saleId}/commit-stock` | Admin/Company: retry `SalePaid` after restock (`stock_short`). |
-| `GET` | `/products` / `GET /products/{sku}` | Catalog of the active company (includes `sale_price`). Admin/Company. |
+| `GET` | `/products` / `GET /products/{sku}` | Catalog of the active company (includes `sale_price`). List: Admin/Company/Vendor (Anúncios picker). `GET /{sku}` and `POST` stay Admin/Company. |
 | `GET` | `/inventory/{sku}` | On-hand for the active company. Admin/Company. Vendor `404`. |
 | `POST` | `/marketplaces/{code}/connect` | Start OAuth/HMAC for **this company's** shop; `{code}` is the table PK, not an enum. |
 | `GET` | `/oauth/{code}/callback` | Store tokens as parameters; invalidate Redis. Same route for every future code. |
 | `POST` | `/webhooks/{code}` | Verify using that code's `marketplace_webhook_binding`, resolve company **and vendor**, enqueue, 200. |
-| `POST` | `/advertisements` | Vendor publishes a product. `marketplaceCodes` optional; **default all**. One listing per selected marketplace using that vendor's subaccount. |
+| `GET` | `/marketplaces/listing-fields` | Common listing fields (`*`) plus extras per `marketplace_code` for the Anúncios form. |
+| `GET` | `/advertisements` / `GET /listings` | Ads of the active company (vendor: own). Includes `items`, `attributes`, `channels`. |
+| `POST` | `/advertisements` | Publish a product or a **kit** for the selected company. `items[].quantity` is stock units per advertised unit. `marketplaceCodes` optional; **default all**. One `listing` per selected marketplace. |
 | `POST` | `/listings` | Same as `/advertisements` (alias). |
-| `POST` | `/inventory/{sku}/publish` | Fan-out this vendor's stock on selected marketplaces (default all). |
+| `POST` | `/inventory/{sku}/publish` | Fan-out this SKU as a one-item product ad on selected marketplaces (default all). |
 | `GET` | `/sales` | Company/Admin: all sales of the active CNPJ. Vendor: own sales only. Filters: `status`, `marketplace_code`. |
 | `GET` | `/sales/{saleId}` | Common sale + items + EAV attributes (masked). `404` if outside visibility. |
 | `POST` | `/sales/{saleId}/sync` | Enqueue FetchOrder. Admin/Company. |

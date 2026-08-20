@@ -122,7 +122,7 @@ Identity: `company`, `user`, `user_company`, `company_certificate`, `users_detai
 
 Marketplace data: `marketplace`, `marketplace_parameter_definition`, `marketplace_operation_binding`, `marketplace_webhook_binding`, `company_marketplace_config`, `company_marketplace_parameter` (**per-company connection fields**, US-15), `marketplace_sale_field_definition`, `marketplace_sale_status_map`.
 
-Catalog: `product` (`sale_price`), `product_identifier`, `inventory_balance` (`on_hand`), `inventory_movement` (`NfeInbound` / `SalePaid` / `SalePaidReversal`), `listing`.
+Catalog: `product` (`sale_price`), `product_identifier`, `inventory_balance` (`on_hand`), `inventory_movement` (`NfeInbound` / `SalePaid` / `SalePaidReversal`), `advertisement` (product or kit), `advertisement_item` (BOM qty per advertised unit), `advertisement_attribute`, `marketplace_listing_field_definition`, `listing` (`advertisement_id`).
 
 Sales: `sales`, `sale_items`, `sale_marketplace_attributes`, `nfe_documents`, `nfe_ingest_log` (append-only ingest progress: user message + technical JSON), `shipment_labels`.
 
