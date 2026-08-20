@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html class="h-full" data-kt-theme="true" data-kt-theme-mode="light" lang="pt-BR">
+<head>
+  <base href="/web/">
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Vilmo — Entrar</title>
+  <link rel="shortcut icon" href="assets/media/app/favicon.ico"/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+  <link href="assets/vendors/keenicons/styles.bundle.css" rel="stylesheet"/>
+  <link href="assets/css/styles.css" rel="stylesheet"/>
+  <link href="css/vilmo.css" rel="stylesheet"/>
+</head>
+<body class="antialiased flex h-full text-base text-foreground bg-background">
+  <div class="grid lg:grid-cols-2 grow">
+    <div class="flex justify-center items-center p-8 lg:p-10 order-2 lg:order-1">
+      <div class="kt-card max-w-[390px] w-full">
+        <form id="login-form" class="kt-card-content flex flex-col gap-5 p-10">
+          <div class="text-center mb-2">
+            <div class="text-xs font-semibold tracking-[0.2em] text-primary mb-3">VILMO</div>
+            <h3 class="text-lg font-medium text-mono leading-none mb-2">Entrar</h3>
+            <div class="text-sm text-secondary-foreground">Admin, empresa ou vendedor — um único login.</div>
+          </div>
+          <div id="login-error" class="hidden kt-alert kt-alert-danger text-sm"></div>
+          <div class="flex flex-col gap-1">
+            <label class="kt-form-label">E-mail</label>
+            <input id="email" class="kt-input" type="email" autocomplete="username" placeholder="admin@vilmomkt.com" required/>
+          </div>
+          <div class="flex flex-col gap-1">
+            <label class="kt-form-label">Senha</label>
+            <input id="password" class="kt-input" type="password" autocomplete="current-password" required/>
+          </div>
+          <button id="login-btn" class="kt-btn kt-btn-primary flex justify-center grow" type="submit">Entrar</button>
+        </form>
+      </div>
+    </div>
+    <div class="lg:rounded-xl lg:border lg:border-border lg:m-5 order-1 lg:order-2 branded-bg">
+      <div class="flex flex-col p-8 lg:p-16 gap-4">
+        <div class="text-2xl font-semibold text-white">Vilmo Marketing Engine</div>
+        <div class="text-white/80 max-w-md">Estoque pela NF-e, vendas dos marketplaces, emissão de nota e etiqueta 10×15 — no mesmo lugar.</div>
+      </div>
+    </div>
+  </div>
+  <script src="js/app.js"></script>
+  <script>Vilmo.bootLogin();</script>
+</body>
+</html>

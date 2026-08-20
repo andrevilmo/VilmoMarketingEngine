@@ -1,0 +1,39 @@
+# Low-memory overlay for t3.micro (1 GiB + 2G swap).
+# docker compose -f docker-compose.yml -f aws/docker-compose.aws.yml -f aws/docker-compose.tls.yml up -d --build
+
+services:
+  postgres:
+    command:
+      - postgres
+      - -c
+      - shared_buffers=64MB
+      - -c
+      - effective_cache_size=128MB
+      - -c
+      - max_connections=40
+      - -c
+      - work_mem=2MB
+    mem_limit: 220m
+
+  redis:
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "48mb", "--maxmemory-policy", "noeviction"]
+    mem_limit: 64m
+
+  vilmo-gateway:
+    mem_limit: 48m
+
+  vilmo-web:
+    mem_limit: 32m
+
+  vilmo-api:
+    mem_limit: 280m
+    volumes:
+      - /opt/vilmo/certs:/certs:ro
+
+  vilmo-nfe:
+    mem_limit: 220m
+    volumes:
+      - /opt/vilmo/certs:/certs:ro
+
+  vilmo-worker:
+    mem_limit: 180m

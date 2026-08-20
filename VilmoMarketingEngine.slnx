@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Vilmo.Api/Vilmo.Api.csproj" />
+    <Project Path="src/Vilmo.App/Vilmo.App.csproj" />
+    <Project Path="src/Vilmo.Nfe/Vilmo.Nfe.csproj" />
+    <Project Path="src/Vilmo.Worker/Vilmo.Worker.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Vilmo.Tests/Vilmo.Tests.csproj" />
+  </Folder>
+</Solution>

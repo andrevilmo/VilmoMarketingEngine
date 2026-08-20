@@ -1,0 +1,146 @@
+# Public: vilmo-gateway :80 (and :443 with aws/docker-compose.tls.yml).
+# Backends stay on the Docker network.
+
+name: vilmo
+
+x-dotnet-env: &dotnet-env
+  ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=vilmo;Username=vilmo;Password=${POSTGRES_PASSWORD:-vilmo}
+  POSTGRES_CONNECTION: Host=postgres;Port=5432;Database=vilmo;Username=vilmo;Password=${POSTGRES_PASSWORD:-vilmo}
+  JWT_SIGNING_KEY: ${JWT_SIGNING_KEY:-vilmo-dev-jwt-signing-key-change-me-32}
+  DATA_PROTECTION_KEY: ${DATA_PROTECTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+  BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-VilmoAdmin!2026}
+  BOOTSTRAP_COMPANY_PASSWORD: ${BOOTSTRAP_COMPANY_PASSWORD:-VilmoAdmin!2026}
+  BOOTSTRAP_VENDOR_PASSWORD: ${BOOTSTRAP_VENDOR_PASSWORD:-VilmoAdmin!2026}
+  PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-https://vilmomkt.com}
+  FIRST_COMPANY_JSON: /app/seed/first-company.json
+  Nfe__CertificatesDirectory: /certs
+  COMPANY_68431371000161_A1_PASSWORD: ${COMPANY_68431371000161_A1_PASSWORD:-}
+  COMPANY_68431371000161_A1_PASSWORD_FILE: /certs/68431371000161.pfx.pass
+
+services:
+  vilmo-gateway:
+    image: vilmo-gateway
+    build:
+      context: ./gateway
+    container_name: vilmo-gateway
+    hostname: vilmo-gateway
+    ports:
+      - "${GATEWAY_PORT:-80}:80"
+    depends_on:
+      vilmo-web:
+        condition: service_healthy
+      vilmo-api:
+        condition: service_healthy
+      vilmo-nfe:
+        condition: service_healthy
+      vilmo-worker:
+        condition: service_healthy
+    networks: [vilmo]
+    restart: unless-stopped
+
+  vilmo-web:
+    image: vilmo-web
+    build:
+      context: ..
+      dockerfile: deploy/web.Dockerfile
+    container_name: vilmo-web
+    hostname: vilmo-web
+    networks: [vilmo]
+    restart: unless-stopped
+
+  vilmo-api:
+    image: vilmo-api
+    build:
+      context: ..
+      dockerfile: deploy/api.Dockerfile
+    container_name: vilmo-api
+    hostname: vilmo-api
+    environment:
+      <<: *dotnet-env
+    volumes:
+      - ${A1_CERTS_DIR:-../.secrets/certs}:/certs:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [vilmo]
+    restart: unless-stopped
+
+  vilmo-nfe:
+    image: vilmo-nfe
+    build:
+      context: ..
+      dockerfile: deploy/nfe.Dockerfile
+    container_name: vilmo-nfe
+    hostname: vilmo-nfe
+    environment:
+      <<: *dotnet-env
+    volumes:
+      - ${A1_CERTS_DIR:-../.secrets/certs}:/certs:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      vilmo-api:
+        condition: service_healthy
+    networks: [vilmo]
+    restart: unless-stopped
+
+  vilmo-worker:
+    image: vilmo-worker
+    build:
+      context: ..
+      dockerfile: deploy/worker.Dockerfile
+    container_name: vilmo-worker
+    hostname: vilmo-worker
+    environment:
+      <<: *dotnet-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      vilmo-api:
+        condition: service_healthy
+    networks: [vilmo]
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: vilmo-postgres
+    hostname: postgres
+    environment:
+      POSTGRES_USER: vilmo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vilmo}
+      POSTGRES_DB: vilmo
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks: [vilmo]
+    expose: ["5432"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vilmo -d vilmo"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+
+  redis:
+    image: redis:7-alpine
+    container_name: vilmo-redis
+    hostname: redis
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    networks: [vilmo]
+    expose: ["6379"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
+networks:
+  vilmo:
+    name: vilmo-internal
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:

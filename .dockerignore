@@ -1,0 +1,15 @@
+**/bin/
+**/obj/
+**/.vs/
+.git/
+.secrets/
+.env
+*.pfx
+*.pdf
+template-metronic/**/node_modules/
+template-metronic/**/metronic-tailwind-react-demos/
+template-metronic/**/metronic-tailwind-react-starter-kit/
+template-metronic/**/metronic-tailwind-react-concepts/
+template-metronic/**/metronic-tailwind-nextjs-landings/
+template-metronic/**/metronic-tailwind-html-demos/
+template-metronic/**/metronic-tailwind-html-starter-kit/src/

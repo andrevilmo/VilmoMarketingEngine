@@ -1,0 +1,11 @@
+# Applied after Let's Encrypt exists on the host.
+# docker compose -f docker-compose.yml -f aws/docker-compose.aws.yml -f aws/docker-compose.tls.yml up -d
+
+services:
+  vilmo-gateway:
+    ports:
+      - "${GATEWAY_PORT:-80}:80"
+      - "443:443"
+    volumes:
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - ./aws/nginx-ssl.conf:/etc/nginx/nginx.conf:ro

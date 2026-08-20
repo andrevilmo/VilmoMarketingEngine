@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html class="h-full" data-kt-theme="true" data-kt-theme-mode="light" lang="pt-BR">
+<head>
+  <base href="/web/">
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Vilmo</title>
+  <link rel="shortcut icon" href="assets/media/app/favicon.ico"/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+  <link href="assets/vendors/keenicons/styles.bundle.css" rel="stylesheet"/>
+  <link href="assets/css/styles.css" rel="stylesheet"/>
+  <link href="css/vilmo.css" rel="stylesheet"/>
+</head>
+<body class="antialiased flex h-full text-base text-foreground bg-background">
+  <div class="flex grow">
+    <aside id="sidebar" class="kt-sidebar bg-background border-e border-e-border hidden lg:flex flex-col w-[260px] shrink-0">
+      <div class="px-6 py-5 flex items-center gap-2">
+        <div class="size-8 rounded-md bg-primary text-white flex items-center justify-center font-bold">V</div>
+        <div>
+          <div class="font-semibold">Vilmo</div>
+          <div class="text-xs text-muted-foreground">Marketing Engine</div>
+        </div>
+      </div>
+      <nav id="menu" class="flex flex-col gap-0.5 px-3 pb-6 overflow-auto"></nav>
+    </aside>
+    <div class="flex flex-col grow min-w-0">
+      <header class="flex items-center justify-between gap-3 px-4 lg:px-8 py-3 border-b border-border bg-background">
+        <button id="menu-toggle" class="lg:hidden kt-btn kt-btn-ghost kt-btn-icon" type="button">☰</button>
+        <div class="flex items-center gap-3 ms-auto">
+          <select id="company-switcher" class="kt-select kt-select-sm min-w-[240px] hidden"></select>
+          <span id="role-badge" class="kt-badge kt-badge-primary">—</span>
+          <span id="user-name" class="text-sm font-medium"></span>
+          <button id="logout" class="kt-btn kt-btn-sm kt-btn-outline" type="button">Sair</button>
+        </div>
+      </header>
+      <main id="view" class="grow p-4 lg:p-8 overflow-auto"></main>
+    </div>
+  </div>
+  <script src="js/app.js"></script>
+  <script>Vilmo.bootApp();</script>
+</body>
+</html>
