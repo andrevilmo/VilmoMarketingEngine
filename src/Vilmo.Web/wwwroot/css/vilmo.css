@@ -61,4 +61,9 @@
 .ingest-level { font-size: .7rem; text-transform: uppercase; letter-spacing: .03em; font-weight: 600; }
 .ingest-level.info { color: #0f766e; }
 .ingest-level.warning { color: #b45309; }
-.ingest-level.error { color: #b91c1c; }
+.ad-item-row { display: flex; gap: .5rem; align-items: flex-end; flex-wrap: wrap; margin-bottom: .5rem; }
+.ad-item-row label { flex: 1; min-width: 160px; }
+.ad-item-row .qty { max-width: 110px; }
+.ad-extra { display: none; margin-top: .75rem; padding-top: .75rem; border-top: 1px dashed #e5e7eb; }
+.ad-extra.on { display: block; }
+.ad-kind { display: flex; gap: 1rem; }

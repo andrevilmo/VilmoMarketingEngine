@@ -314,10 +314,11 @@ public static class Endpoints
 
         app.MapGet("/products", async (HttpContext http, AppDbContext db, ProductService products, CancellationToken ct) =>
         {
-            var ctx = await NeedNotVendor(http, db, ct);
-            if (ctx is IResult r) return r;
-            var c = (CompanyContext)ctx;
-            return Results.Ok(await products.ListAsync(c.RequireCompany(), ct));
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            var ctx = (CompanyContext)ctxr;
+            if (ctx.CompanyId is null) return Results.BadRequest(new { error = "CompanyRequired" });
+            return Results.Ok(await products.ListAsync(ctx.RequireCompany(), ct));
         }).RequireAuthorization();
 
         app.MapPost("/products", async (ProductDraft body, HttpContext http, AppDbContext db, ProductService products, CancellationToken ct) =>
@@ -341,26 +342,48 @@ public static class Endpoints
             return p is null ? Results.NotFound() : Results.Ok(p);
         }).RequireAuthorization();
 
-        app.MapPost("/advertisements", Publish).RequireAuthorization();
-        app.MapPost("/listings", Publish).RequireAuthorization();
-        app.MapGet("/listings", async (HttpContext http, AppDbContext db, CancellationToken ct) =>
+        app.MapGet("/marketplaces/listing-fields", async (HttpContext http, AppDbContext db, AdvertisementService ads, CancellationToken ct) =>
         {
             var ctxr = await Need(http, db, ct);
             if (ctxr is IResult r) return r;
-            var ctx = (CompanyContext)ctxr;
-            var q = db.Listings.AsNoTracking().Where(l => l.CompanyId == ctx.CompanyId);
-            if (ctx.IsVendor) q = q.Where(l => l.VendorUserId == ctx.UserId);
-            return Results.Ok(await q.OrderByDescending(l => l.Id).Take(200).ToListAsync(ct));
+            return Results.Ok(await ads.ListingFieldsAsync(ct));
         }).RequireAuthorization();
 
-        app.MapPost("/inventory/{sku}/publish", async (string sku, JsonElement body, HttpContext http, AppDbContext db, ProductService products, CancellationToken ct) =>
+        app.MapPost("/advertisements", Publish).RequireAuthorization();
+        app.MapPost("/listings", Publish).RequireAuthorization();
+        app.MapGet("/listings", async (HttpContext http, AppDbContext db, AdvertisementService ads, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            return Results.Ok(await ads.ListAsync((CompanyContext)ctxr, ct));
+        }).RequireAuthorization();
+
+        app.MapGet("/advertisements", async (HttpContext http, AppDbContext db, AdvertisementService ads, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            return Results.Ok(await ads.ListAsync((CompanyContext)ctxr, ct));
+        }).RequireAuthorization();
+
+        app.MapPost("/inventory/{sku}/publish", async (string sku, JsonElement body, HttpContext http, AppDbContext db, AdvertisementService ads, CancellationToken ct) =>
         {
             var ctxr = await Need(http, db, ct);
             if (ctxr is IResult r) return r;
             var ctx = (CompanyContext)ctxr;
-            var codes = ReadCodes(body);
-            var vendorId = ctx.IsVendor ? ctx.UserId : (body.TryGetProperty("vendorUserId", out var v) && Guid.TryParse(v.GetString(), out var id) ? id : ctx.UserId);
-            return Results.Ok(await products.PublishAsync(ctx.RequireCompany(), vendorId, sku, codes, ct));
+            using var doc = JsonDocument.Parse(JsonSerializer.Serialize(new
+            {
+                sku,
+                kind = AdvertisementKinds.Product,
+                marketplaceCodes = ReadCodes(body),
+                vendorUserId = ctx.IsVendor ? ctx.UserId : (body.TryGetProperty("vendorUserId", out var v) && Guid.TryParse(v.GetString(), out var id) ? id : ctx.UserId),
+                items = new[] { new { sku, quantity = 1m } }
+            }));
+            try
+            {
+                return Results.Ok(await ads.PublishAsync(ctx.RequireCompany(), ctx.UserId, ctx.IsVendor, doc.RootElement.Clone(), ct));
+            }
+            catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+            catch (KeyNotFoundException) { return Results.NotFound(); }
         }).RequireAuthorization();
 
         app.MapPost("/nfe/chaves/{chave}/ingest", async (string chave, JsonElement body, HttpContext http, AppDbContext db, NfeIngestService nfe, CancellationToken ct) =>
@@ -617,18 +640,20 @@ public static class Endpoints
             return Results.Ok(new { ctx.Level, companies, users, lowStock, salesByStatus = byStatus });
         }).RequireAuthorization();
 
-        static async Task<IResult> Publish(JsonElement body, HttpContext http, AppDbContext db, ProductService products, CancellationToken ct)
+        static async Task<IResult> Publish(JsonElement body, HttpContext http, AppDbContext db, AdvertisementService ads, CancellationToken ct)
         {
             var ctxr = await Need(http, db, ct);
             if (ctxr is IResult r) return r;
             var ctx = (CompanyContext)ctxr;
-            var sku = body.GetProperty("sku").GetString() ?? "";
-            var codes = ReadCodes(body);
-            var vendorId = ctx.IsVendor ? ctx.UserId : (body.TryGetProperty("vendorUserId", out var v) && Guid.TryParse(v.GetString(), out var id) ? id : ctx.UserId);
             return await WithIdempotency(http, db, ctx.RequireCompany(), async () =>
             {
-                var created = await products.PublishAsync(ctx.RequireCompany(), vendorId, sku, codes, ct);
-                return (201, created);
+                try
+                {
+                    var created = await ads.PublishAsync(ctx.RequireCompany(), ctx.UserId, ctx.IsVendor, body, ct);
+                    return (201, created);
+                }
+                catch (ArgumentException ex) { return (400, (object)new { error = ex.Message }); }
+                catch (KeyNotFoundException ex) { return (404, (object)new { error = ex.Message }); }
             }, ct);
         }
     }

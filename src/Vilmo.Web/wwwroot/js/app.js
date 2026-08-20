@@ -379,9 +379,68 @@ const Vilmo = (() => {
   }
 
   async function viewListings() {
-    const list = await api("/listings");
-    const rows = list.map(l => `<tr><td>${l.sku}</td><td>${l.marketplaceCode}</td><td>${l.status}</td><td>${l.remoteId || ""}</td></tr>`);
-    return page("Anúncios", "", table(["SKU", "Marketplace", "Status", "Id remoto"], rows));
+    const [ads, products, fields, markets] = await Promise.all([
+      api("/advertisements"),
+      api("/products"),
+      api("/marketplaces/listing-fields"),
+      api("/marketplaces")
+    ]);
+    let vendors = [];
+    if (store.me.level !== "Vendor") {
+      try { vendors = await api(`/companies/${store.companyId}/vendors`); } catch { vendors = []; }
+    }
+    const productOpts = (products || []).map(p => `<option value="${esc(p.sku)}">${esc(p.sku)} · ${esc(p.name)}</option>`).join("");
+    const extraByMkt = fields.byMarketplace || {};
+    const extras = (markets || []).map(m => {
+      const defs = extraByMkt[m.code] || extraByMkt[m.Code] || [];
+      if (!defs.length) return "";
+      const inputs = defs.map(d => `<label>${esc(d.label)}<input class="kt-input attr-field" data-mkt="${esc(m.code)}" data-key="${esc(d.fieldKey)}" ${d.required ? "required" : ""}></label>`).join("");
+      return `<div class="ad-extra" data-extra="${esc(m.code)}"><h4 class="text-sm font-medium mb-2">${esc(m.displayName || m.code)}</h4><div class="vilmo-grid cols-2">${inputs}</div></div>`;
+    }).join("");
+    const checks = (markets || []).map(m => `<label class="text-sm"><input type="checkbox" class="mkt-code" value="${esc(m.code)}" checked> ${esc(m.displayName || m.code)}</label>`).join("");
+    const vendorSel = store.me.level === "Vendor" ? "" : `<label>Vendedor (opcional)
+      <select class="kt-select" name="vendorUserId"><option value="">Eu / empresa</option>${(vendors || []).map(v => `<option value="${v.id || v.userId || ""}">${esc(v.name || v.email || "")}</option>`).join("")}</select></label>`;
+    const rows = (ads || []).map(a => {
+      const items = (a.items || []).map(i => `${i.quantity}× ${i.sku}`).join(", ");
+      const ch = (a.channels || []).map(c => `${c.marketplaceCode}:${c.status}`).join(" · ");
+      return `<tr><td>${esc(a.title)}<div class="text-xs text-muted-foreground">${esc(a.sku)} · ${a.kind === "Kit" ? "conjunto" : "produto"}</div></td><td>${esc(items)}</td><td>${a.price}</td><td>${a.availableQuantity}</td><td>${esc(ch)}</td></tr>`;
+    });
+    return page("Anúncios", "", `
+      <form id="ad-form" class="vilmo-card vilmo-grid cols-2 mb-4">
+        <h3 class="col-span-2 font-medium">Publicar anúncio</h3>
+        <p class="col-span-2 text-sm text-muted-foreground">Um produto ou um conjunto (kit). Cada linha do conjunto tem o SKU e a quantidade que sai do estoque quando a venda for paga.</p>
+        <div class="col-span-2 ad-kind">
+          <label class="text-sm"><input type="radio" name="kind" value="Product" checked> Um produto</label>
+          <label class="text-sm"><input type="radio" name="kind" value="Kit"> Conjunto / kit</label>
+        </div>
+        ${vendorSel}
+        <label>Título<input class="kt-input" name="title" required></label>
+        <label>SKU do anúncio (vazio = SKU do produto ou KIT-…)<input class="kt-input" name="sku"></label>
+        <label class="col-span-2">Descrição<textarea class="kt-input" name="description" rows="3"></textarea></label>
+        <label>Preço (BRL)<input class="kt-input" name="price" type="number" step="0.01" min="0" required></label>
+        <label>Quantidade do anúncio<input class="kt-input" name="availableQuantity" type="number" step="1" min="1" value="1" required></label>
+        <label>Condição<select class="kt-select" name="condition"><option value="new">Novo</option><option value="used">Usado</option></select></label>
+        <label>Marca<input class="kt-input" name="brand"></label>
+        <label>EAN / GTIN<input class="kt-input" name="gtin"></label>
+        <label>Peso (g)<input class="kt-input" name="weightGrams" type="number" step="1" min="0"></label>
+        <label>Altura (cm)<input class="kt-input" name="heightCm" type="number" step="0.1" min="0"></label>
+        <label>Largura (cm)<input class="kt-input" name="widthCm" type="number" step="0.1" min="0"></label>
+        <label>Comprimento (cm)<input class="kt-input" name="lengthCm" type="number" step="0.1" min="0"></label>
+        <div class="col-span-2">
+          <div class="font-medium text-sm mb-2">Itens do anúncio (estoque)</div>
+          <div id="ad-items" class="ad-items"></div>
+          <template id="ad-item-options">${productOpts}</template>
+          <button class="kt-btn kt-btn-outline kt-btn-sm" type="button" id="ad-add-item">Adicionar item</button>
+        </div>
+        <div class="col-span-2">
+          <div class="font-medium text-sm mb-2">Marketplaces</div>
+          <div class="flex flex-wrap gap-3">${checks}</div>
+          ${extras}
+        </div>
+        <div class="col-span-2"><button class="kt-btn kt-btn-primary" type="submit">Publicar</button></div>
+        <div id="ad-msg" class="col-span-2"></div>
+      </form>
+      ${table(["Anúncio", "Itens (estoque)", "Preço", "Qtd anúncio", "Canais"], rows)}`);
   }
 
   async function viewSales() {
@@ -560,9 +619,85 @@ const Vilmo = (() => {
       renderRoute();
     };
     document.querySelectorAll(".pub").forEach(btn => btn.onclick = async () => {
-      await api("/advertisements", { method: "POST", body: { sku: btn.dataset.sku } });
+      await api("/advertisements", { method: "POST", body: { sku: btn.dataset.sku, kind: "Product", items: [{ sku: btn.dataset.sku, quantity: 1 }] } });
       location.hash = "#/anuncios";
     });
+    if ($("#ad-form")) {
+      const opts = ($("#ad-item-options") && $("#ad-item-options").innerHTML) || "";
+      const itemsBox = $("#ad-items");
+      const addRow = (sku, qty) => {
+        const row = document.createElement("div");
+        row.className = "ad-item-row";
+        row.innerHTML = `<label>Produto<select class="kt-select item-sku">${opts}</select></label>
+          <label class="qty">Qtd no conjunto<input class="kt-input item-qty" type="number" min="1" step="1" value="${qty || 1}"></label>
+          <button class="kt-btn kt-btn-outline kt-btn-sm item-del" type="button">Remover</button>`;
+        if (sku) row.querySelector(".item-sku").value = sku;
+        row.querySelector(".item-del").onclick = () => {
+          if (itemsBox.querySelectorAll(".ad-item-row").length > 1) row.remove();
+        };
+        itemsBox.appendChild(row);
+      };
+      addRow();
+      if ($("#ad-add-item")) $("#ad-add-item").onclick = () => addRow();
+      const syncKind = () => {
+        const kit = ($("#ad-form").kind.value === "Kit");
+        $("#ad-add-item").classList.toggle("hidden", !kit);
+        const rows = itemsBox.querySelectorAll(".ad-item-row");
+        rows.forEach((row, i) => {
+          row.querySelector(".item-del").classList.toggle("hidden", !kit);
+          row.querySelector(".qty").classList.toggle("hidden", !kit);
+          if (!kit) row.querySelector(".item-qty").value = 1;
+          if (!kit && i > 0) row.remove();
+        });
+      };
+      $("#ad-form").querySelectorAll("input[name=kind]").forEach(r => r.onchange = syncKind);
+      syncKind();
+      const syncExtras = () => {
+        const selected = [...document.querySelectorAll(".mkt-code:checked")].map(c => c.value);
+        document.querySelectorAll(".ad-extra").forEach(el => el.classList.toggle("on", selected.includes(el.dataset.extra)));
+      };
+      document.querySelectorAll(".mkt-code").forEach(c => c.onchange = syncExtras);
+      syncExtras();
+      $("#ad-form").onsubmit = async (e) => {
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        const items = [...itemsBox.querySelectorAll(".ad-item-row")].map(row => ({
+          sku: row.querySelector(".item-sku").value,
+          quantity: Number(row.querySelector(".item-qty").value || 1)
+        })).filter(i => i.sku && i.quantity > 0);
+        const marketplaceCodes = [...document.querySelectorAll(".mkt-code:checked")].map(c => c.value);
+        const attributes = [...document.querySelectorAll(".attr-field")]
+          .filter(inp => marketplaceCodes.includes(inp.dataset.mkt) && inp.value)
+          .map(inp => ({ marketplaceCode: inp.dataset.mkt, fieldName: inp.dataset.key, fieldValue: inp.value }));
+        const num = (k) => { const v = fd.get(k); return v === "" || v == null ? null : Number(v); };
+        const body = {
+          kind: fd.get("kind"),
+          sku: fd.get("sku") || undefined,
+          title: fd.get("title"),
+          description: fd.get("description") || undefined,
+          price: num("price"),
+          availableQuantity: num("availableQuantity"),
+          condition: fd.get("condition"),
+          brand: fd.get("brand") || undefined,
+          gtin: fd.get("gtin") || undefined,
+          weightGrams: num("weightGrams"),
+          heightCm: num("heightCm"),
+          widthCm: num("widthCm"),
+          lengthCm: num("lengthCm"),
+          vendorUserId: fd.get("vendorUserId") || undefined,
+          marketplaceCodes,
+          items,
+          attributes
+        };
+        const msg = $("#ad-msg");
+        try {
+          await api("/advertisements", { method: "POST", body });
+          renderRoute();
+        } catch (ex) {
+          if (msg) msg.innerHTML = `<div class="kt-alert kt-alert-danger">${esc(ex.message)}</div>`;
+        }
+      };
+    }
     if ($("#vendor-form")) $("#vendor-form").onsubmit = async (e) => {
       e.preventDefault();
       const fd = new FormData(e.target);
