@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:xhtml="http://www.w3.org/1999/xhtml">
+  <url>
+    <loc>https://vilmomkt.com/</loc>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://vilmomkt.com/"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://vilmomkt.com/en/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://vilmomkt.com/"/>
+  </url>
+  <url>
+    <loc>https://vilmomkt.com/en/</loc>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://vilmomkt.com/"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://vilmomkt.com/en/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://vilmomkt.com/"/>
+  </url>
+  <url>
+    <loc>https://vilmomkt.com/privacidade/</loc>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://vilmomkt.com/privacidade/"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://vilmomkt.com/en/privacy/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://vilmomkt.com/privacidade/"/>
+  </url>
+  <url>
+    <loc>https://vilmomkt.com/en/privacy/</loc>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://vilmomkt.com/privacidade/"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://vilmomkt.com/en/privacy/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://vilmomkt.com/privacidade/"/>
+  </url>
+  <url>
+    <loc>https://vilmomkt.com/termos/</loc>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://vilmomkt.com/termos/"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://vilmomkt.com/en/terms/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://vilmomkt.com/termos/"/>
+  </url>
+  <url>
+    <loc>https://vilmomkt.com/en/terms/</loc>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://vilmomkt.com/termos/"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://vilmomkt.com/en/terms/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://vilmomkt.com/termos/"/>
+  </url>
+  <url>
+    <loc>https://vilmomkt.com/cookies/</loc>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://vilmomkt.com/cookies/"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://vilmomkt.com/en/cookies/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://vilmomkt.com/cookies/"/>
+  </url>
+  <url>
+    <loc>https://vilmomkt.com/en/cookies/</loc>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://vilmomkt.com/cookies/"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://vilmomkt.com/en/cookies/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://vilmomkt.com/cookies/"/>
+  </url>
+  <url>
+    <loc>https://vilmomkt.com/contato/</loc>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://vilmomkt.com/contato/"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://vilmomkt.com/en/contact/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://vilmomkt.com/contato/"/>
+  </url>
+  <url>
+    <loc>https://vilmomkt.com/en/contact/</loc>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://vilmomkt.com/contato/"/>
+    <xhtml:link rel="alternate" hreflang="en" href="https://vilmomkt.com/en/contact/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://vilmomkt.com/contato/"/>
+  </url>
+</urlset>

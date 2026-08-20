@@ -1,0 +1,10 @@
+User-agent: *
+Allow: /
+Disallow: /web/
+Disallow: /api/
+Disallow: /nfe/
+Disallow: /worker/
+Disallow: /oauth/
+Disallow: /webhooks/
+
+Sitemap: https://vilmomkt.com/sitemap.xml
