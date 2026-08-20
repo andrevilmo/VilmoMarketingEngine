@@ -21,7 +21,8 @@ services:
   vilmo-gateway:
     image: vilmo-gateway
     build:
-      context: ./gateway
+      context: .
+      dockerfile: gateway/Dockerfile
     container_name: vilmo-gateway
     hostname: vilmo-gateway
     ports:

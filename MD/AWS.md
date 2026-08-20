@@ -15,7 +15,9 @@ Never put AWS or app passwords in the repository. Do not use the AWS **root** us
 
 **Public site (HTTPS):**
 
-- https://vilmomkt.com/web/ — Metronic UI
+- https://vilmomkt.com/ — commercial index PT (US-17, 200 HTML). CNPJ **68.431.371/0001-61**, contact **`admin@vilmomkt.com`**, cookie bar, privacy/terms.
+- https://vilmomkt.com/en/ — commercial index EN (same story)
+- https://vilmomkt.com/web/ — Metronic UI (login + app)
 - https://vilmomkt.com/api/health — `vilmo-api`
 - Seeded login: `admin@vilmomkt.com` (password from host env `BOOTSTRAP_ADMIN_PASSWORD`, not git)
 
