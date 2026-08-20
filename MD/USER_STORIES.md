@@ -12,9 +12,46 @@ UI copy in Portuguese; API codes in English.
 
 `Operator` / `Viewer` are staff profiles (warehouse / read-only), not a fourth login persona.
 
-Index: [US-01](#us-01--login-as-a-user) login · [US-02](#us-02--show-information-at-my-user-level) home by level · [US-03](#us-03--admin-creates-a-company-ready-to-operate) admin creates company · [US-15](#us-15--edit-each-marketplace-connection-on-the-company) edit marketplace connections · [US-08](#us-08--admin-creates-users) admin creates users · [US-09](#us-09--admin-creates-a-company-user-with-marketplace-access) admin creates company user · [US-10](#us-10--admin-creates-a-vendor-user-and-related-marketplace-users) admin creates vendor · [US-11](#us-11--company-user-creates-vendors-and-checks-their-sales) company creates vendors · [US-12](#us-12--vendor-checks-own-sales-and-status) vendor sales · [US-13](#us-13--admin-and-company-see-stock-and-set-sale-price) stock + sale price · [US-14](#us-14--ingest-nf-e-by-cnpj-and-chave-to-increase-stock) NF-e ingest to stock · [US-16](#us-16--iosandroid-app-scan-nfe-and-encrypted-ingest) iOS/Android NF-e scanner · [US-04](#us-04--sales-stay-in-sync-common-table--per-marketplace-attributes)–[US-07](#us-07--after-preparando-para-envio-print-correios-format-shipping-label) sales / NF-e / label. Paid sales **decrease company stock** (US-13).
+Index: [US-17](#us-17--public-commercial-homepage) public `/` · [US-01](#us-01--login-as-a-user) login · [US-02](#us-02--show-information-at-my-user-level) home by level · [US-03](#us-03--admin-creates-a-company-ready-to-operate) admin creates company · [US-15](#us-15--edit-each-marketplace-connection-on-the-company) edit marketplace connections · [US-08](#us-08--admin-creates-users) admin creates users · [US-09](#us-09--admin-creates-a-company-user-with-marketplace-access) admin creates company user · [US-10](#us-10--admin-creates-a-vendor-user-and-related-marketplace-users) admin creates vendor · [US-11](#us-11--company-user-creates-vendors-and-checks-their-sales) company creates vendors · [US-12](#us-12--vendor-checks-own-sales-and-status) vendor sales · [US-13](#us-13--admin-and-company-see-stock-and-set-sale-price) stock + sale price · [US-14](#us-14--ingest-nf-e-by-cnpj-and-chave-to-increase-stock) NF-e ingest to stock · [US-16](#us-16--iosandroid-app-scan-nfe-and-encrypted-ingest) iOS/Android NF-e scanner · [US-04](#us-04--sales-stay-in-sync-common-table--per-marketplace-attributes)–[US-07](#us-07--after-preparando-para-envio-print-correios-format-shipping-label) sales / NF-e / label. Paid sales **decrease company stock** (US-13).
 
 **Screens:** [WIREFRAMES.md](./WIREFRAMES.md). **First company seed:** [FirstCompany.md](./FirstCompany.md).
+
+---
+
+## US-17 — Public commercial homepage
+
+**As** a visitor (dropship operator, company, or future vendor)  
+**I want** `https://vilmomkt.com/` to explain Vilmo in commercial Portuguese, with search-engine metadata  
+**So that** I understand the product **before** I sign in, and Google indexes benefits instead of the login screen.
+
+Plan: [PLAN.md](./PLAN.md) §3.7. UI: [UI.md](./UI.md).
+
+### Flow
+
+```
+GET  https://vilmomkt.com/          → 200 static HTML (deploy/site/)
+        │
+        ├── Header right: Entrar → GET /web/   (US-01)
+        └── Sections: empresas, vendedores, dropshipping, como funciona, FAQ
+GET  /web/                          → Metronic login (noindex)
+```
+
+### Rules
+
+- Copy is in the **HTML** (not loaded only after JS). One `h1`. `lang="pt-BR"`.
+- **Entrar** is top-right (`<a href="/web/">`). No login modal on `/`.
+- No JWT, no `/api` calls, no secrets, no stock numbers from production.
+- `robots.txt` allows `/` and disallows `/web/`, `/api/`, `/nfe/`, `/worker/`, `/oauth/`, `/webhooks/`.
+- `sitemap.xml` lists `/` only (v1). Canonical `https://vilmomkt.com/`.
+- Honest dropship pitch: company owns inventory (NF-e) and vendors sell on marketplaces; not a third-party supplier catalog.
+
+### SEO acceptance
+
+- View-source (JS off) still shows the commercial paragraphs.
+- Unique `<title>` + meta description.
+- `Organization` + `WebSite` + `FAQPage` JSON-LD.
+- Open Graph tags + `og:image`.
+- `/` is HTTP 200, **not** 302 to `/web/`.
 
 ---
 
@@ -27,7 +64,7 @@ Index: [US-01](#us-01--login-as-a-user) login · [US-02](#us-02--show-informatio
 ### Flow
 
 ```
-GET  /          → Metronic branded sign-in (demo1)
+GET  /web/      → Metronic branded sign-in (demo1)
 POST /auth/login  { email, password }
         │
         ├── 401 InvalidCredentials (same message for unknown email / bad password)
@@ -45,7 +82,7 @@ JWT claims: user_id, email, is_platform_super_user,
 
 ### Acceptance
 
-- One login screen for all levels. No separate “admin URL”.
+- One login screen for all levels at **`/web/`**. Public marketing is **`/`** (US-17). No separate “admin URL”.
 - Email is unique globally. Password hashed (Argon2id or ASP.NET Identity defaults). Never returned.
 - Seeded admin: `admin@vilmomkt.com`, password from gitignored secret.
 - Token: bearer JWT, short TTL (e.g. 8h) + optional refresh. Sent as `Authorization: Bearer`.

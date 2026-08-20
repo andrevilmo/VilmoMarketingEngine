@@ -1,12 +1,13 @@
 # Wireframes & mockups — Vilmo screens (plan)
 
-Visual explanation of the UI understood so far. **Not implemented** — these are planning mockups. Runtime still copies Metronic 9.5.0 HTML (layout-1 + demo1). See [UI.md](./UI.md) and [USER_STORIES.md](./USER_STORIES.md).
+Visual explanation of the UI understood so far. **Not implemented** — these are planning mockups. Runtime still copies Metronic 9.5.0 HTML (layout-1 + demo1) **under `/web/`**. Public `/` is a separate static commercial page (US-17). See [UI.md](./UI.md) and [USER_STORIES.md](./USER_STORIES.md).
 
 Portuguese labels in the product. Images in [`wireframes/`](./wireframes/).
 
 | File | Screen | Stories |
 | --- | --- | --- |
-| [wf_01_login.png](./wireframes/wf_01_login.png) | Login (one screen, three levels) | US-01 |
+| ASCII in this file | **Public commercial index** (`/`) + **Entrar** → `/web/` | US-17 |
+| [wf_01_login.png](./wireframes/wf_01_login.png) | Login (one screen, three levels) at `/web/` | US-01 |
 | [wf_02_admin_companies.png](./wireframes/wf_02_admin_companies.png) | Admin: companies + readiness | US-02, US-03 |
 | [wf_03_create_company.png](./wireframes/wf_03_create_company.png) | Admin: nova empresa wizard | US-03 |
 | [wf_04_company_home.png](./wireframes/wf_04_company_home.png) | Company: dashboard + all vendors’ sales | US-02, US-11 |
@@ -25,7 +26,8 @@ Portuguese labels in the product. Images in [`wireframes/`](./wireframes/).
 
 ```mermaid
 flowchart TD
-  login[Login único]
+  home["/ commercial index US-17"]
+  home -->|Entrar top right| login[Login único /web]
   login -->|Admin| empresas[Empresas]
   login -->|Company| dashEmp[Dashboard CNPJ]
   login -->|Vendor| minhasVendas[Minhas vendas]
@@ -83,11 +85,35 @@ Company switcher in the header: **Admin only** (any CNPJ). Company/Vendor: name 
 
 ---
 
+## 0. Public commercial index (`/` — US-17)
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  VILMO     Benefícios  Empresas  Vendedores  Dropshipping    │
+│                                                    [ Entrar ]│  ← /web/
+├──────────────────────────────────────────────────────────────┤
+│  h1  Estoque por NF-e. Vendas nos marketplaces.              │
+│      Empresas dropship + vendedores no mesmo CNPJ.           │
+│      [Como funciona]                                         │
+├──────────────────────────────────────────────────────────────┤
+│  #empresas     estoque, preço, NF-e, etiqueta                │
+│  #vendedores   anúncios e vendas próprias, sem estoque       │
+│  #dropshipping empresa guarda o estoque; vendedores vendem   │
+│  FAQ + rodapé (razão social + CNPJ)                          │
+└──────────────────────────────────────────────────────────────┘
+```
+
+- `GET /` is **200 HTML**, not a redirect to login.
+- **Entrar** is top-right on desktop and mobile.
+- Copy is in the HTML (SEO). `/web/` stays `noindex`.
+
+---
+
 ## 1. Login
 
 ![Login](./wireframes/wf_01_login.png)
 
-- One URL. No `/admin` login.
+- One URL for login: **`/web/`**. Public **`/`** is the commercial index (US-17). No `/admin` login.
 - Email + senha → JWT. Wrong credentials: same generic error.
 - After success: Admin → Empresas; Company → Dashboard; Vendor → Minhas vendas.
 

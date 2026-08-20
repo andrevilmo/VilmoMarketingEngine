@@ -27,19 +27,20 @@ Use **HTML**, not React/Next.js, so the UI stays a thin client of the .NET API.
 | Page patterns | `metronic-tailwind-html-demos/dist/html/demo1/` only. Ignore demo2–demo10 (same pages, different chrome). |
 | Screen IA for inventory/products/orders | React concept `store-inventory` **as a menu map**, re-implemented with HTML + DataTables, not by running that Vite app. |
 | Auth chrome | `demo1/authentication/branded/sign-in.html` (and reset-password). Classic variants are unused. |
-| Not used at runtime | Next.js landings, React demos, React starter, nine extra HTML demos, store-client **checkout/cart/wishlist** (B2C storefront, not seller admin). |
+| Not used at runtime | Next.js landings **as a Node app**, React demos, React starter, nine extra HTML demos, store-client **checkout/cart/wishlist** (B2C storefront, not seller admin). Landing **look** may be copied into `deploy/site/` static HTML (US-17). |
 
 Runtime app (`src/Vilmo.Web` when implementing): copy **assets** (`css`, `js`, `media`, `vendors`) + **one layout** + **only the pages we map**. Talk to `vilmo-api` with `Authorization` + `X-Company-Id` + `Idempotency-Key` on writes.
 
-**Wireframes (planning mockups):** [WIREFRAMES.md](./WIREFRAMES.md) — login, three role shells, company wizard, **marketplace connection fields per company**, create vendor, sales, NF-e button, Correios 10×15 label, **Estoque + preço**, **Ingerir NF-e**, **Vilmo NF-e iOS/Android app**.
+**Wireframes (planning mockups):** [WIREFRAMES.md](./WIREFRAMES.md) — **public commercial index**, login, three role shells, company wizard, **marketplace connection fields per company**, create vendor, sales, NF-e button, Correios 10×15 label, **Estoque + preço**, **Ingerir NF-e**, **Vilmo NF-e iOS/Android app**.
 
 Do not serve the 10GB-class template tree from Docker. `vilmo-web` is a small static/Razor site.
 
 ## Screen map (Vilmo domain → Metronic file)
 
-| Vilmo screen | Metronic source to clone/adapt | Notes |
+| Screen | Metronic source to clone/adapt | Notes |
 | --- | --- | --- |
-| Sign in | `demo1/authentication/branded/sign-in.html` | `POST /auth/login` (US-01). One screen for Admin / Company / Vendor. |
+| **Public commercial index** (`/`) | Optional visual cues from `metronic-tailwind-nextjs-landings/saas` — **ship as static HTML** in `deploy/site/` | **US-17.** Not behind `/web`. Sticky header; **Entrar** top-right → `/web/`. Crawlable pt-BR copy for empresas, vendedores, dropshipping. SEO: title, description, OG, JSON-LD, sitemap, robots. **Do not** use the admin `index.html`. |
+| Sign in | `demo1/authentication/branded/sign-in.html` | `POST /auth/login` (US-01). URL **`/web/`**. One screen for Admin / Company / Vendor. `noindex`. |
 | Sign up / invite | `demo1/authentication/branded/sign-up.html` | Invite token from US-08–US-10. Not public self-serve. |
 | Reset password | `demo1/authentication/branded/reset-password/*` | |
 | 404 / 500 | `demo1/authentication/error-404.html`, `error-500.html` | |
@@ -94,7 +95,7 @@ vilmo-web:   # Metronic HTML UI, e.g. :8081
 vilmo-api:   # already planned
 ```
 
-Nginx or YARP in `vilmo-web` (or a gateway) serves `/` from Metronic and proxies `/api` to `vilmo-api`.
+Nginx **gateway** serves **`/`** from `deploy/site/` (commercial index, US-17). **`/web/`** is the Metronic app (`vilmo-web`). **`/api`** proxies to `vilmo-api`. Do not 302 `/` to `/web/`.
 
 ## What not to do
 
