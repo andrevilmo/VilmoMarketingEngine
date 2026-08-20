@@ -1,8 +1,8 @@
-# Plan — Marketplace API + NF-e Inventory (no implementation in this revision)
+# Plan — Marketplace API + NF-e Inventory
 
-This is the build plan only. No application code, Docker images, or certificates are created until a later task explicitly asks to implement.
+The nginx gateway Compose stack in [`deploy/docker-compose.yml`](../deploy/docker-compose.yml) is implemented (echo stubs behind slugs). Application code, .NET images, and certificates are not created until a later task explicitly asks to implement them.
 
-Referenced architecture: [MarketPlaceEngine.MD](./MarketPlaceEngine.MD) — **Opção A (in-house)** + **idempotency**. Service map, data model, Redis resources, and sequence diagrams: [ARCHITECTURE.md](./ARCHITECTURE.md). Default UI: [UI.md](./UI.md) (Metronic 9.5.0 HTML). CNPJ seller + developer apps: [HowToCreateCnpjMarketplaceAccounts.md](./HowToCreateCnpjMarketplaceAccounts.md). Depth on login roles, sales sync, outbound NF-e, and Correios labels: [USER_STORIES.md](./USER_STORIES.md). First tenant: [FirstCompany.md](./FirstCompany.md).
+Referenced architecture: [MarketPlaceEngine.MD](./MarketPlaceEngine.MD) — **Opção A (in-house)** + **idempotency**. Service map, data model, Redis resources, and sequence diagrams: [ARCHITECTURE.md](./ARCHITECTURE.md). Nginx gateway slugs: [ARCHITECTURE.md](./ARCHITECTURE.md). AWS free-plan host (MFA required to launch): [AWS.md](./AWS.md). Default UI: [UI.md](./UI.md) (Metronic 9.5.0 HTML). CNPJ seller + developer apps: [HowToCreateCnpjMarketplaceAccounts.md](./HowToCreateCnpjMarketplaceAccounts.md). Depth on login roles, sales sync, outbound NF-e, and Correios labels: [USER_STORIES.md](./USER_STORIES.md). First tenant: [FirstCompany.md](./FirstCompany.md).
 
 ---
 
@@ -33,10 +33,11 @@ KISS: four HTTP clients plus one fiscal SOAP client do not justify eight deploya
 
 | Deployable | Why it exists |
 | --- | --- |
-| `vilmo-api` | Public HTTP: commands, OAuth callbacks, webhook ACK. Must answer fast. |
-| `vilmo-web` | Metronic HTML UI. Proxies `/api` to `vilmo-api`. |
-| `vilmo-worker` | Slow marketplace I/O, retries, stock fan-out. |
-| `vilmo-nfe` | DFe.NET: DistDFe ingest **and** `NFeAutorizacao` emit, **per-company** A1, SEFAZ rate limits. Isolated so a SEFAZ outage does not take the API down. |
+| `vilmo-gateway` | Only public HTTP (`:80`). Path slugs `/web` `/api` `/nfe` `/worker`. |
+| `vilmo-api` | Public HTTP via gateway `/api`: commands, OAuth callbacks, webhook ACK. Must answer fast. |
+| `vilmo-web` | Metronic HTML UI at `/web`. Browser calls `/api` on the same origin. |
+| `vilmo-worker` | Slow marketplace I/O, retries, stock fan-out. Internal + slug `/worker`. |
+| `vilmo-nfe` | DFe.NET: DistDFe ingest **and** `NFeAutorizacao` emit, **per-company** A1, SEFAZ rate limits. Isolated so a SEFAZ outage does not take the API down. Slug `/nfe`. |
 | `postgres` | Source of truth. |
 | `redis` | Idempotency keys, marketplace-config cache, **vendor-subaccount cache**, **Redis Streams**. |
 
@@ -411,7 +412,15 @@ tests/
   *.Unit / *.Contract
 deploy/
   docker-compose.yml
-  docker-compose.override.yml
+  gateway/Dockerfile
+  gateway/nginx.conf
+  stubs/Dockerfile
+  stubs/echo.conf
+  gateway-smoke.sh
+  aws/cloudformation.yml
+  aws/generate-cfn.py
+  aws/install.sh
+  aws/docker-compose.aws.yml
   api.Dockerfile
   worker.Dockerfile
   nfe.Dockerfile
@@ -424,15 +433,29 @@ Clean architecture per bounded context. Marketplace projects reference Contracts
 
 ## 6. Docker Compose (target)
 
+Compose file: `deploy/docker-compose.yml`. **Only `vilmo-gateway` publishes a host port** (`80`, override with `GATEWAY_PORT`). Postgres, Redis, and app HTTP ports stay on the `vilmo-internal` network.
+
 ```
 services:
-  postgres:     # catalog, inventory, sales, sale attributes, company config, users_detail, vendor subaccounts
-  redis:        # streams + idempotency + marketplace-config cache
-  vilmo-api:    # :8080
-  vilmo-web:    # :8081 Metronic HTML; /api → vilmo-api
-  vilmo-worker:
-  vilmo-nfe:    # certs: /certs/{cnpj}.pfx (read-only, one file per company)
+  vilmo-gateway:  # host :80 — nginx slugs /web /api /nfe /worker
+  postgres:       # internal 5432
+  redis:          # internal 6379
+  vilmo-api:      # internal 80 — public slug /api
+  vilmo-web:      # internal 80 — public slug /web
+  vilmo-worker:   # internal 80 — public slug /worker
+  vilmo-nfe:      # internal 80 — public slug /nfe; certs /certs/{cnpj}.pfx
 ```
+
+| Public path | Upstream |
+| --- | --- |
+| `/web/` | `vilmo-web` |
+| `/api/` | `vilmo-api` (slug stripped, so `/api/auth/login` → `/auth/login`) |
+| `/nfe/` | `vilmo-nfe` |
+| `/worker/` | `vilmo-worker` |
+| `/webhooks/{code}` | `vilmo-api` (marketplace ACK, no extra slug) |
+| `/oauth/{code}/callback` | `vilmo-api` |
+
+HTTP app images are echo stubs until the .NET Dockerfiles exist. Gateway config: `deploy/gateway/nginx.conf`.
 
 API env: connection strings, public base URL for OAuth/webhooks, bootstrap super-user password. Per-company marketplace credentials are **table rows**, not env.
 
