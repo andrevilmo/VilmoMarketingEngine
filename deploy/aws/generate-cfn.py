@@ -18,7 +18,10 @@ FILES = [
     "stubs/echo.conf",
     "stubs/Dockerfile",
     "aws/docker-compose.aws.yml",
+    "aws/docker-compose.tls.yml",
+    "aws/nginx-ssl.conf",
     "aws/install.sh",
+    "aws/enable-https.sh",
 ]
 
 
