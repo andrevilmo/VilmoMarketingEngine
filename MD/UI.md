@@ -27,7 +27,7 @@ Use **HTML**, not React/Next.js, so the UI stays a thin client of the .NET API.
 | Page patterns | `metronic-tailwind-html-demos/dist/html/demo1/` only. Ignore demo2–demo10 (same pages, different chrome). |
 | Screen IA for inventory/products/orders | React concept `store-inventory` **as a menu map**, re-implemented with HTML + DataTables, not by running that Vite app. |
 | Auth chrome | `demo1/authentication/branded/sign-in.html` (and reset-password). Classic variants are unused. |
-| Not used at runtime | Next.js landings **as a Node app**, React demos, React starter, nine extra HTML demos, store-client **checkout/cart/wishlist** (B2C storefront, not seller admin). Landing **look** may be copied into `deploy/site/` static HTML (US-17). |
+| Not used at runtime | Next.js landings **as a Node app**, React demos, React starter, nine extra HTML demos, store-client **checkout/cart/wishlist** (B2C storefront, not seller admin). **SaaSify look** is the public homepage visual system, shipped as `deploy/site/` static HTML (US-17). |
 
 Runtime app (`src/Vilmo.Web` when implementing): copy **assets** (`css`, `js`, `media`, `vendors`) + **one layout** + **only the pages we map**. Talk to `vilmo-api` with `Authorization` + `X-Company-Id` + `Idempotency-Key` on writes.
 
@@ -39,7 +39,7 @@ Do not serve the 10GB-class template tree from Docker. `vilmo-web` is a small st
 
 | Screen | Metronic source to clone/adapt | Notes |
 | --- | --- | --- |
-| **Public commercial index** (`/` pt-BR, `/en/` en) | Optional visual cues from `metronic-tailwind-nextjs-landings/saas` — **ship as static HTML** in `deploy/site/` and `deploy/site/en/` | **US-17.** Not behind `/web`. Sticky header: **PT \| EN** then **Entrar / Sign in** → `/web/`. Full crawlable copy in **Portuguese and English**. **#company** = CNPJ **68.431.371/0001-61**. Contact **`admin@vilmomkt.com`**. Cookie bar (LGPD). Footer: Privacidade, Termos, Cookies. Wireframe [wf_00_index_spa.png](./wireframes/wf_00_index_spa.png). |
+| **Public commercial index** (`/` pt-BR, `/en/` en) | **SaaSify** (`metronic-tailwind-nextjs-landings/saas`) as the **visual system**, rebuilt as **static HTML** in `deploy/site/` (not a Next.js server) | **US-17.** Not behind `/web`. Sticky header: **PT \| EN** then **Entrar / Sign in** → `/web/`. Full crawlable copy in **Portuguese and English**. **#company** = CNPJ **68.431.371/0001-61**. Contact **`admin@vilmomkt.com`**. Cookie bar (LGPD). Footer: Privacidade, Termos, Cookies. Wireframe [wf_00_index_spa.png](./wireframes/wf_00_index_spa.png). |
 | Sign in | `demo1/authentication/branded/sign-in.html` | `POST /auth/login` (US-01). URL **`/web/`**. One screen for Admin / Company / Vendor. `noindex`. |
 | Sign up / invite | `demo1/authentication/branded/sign-up.html` | Invite token from US-08–US-10. Not public self-serve. |
 | Reset password | `demo1/authentication/branded/reset-password/*` | |
@@ -95,7 +95,7 @@ vilmo-web:   # Metronic HTML UI, e.g. :8081
 vilmo-api:   # already planned
 ```
 
-Nginx **gateway** serves **`/`** (pt-BR) and **`/en/`** (en) from `deploy/site/` (commercial index, US-17). **`/web/`** is the Metronic app (`vilmo-web`). **`/api`** proxies to `vilmo-api`. Do not 302 `/` to `/web/`.
+Nginx **gateway** serves **`/`** (pt-BR) and **`/en/`** (en) from `deploy/site/` (SaaSify-look commercial index, US-17, static HTML). **`/web/`** is the Metronic app (`vilmo-web`) and sends `X-Robots-Tag: noindex`. **`/api`** proxies to `vilmo-api`. Do not 302 `/` to `/web/`.
 
 ## What not to do
 

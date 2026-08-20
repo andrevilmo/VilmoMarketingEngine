@@ -248,11 +248,24 @@ Call it a **SPA-style one-pager** (one URL per language, in-page sections, stick
 | Approach | Use? |
 | --- | --- |
 | **Static HTML + CSS + small JS** (smooth scroll, mobile menu) in `deploy/site/`, copied into **`vilmo-gateway`** | **Yes.** KISS, indexable, no extra container. |
-| Metronic **Next.js landing** (`metronic-tailwind-nextjs-landings/saas`) as a running Node app | **No.** Extra process; plan already forbids Next as production UI. **May copy visual tokens** (type, spacing, CTA chrome). |
+| Metronic **SaaSify** look (`metronic-tailwind-nextjs-landings/saas`) rebuilt as **static HTML** | **Yes.** Chosen visual system for `/` and `/en/` (see Visual system below). |
+| Metronic **Next.js landing** (`saas`) as a running Node/Next app | **No.** Extra process; plan already forbids Next as production UI. |
 | CSR SPA (Vite/React) without prerender | **No.** Fails title/description/body indexing. |
 | Same Metronic **admin** `index.html` at `/` | **No.** Console stays under `/web/`. |
 
 `try_files` / hash sections (`#companies`, `#vendors`, `#dropshipping`) are fine. History API routing is unnecessary for v1 (one page per language).
+
+#### Visual system (SaaSify look, static HTML)
+
+**Chosen look:** KeenThemes Metronic 9.5 **SaaSify** at `template-metronic/.../metronic-tailwind-nextjs-landings/saas`.
+
+**Runtime:** `deploy/site/` (HTML + CSS + small JS) copied into the **`vilmo-gateway`** image (`root /usr/share/nginx/site`). No Next.js, no Node, no Framer Motion, no extra Compose service.
+
+Copy from SaaSify: sticky translucent header, indigo orbs on a light hero, dual CTAs, logo + section nav, feature cards, numbered how-it-works, FAQ, bottom CTA band, footer, ~0.65rem radius, navy/indigo chrome.
+
+Do **not** copy into production: the Next app, `RainbowButton` / `WordRotate`, Unsplash avatars, fake Tesla/Netflix/OpenAI logos, a pricing table, Google Fonts (LGPD — use a system stack so nothing third-party loads before **Aceitar**).
+
+Rebuild HTML with `python3 deploy/site/gen.py` after copy changes; commit the generated files so the Docker image does not need Python.
 
 #### Gateway (replace the `/` redirect)
 
@@ -621,7 +634,7 @@ Full investigation and screen map: [UI.md](./UI.md).
 - Inventory / products / orders **information architecture** comes from the React concept `store-inventory`, rebuilt as HTML tables — do not run the Vite/Next apps.
 - `vilmo-web` copies a **slice** of assets + mapped pages. It does not ship all 10 demos or the React packages.
 - Sidebar: Dashboard, **Estoque**, **Ingerir NF-e**, Products, Advertisements, **Sales**, Vendors, Marketplaces, Settings (+ Companies for super user). Vendor sidebar: Dashboard, My sales, My advertisements, My marketplaces, Profile — **no Estoque**. Sale detail: **Emitir NF-e** when `Paid`; **Imprimir etiqueta para envio** when `PreparingForDispatch`. Paid already decreased company stock.
-- **Public `/` and `/en/` (US-17):** static commercial HTML in `deploy/site/` (pt-BR + en), baked into `vilmo-gateway`. Not the Metronic app. Header **PT | EN** + **Entrar / Sign in** → `/web/`. See §3.7.
+- **Public `/` and `/en/` (US-17):** static commercial HTML in `deploy/site/` (pt-BR + en), baked into `vilmo-gateway`. **SaaSify visual system**, not the Next.js app and not the Metronic admin. Header **PT | EN** + **Entrar / Sign in** → `/web/`. See §3.7.
 
 ---
 
@@ -790,7 +803,7 @@ Do not build four C# marketplace projects. Build the **generic engine** first, t
 1. **Foundation** — solution, Docker Compose (postgres + redis + empty API), BuildingBlocks (Result, company-scoped idempotency, streams), health checks.
 2. **Identity + tenancy** — `Company`, `User`, `UserCompany`, JWT/`X-Company-Id`, seed `admin@vilmomkt.com` + company CNPJ `68431371000161`. Login US-01, home by level US-02. Admin creates companies (US-03, readiness flags), company users (US-09, `user_company_marketplace`), vendors on **selected** marketplaces (US-10, `PendingConnect` until OAuth). Company users create vendors for their CNPJ (US-11). Vendor sees only own sales (US-12). Row filters by `company_id`.
 3. **Metronic UI shell** — `vilmo-web` from HTML starter layout-1 + demo1 sign-in and members datatable, behind **`/web/`**. Company switcher for super user. Role-based sidebar. **Marketplaces da empresa (US-15):** one form per `code` with connection fields from `marketplace_parameter_definition` (ClientId, PartnerKey, …). Admin/Company only. Same fields on US-03 wizard step 3. See [UI.md](./UI.md).
-3a. **Public commercial index (US-17)** — stop `302 / → /web/`. Gateway serves `deploy/site/index.html` at `/` (pt-BR) and `deploy/site/en/index.html` at `/en/` (en), plus legal pages (privacy, terms, cookies, contact). Crawlable copy (companies, vendors, dropshipping), **company block for CNPJ 68.431.371/0001-61**, contact **`admin@vilmomkt.com`**, LGPD cookie bar (optional off until accept), `hreflang`, SEO tags, `robots.txt`, `sitemap.xml`. Sticky header: **PT | EN** then **Entrar / Sign in** → `/web/`. Do not load admin Metronic on `/`. See §3.7.
+3a. **Public commercial index (US-17)** — stop `302 / → /web/`. Gateway serves `deploy/site/index.html` at `/` (pt-BR) and `deploy/site/en/index.html` at `/en/` (en), plus legal pages (privacy, terms, cookies, contact). **Look:** SaaSify (hero, feature cards, how-it-works, FAQ, CTA) as **static HTML**, not the Next.js package. Crawlable copy (companies, vendors, dropshipping), **company block for CNPJ 68.431.371/0001-61**, contact **`admin@vilmomkt.com`**, LGPD cookie bar (optional off until accept), `hreflang`, SEO tags, `robots.txt`, `sitemap.xml`. Sticky header: **PT | EN** then **Entrar / Sign in** → `/web/`. Do not load admin Metronic on `/`. See §3.7.
 4. **Catalog + inventory domain** — Product (`sale_price`), identifiers, movements (`NfeInbound` / `SalePaid`), balances, uniqueness all include `company_id`. Vendor has no stock book.
 5. **NF-e ingest + Estoque UI** — HTML: CNPJ (admin select / company locked) + chave 44 (**webcam** barcode/QR or type) → DistDFe; stock table with **preço de venda**. Admin/Company only. Paid sale decrements on-hand (US-13, US-14). Camera uses `getUserMedia` in the browser; do not upload video. **US-16:** separate MAUI iOS/Android app scans DANFE, encrypted CNPJ cache (default last filled), `POST /nfe/mobile/ingest` (AES-GCM envelope) into the same pipeline.
 6. **Marketplace engine** — `IAuthProtocol` pack (`OAuth2AuthorizationCode`, `HmacSha256`, `BearerToken`, `ApiKeyHeader`), generic HTTP executor, JSON mappings, definition cache. Commands carry `CompanyId`, `VendorUserId`, and string `marketplace_code`. Advertisement publish: `marketplaceCodes` default all.

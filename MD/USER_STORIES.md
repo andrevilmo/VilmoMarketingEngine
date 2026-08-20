@@ -24,7 +24,7 @@ Index: [US-17](#us-17--public-commercial-homepage) public `/` · [US-01](#us-01-
 **I want** `https://vilmomkt.com/` in **Portuguese** and `https://vilmomkt.com/en/` in **English**, with the operator company (CNPJ **68.431.371/0001-61**), cookie consent, privacy/terms, and contact **`admin@vilmomkt.com`**  
 **So that** I understand the product **before** I sign in, in my language, and can find who runs the site and how cookies/privacy work.
 
-Plan: [PLAN.md](./PLAN.md) §3.7. UI: [UI.md](./UI.md). Wireframe: [WIREFRAMES.md](./WIREFRAMES.md) `wf_00_index_spa.png`.
+Plan: [PLAN.md](./PLAN.md) §3.7. UI: [UI.md](./UI.md) (SaaSify look, static HTML). Wireframe: [WIREFRAMES.md](./WIREFRAMES.md) `wf_00_index_spa.png`.
 
 ### Flow
 

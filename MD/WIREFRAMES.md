@@ -1,6 +1,6 @@
 # Wireframes & mockups — Vilmo screens (plan)
 
-Visual explanation of the UI understood so far. **Not implemented** — these are planning mockups. Runtime still copies Metronic 9.5.0 HTML (layout-1 + demo1) **under `/web/`**. Public `/` is a separate static commercial page (US-17). See [UI.md](./UI.md) and [USER_STORIES.md](./USER_STORIES.md).
+Visual explanation of the UI understood so far. Public **`/`** / **`/en/`** is **implemented** as static HTML in `deploy/site/` (US-17, SaaSify look). The authenticated console still copies Metronic 9.5.0 HTML (layout-1 + demo1) **under `/web/`**. See [UI.md](./UI.md) and [USER_STORIES.md](./USER_STORIES.md).
 
 Portuguese labels in the product. Images in [`wireframes/`](./wireframes/).
 
