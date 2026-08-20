@@ -31,7 +31,7 @@ Use **HTML**, not React/Next.js, so the UI stays a thin client of the .NET API.
 
 Runtime app (`src/Vilmo.Web` when implementing): copy **assets** (`css`, `js`, `media`, `vendors`) + **one layout** + **only the pages we map**. Talk to `vilmo-api` with `Authorization` + `X-Company-Id` + `Idempotency-Key` on writes.
 
-**Wireframes (planning mockups):** [WIREFRAMES.md](./WIREFRAMES.md) — login, three role shells, company wizard, create vendor, sales, NF-e button, Correios 10×15 label, **Estoque + preço**, **Ingerir NF-e**.
+**Wireframes (planning mockups):** [WIREFRAMES.md](./WIREFRAMES.md) — login, three role shells, company wizard, **marketplace connection fields per company**, create vendor, sales, NF-e button, Correios 10×15 label, **Estoque + preço**, **Ingerir NF-e**.
 
 Do not serve the 10GB-class template tree from Docker. `vilmo-web` is a small static/Razor site.
 
@@ -52,8 +52,8 @@ Do not serve the 10GB-class template tree from Docker. `vilmo-web` is a small st
 | Vendor detail (common) | `demo1/account/home/user-profile.html` + `settings-sidebar.html` | `users_detail`. Vendor: own profile only. |
 | Vendor marketplace subaccount | `demo1/account/api-keys.html` + settings form | `user_detail_marketplace`. Secrets masked. Connect if pending. |
 | Roles / permissions | `demo1/account/members/roles.html`, `permissions-toggle.html` | Admin / Company / Vendor. |
-| Company marketplace config | `demo1/account/integrations.html` | Company/Admin. Vendor cannot change app credentials. |
-| Register marketplace (super user) | integrations + settings form | `POST /marketplaces` — new `code` at runtime, no deploy. |
+| Company marketplace config | `demo1/account/integrations.html` + settings form per `code` | **US-15.** Admin + Company. **Editable** connection fields (ClientId, PartnerKey, …) from `marketplace_parameter_definition`. Secrets masked. Connect/Reconectar. Vendor: hidden. |
+| Register marketplace (super user) | integrations + settings form | `POST /marketplaces` — new `code` at runtime, no deploy. Company screen then shows that code’s fields. |
 | A1 certificate | settings form + Dropzone | Required for `ready_to_invoice`. |
 | Products | store-inventory **Product List / Details / Create** (HTML tables from demo1 members datatable + store-client `product-details.html` for the detail chrome) | Post items when `ready_to_list`. |
 | Inventory | store-inventory **All Stock / Current** | **US-13.** Admin + Company only. **Saldo** + inline **preço de venda**. Vendor: hidden. |
@@ -69,8 +69,8 @@ Sidebar by role (replace Metronic demo links with these, nothing else):
 
 | Role | Items |
 | --- | --- |
-| **Admin** | Companies, Users, Dashboard, **Estoque**, **Ingerir NF-e**, Products, Advertisements, **Sales**, Vendors, Marketplaces, Settings |
-| **Company** | Dashboard, **Estoque**, **Ingerir NF-e**, Products, Advertisements, **Sales**, Vendors, Marketplaces, Settings |
+| **Admin** | Companies, Users, Dashboard, **Estoque**, **Ingerir NF-e**, Products, Advertisements, **Sales**, Vendors, **Marketplaces** (company connections), Settings |
+| **Company** | Dashboard, **Estoque**, **Ingerir NF-e**, Products, Advertisements, **Sales**, Vendors, **Marketplaces** (this CNPJ’s connections), Settings |
 | **Vendor** | Dashboard, **My sales**, My advertisements, My marketplaces, Profile |
 
 Company users create vendors for their CNPJ and see **all** those sales. Vendors see only their own. Admin sees all after picking a company.

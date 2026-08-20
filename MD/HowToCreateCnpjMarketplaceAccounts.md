@@ -208,6 +208,8 @@ Add order scopes when orders go live (`open:order-order:read` and write as docum
 
 Redirect/webhook URLs must use the same `{code}`: `MercadoLivre`, `Shopee`, `Shein`, `Magalu`.
 
+Company (app) keys are **edited per company** on **Marketplaces da empresa** (US-15 in [USER_STORIES.md](./USER_STORIES.md)). They are not global env vars.
+
 ---
 
 ## 6. Suggested order for CNPJ `68431371000161`

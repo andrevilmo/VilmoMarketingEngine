@@ -14,7 +14,7 @@ A .NET API, run entirely from Docker Compose, that:
 2. Owns a **per-company** product inventory derived from Brazilian **NF-e** (ingest by **CNPJ + chave de acesso** on a UI for **Admin and Company only**). **Estoque** screen shows actual on-hand and **preço de venda**. Vendors do not see stock. When a sale becomes **Paid**, company on-hand **decreases by sale qty** (US-13, US-14).
 3. Talks to SEFAZ through [ZeusAutomacao/DFe.NET](https://github.com/ZeusAutomacao/DFe.NET). **Each company has its own A1 certificate** (CNPJ-bound). XML upload remains a fallback.
 4. Each vendor publishes advertisements to **Mercado Livre**, **Shopee**, **SHEIN**, and **Magalu** using **their** subaccount on each channel (default: all marketplaces).
-5. Accepts a fifth marketplace **without a rebuild**: insert a `marketplace` row + bindings + parameter definitions (admin UI). Existing vendors get a `user_detail_marketplace` when the company enables that code.
+5. Accepts a fifth marketplace **without a rebuild**: insert a `marketplace` row + bindings + parameter definitions (admin UI). **Each company edits that channel’s connection fields** on Marketplaces da empresa (US-15). Existing vendors get a `user_detail_marketplace` when the company enables that code.
 6. Ships a **Metronic 9.5.0 HTML** admin UI (default templates from `template-metronic/.../metronic-v9.5.0/`). See [UI.md](./UI.md).
 7. Logs users in as **Admin** (see all), **Company** (see all of that CNPJ's users and sales), or **Vendor** (see only own sales and marketplace links).
 8. Keeps marketplace orders in a **common `sales` table** plus **`sale_marketplace_attributes`** (`field_name`, `field_value`) for channel-only data. One **canonical `SaleStatus`** across ML, Shopee, SHEIN, Magalu.
@@ -163,13 +163,13 @@ The product is multi-company from day one. There is no "default company" fallbac
 
 `CompanyRole` / `UserProfile`: `CompanyAdmin`, `Operator`, `Viewer`, **`Vendor`**.
 
-**Login personas (US-01, US-02, US-08–US-14):**
+**Login personas (US-01, US-02, US-08–US-15):**
 
 | Persona | Profile | Sees | Creates |
 | --- | --- | --- | --- |
-| Admin | `IsPlatformSuperUser` | All companies, users, sales, **stock of selected CNPJ** | Companies, users, **sale prices**, NF-e ingest |
-| Company | `CompanyAdmin` | Users, sales, **stock of this CNPJ only** | Vendors for this company, **sale prices**, ingest for this CNPJ |
-| Vendor user | `Vendor` | Own marketplace links + **own sales** | Nothing. **No stock / no ingest / no price** |
+| Admin | `IsPlatformSuperUser` | All companies, users, sales, **stock of selected CNPJ**, **marketplace connection fields** | Companies, users, **sale prices**, NF-e ingest, **edit company marketplace connections** |
+| Company | `CompanyAdmin` | Users, sales, **stock of this CNPJ only**, **this CNPJ’s marketplace connections** | Vendors for this company, **sale prices**, ingest, **edit this CNPJ’s marketplace connections** |
+| Vendor user | `Vendor` | Own marketplace links + **own sales** | Nothing. **No stock / no ingest / no price / no company app credentials** |
 
 Login is one screen (`POST /auth/login`). `GET /me` returns the level so the Metronic shell hides menus. Depth: [USER_STORIES.md](./USER_STORIES.md).
 
@@ -247,16 +247,16 @@ One company sells on several channels at once. Mercado Livre credentials for com
 
 Uniques: `marketplace.code`; `(company_id, marketplace_code)`; `(config_id, parameter_key)`.
 
-Launch **seed data** (SQL fixtures, not C# projects): `MercadoLivre`, `Shopee`, `Shein`, `Magalu`. Typical keys remain data:
+Launch **seed data** (SQL fixtures, not C# projects): `MercadoLivre`, `Shopee`, `Shein`, `Magalu`. Typical **company-scope** keys remain data and are **editable per company** on the Marketplaces screen (US-15):
 
-| `marketplace.code` | Typical parameter keys |
-| --- | --- |
-| `MercadoLivre` | `ClientId`, `ClientSecret`, `AccessToken`, `RefreshToken`, `UserId`, `SiteId` (`MLB`) |
-| `Shopee` | `PartnerId`, `PartnerKey`, `ShopId`, `AccessToken`, `RefreshToken` |
-| `Shein` | `AppId`, `AppSecret`, `OpenKeyId`, `SecretKey` |
-| `Magalu` | `ClientId`, `ClientSecret`, `AccessToken`, `RefreshToken`, `Scope` |
+| `marketplace.code` | Company connection fields (edit in UI) | Filled by OAuth / Connect (masked) |
+| --- | --- | --- |
+| `MercadoLivre` | `ClientId`, `ClientSecret`, `SiteId` (`MLB`) | `AccessToken`, `RefreshToken`, `UserId` |
+| `Shopee` | `PartnerId`, `PartnerKey` | `ShopId`, `AccessToken`, `RefreshToken` |
+| `Shein` | `AppId`, `AppSecret` | `OpenKeyId`, `SecretKey` |
+| `Magalu` | `ClientId`, `ClientSecret`, `Scope` | `AccessToken`, `RefreshToken` |
 
-Amazon later is another `code` + keys + bindings. No enum, no new project.
+The form is generated from `marketplace_parameter_definition` (`scope = company`). Amazon later is another `code` + keys + bindings. No enum, no new project, no new connection form in C#.
 
 Values with `is_secret = true` are encrypted at rest in Postgres.
 
@@ -275,6 +275,8 @@ Values with `is_secret = true` are encrypted at rest in Postgres.
 OAuth/token refresh **writes** new `AccessToken` / `RefreshToken` parameter rows (or updates them), then invalidates the Redis key. That is the exception to "config does not change": tokens rotate; shop ids and partner ids do not.
 
 Company-level rows are **app/partner credentials** (one per company per marketplace). They are not the vendor shop. Vendor shops are `user_detail_marketplace` subaccounts.
+
+**UI (US-15):** Admin and Company edit these rows on **Marketplaces da empresa** — one form per `code`, fields from `marketplace_parameter_definition` (`scope = company`). Secrets masked on GET. Vendor cannot open this screen. Depth: [USER_STORIES.md](./USER_STORIES.md).
 
 ### Vendors, `users_detail`, and subaccounts
 
@@ -470,8 +472,10 @@ Auth: bearer session/JWT with `user_id`, `is_platform_super_user`, and membershi
 | `PUT` | `/companies/{companyId}/vendors/{userId}/detail` | Update `users_detail` (common fields). |
 | `PUT` | `/companies/{companyId}/vendors/{userId}/marketplaces/{code}` | Upsert `user_detail_marketplace` parameters; `DEL` Redis vendor cache. |
 | `POST` | `/companies/{companyId}/certificate` | Upload/replace that company's A1 (multipart + password). Super user or `CompanyAdmin`. |
-| `GET` | `/companies/{companyId}/marketplaces` | List this company's marketplace configs (`is_enabled`, shop id). Secrets omitted. |
-| `PUT` | `/companies/{companyId}/marketplaces/{code}` | Upsert config + parameters for one channel. Writes Postgres, then `DEL` Redis cache. |
+| `GET` | `/companies/{companyId}/marketplaces` | List this company's marketplace configs: `is_enabled`, status, **masked** connection fields + definition metadata (US-15). Secrets omitted. Vendor `404`. |
+| `GET` | `/companies/{companyId}/marketplaces/{code}` | One channel’s connection form for this company. |
+| `PUT` | `/companies/{companyId}/marketplaces/{code}` | Upsert `is_enabled` + company-scope parameters. Writes Postgres, then `DEL` Redis cache. Admin/Company. Vendor `404`. |
+| `GET` | `/marketplaces/{code}/parameter-definitions` | Field list for the connection form (`scope=company`). |
 | `GET` | `/marketplaces` | List catalog (`marketplace` table). Super user sees inactive too. |
 | `POST` | `/marketplaces` | Super user: insert a new `code` + protocol + bindings. No deploy. Idempotent on `code`. |
 | `PUT` | `/marketplaces/{code}` | Super user: update definition, parameter keys, operation bindings; `DEL marketplace-definition:{code}`. |
@@ -607,7 +611,7 @@ Do not build four C# marketplace projects. Build the **generic engine** first, t
 
 1. **Foundation** — solution, Docker Compose (postgres + redis + empty API), BuildingBlocks (Result, company-scoped idempotency, streams), health checks.
 2. **Identity + tenancy** — `Company`, `User`, `UserCompany`, JWT/`X-Company-Id`, seed `admin@vilmomkt.com` + company CNPJ `68431371000161`. Login US-01, home by level US-02. Admin creates companies (US-03, readiness flags), company users (US-09, `user_company_marketplace`), vendors on **selected** marketplaces (US-10, `PendingConnect` until OAuth). Company users create vendors for their CNPJ (US-11). Vendor sees only own sales (US-12). Row filters by `company_id`.
-3. **Metronic UI shell** — `vilmo-web` from HTML starter layout-1 + demo1 sign-in and members datatable, proxied to the API. Company switcher for super user. Role-based sidebar. See [UI.md](./UI.md).
+3. **Metronic UI shell** — `vilmo-web` from HTML starter layout-1 + demo1 sign-in and members datatable, proxied to the API. Company switcher for super user. Role-based sidebar. **Marketplaces da empresa (US-15):** one form per `code` with connection fields from `marketplace_parameter_definition` (ClientId, PartnerKey, …). Admin/Company only. Same fields on US-03 wizard step 3. See [UI.md](./UI.md).
 4. **Catalog + inventory domain** — Product (`sale_price`), identifiers, movements (`NfeInbound` / `SalePaid`), balances, uniqueness all include `company_id`. Vendor has no stock book.
 5. **NF-e ingest + Estoque UI** — HTML: CNPJ (admin select / company locked) + chave 44 → DistDFe; stock table with **preço de venda**. Admin/Company only. Paid sale decrements on-hand (US-13, US-14).
 6. **Marketplace engine** — `IAuthProtocol` pack (`OAuth2AuthorizationCode`, `HmacSha256`, `BearerToken`, `ApiKeyHeader`), generic HTTP executor, JSON mappings, definition cache. Commands carry `CompanyId`, `VendorUserId`, and string `marketplace_code`. Advertisement publish: `marketplaceCodes` default all.
@@ -615,7 +619,7 @@ Do not build four C# marketplace projects. Build the **generic engine** first, t
 8. **Sales sync** — `sales` + `sale_items` + `sale_marketplace_attributes`. Webhook → FetchOrder → upsert. Canonical `SaleStatus`. List/detail UI scoped by role.
 9. **Outbound NF-e** — `POST /sales/{id}/nfe`, `NFeAutorizacao`, status `PreparingForDispatch`, upload XML to channel. Button **Emitir NF-e** on Paid.
 10. **Shipping label** — PDF 100×150 (or 138×106), required sender/recipient/postal fields, button **Imprimir etiqueta para envio**.
-11. **Admin: register marketplace** — `POST /marketplaces` so Amazon (or any code) is added at runtime. Backfill vendor subaccounts when a company enables the new code. Status map + EAV field definitions are rows, not a rebuild.
+11. **Admin: register marketplace** — `POST /marketplaces` so Amazon (or any code) is added at runtime. The **company** screen (US-15) then shows that code’s connection fields with no new HTML page. Backfill vendor subaccounts when a company enables the new code. Status map + EAV field definitions are rows, not a rebuild.
 12. **Hardening** — Polly per host, 429 budgets, contract tests against fixtures, structured logs, no secrets in logs, tenancy tests (company A cannot read company B; vendor A cannot read vendor B sales). Adding a fifth channel in tests is an INSERT, not a new project.
 
 Each step stays shippable. Step 5 already gives "company user reads chave / XML → that company's inventory". Step 8 gives "vendor sees only his sales". Step 9–10 give the paid → NF-e → label path.
@@ -626,7 +630,7 @@ Each step stays shippable. Step 5 already gives "company user reads chave / XML 
 
 - Unit: `ChaveAcesso` DV, CFOP policy, idempotency state machine (`companyId` in the Redis key), translators, authorization (admin vs company vs vendor), `SaleStatus` map, CEP 8 digits, label page size.
 - Contract: generic executor against recorded HTTP fixtures keyed by `marketplace_code` (no live ML/Shopee in CI). Sale normalizer fixtures → `sales` + EAV rows.
-- Integration: Testcontainers for Postgres + Redis; two companies; ingest a sample `procNFe` XML into A and assert B's inventory is empty; ingest the same chave twice does not double qty; Paid twice does not double-decrement; vendor JWT `GET /inventory` is `404`; company A cannot `PUT` sale-price on company B SKU; same `Idempotency-Key` on A and B both succeed; company A Shopee `PartnerId` does not leak into company B; config read hits Redis on the second call; `PUT` config deletes the cache key; creating a vendor twice with the same key does not duplicate `user_detail_marketplace`; publish with omitted `marketplaceCodes` fans out to all vendor subaccounts; **inserting a fifth `marketplace` row** (no code change) lets a company enable it and provision vendor subaccounts; vendor A `GET /sales` does not include vendor B; stub `INfeAuthorizer` emit moves `Paid` → `PreparingForDispatch` **without** a second stock decrement; second emit `409`; label PDF 100×150 contains sender CNPJ and recipient CEP.
+- Integration: Testcontainers for Postgres + Redis; two companies; ingest a sample `procNFe` XML into A and assert B's inventory is empty; ingest the same chave twice does not double qty; Paid twice does not double-decrement; vendor JWT `GET /inventory` is `404`; company A cannot `PUT` sale-price on company B SKU; same `Idempotency-Key` on A and B both succeed; company A Shopee `PartnerId` does not leak into company B; **GET company marketplace params never returns full secrets**; **PUT** connection fields without a secret key keeps the previous secret; config read hits Redis on the second call; `PUT` config deletes the cache key; vendor cannot `PUT /companies/{id}/marketplaces/{code}` (`404`); creating a vendor twice with the same key does not duplicate `user_detail_marketplace`; publish with omitted `marketplaceCodes` fans out to all vendor subaccounts; **inserting a fifth `marketplace` row** (no code change) lets a company enable it, **shows the new connection fields**, and provision vendor subaccounts; vendor A `GET /sales` does not include vendor B; stub `INfeAuthorizer` emit moves `Paid` → `PreparingForDispatch` **without** a second stock decrement; second emit `409`; label PDF 100×150 contains sender CNPJ and recipient CEP.
 - SEFAZ: optional manual homologation with CNPJ `68431371000161`'s A1; never call production SEFAZ from CI; never check a real `.pfx` into the repo.
 
 ---
@@ -666,13 +670,14 @@ Outbound **NF-e de saída** from a paid sale (DFe.NET `NFeAutorizacao`) **is in 
 
 Docker Compose up → open `vilmo-web` Metronic sign-in (`demo1` branded):
 
-1. **Admin** logs in (US-01) → sees all companies (US-02) → **creates a company** with legal + selected marketplaces + A1 (US-03) so list/sync/invoice flags can turn green.
-2. Admin **creates a company user** on selected channels (US-09) and/or a **vendor** on selected marketplaces (US-10, `PendingConnect` → OAuth `Linked`).
-3. That **company user** logs in, **creates more vendors** for the same CNPJ, and sees **all their sales** (US-11).
-4. **Vendor** logs in and sees **only** his sales and status (US-12).
-5. Ingest NF-e (**CNPJ + chave**) using that company's A1 → inventory **only** for that company. Open **Estoque**, set **preço de venda**.
-6. Vendor publishes an advertisement on **linked** channels.
-7. Webhook/import creates a **common sale** + EAV attributes; when status becomes **Pago**, company stock **decreases by qty** (US-13).
-8. On that sale, **Emitir nota fiscal eletrônica** → DFe.NET authorizes → status **Preparando para envio**. **No second stock decrement.** Retry of the same key does not emit twice.
-9. **Imprimir etiqueta para envio** → PDF 10×15 (or 13.8×10.6) with sender CNPJ/address, recipient name/address/CEP. Status **Etiqueta impressa**.
-10. A second company cannot see those products, **stock**, or sales. Vendor B cannot open vendor A's sale (`404`). Vendor cannot open **Estoque**.
+1. **Admin** logs in (US-01) → sees all companies (US-02) → **creates a company** with legal + selected marketplaces **(connection fields per channel)** + A1 (US-03, US-15) so list/sync/invoice flags can turn green.
+2. Admin (or company user) opens **Marketplaces da empresa**, **edits** ClientId / PartnerKey / … per channel, **Conectar** until `Linked`.
+3. Admin **creates a company user** on selected channels (US-09) and/or a **vendor** on selected marketplaces (US-10, `PendingConnect` → OAuth `Linked`).
+4. That **company user** logs in, **creates more vendors** for the same CNPJ, and sees **all their sales** (US-11).
+5. **Vendor** logs in and sees **only** his sales and status (US-12). Vendor cannot open company connection fields.
+6. Ingest NF-e (**CNPJ + chave**) using that company's A1 → inventory **only** for that company. Open **Estoque**, set **preço de venda**.
+7. Vendor publishes an advertisement on **linked** channels.
+8. Webhook/import creates a **common sale** + EAV attributes; when status becomes **Pago**, company stock **decreases by qty** (US-13).
+9. On that sale, **Emitir nota fiscal eletrônica** → DFe.NET authorizes → status **Preparando para envio**. **No second stock decrement.** Retry of the same key does not emit twice.
+10. **Imprimir etiqueta para envio** → PDF 10×15 (or 13.8×10.6) with sender CNPJ/address, recipient name/address/CEP. Status **Etiqueta impressa**.
+11. A second company cannot see those products, **stock**, **marketplace secrets**, or sales. Vendor B cannot open vendor A's sale (`404`). Vendor cannot open **Estoque** or **Marketplaces da empresa**.

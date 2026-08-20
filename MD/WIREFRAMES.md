@@ -16,6 +16,7 @@ Portuguese labels in the product. Images in [`wireframes/`](./wireframes/).
 | [wf_08_sale_label.png](./wireframes/wf_08_sale_label.png) | **Preparando para envio** → etiqueta 10×15 | US-07 |
 | ASCII in this file | **Estoque** + preço de venda | US-13 |
 | ASCII in this file | **Ingerir NF-e** (CNPJ + chave) | US-14 |
+| ASCII in this file | **Marketplaces da empresa** — connection fields | US-15 |
 
 ---
 
@@ -32,11 +33,13 @@ flowchart TD
   empresas --> users[Usuários]
   users --> userEmp[Usuário empresa + canais]
   users --> vendorA[Novo vendedor + canais]
+  empresas --> mktA[Marketplaces da empresa campos]
   empresas --> estoqueA[Estoque + preço de venda]
   estoqueA --> ingestA[Ingerir NF-e CNPJ + chave]
 
   dashEmp --> vendedores[Vendedores]
   vendedores --> vendorC[Novo vendedor da minha empresa]
+  dashEmp --> mktC[Marketplaces desta empresa]
   dashEmp --> estoqueC[Estoque só deste CNPJ]
   estoqueC --> ingestC[Ingerir NF-e CNPJ locked]
   dashEmp --> vendasEmp[Vendas de todos os vendedores]
@@ -48,7 +51,7 @@ flowchart TD
   detalhe -->|Preparando envio| etiqueta[Imprimir etiqueta]
 ```
 
-Vendor has **no** Estoque / Ingerir NF-e nodes. Paid decreases **company** stock, not a vendor warehouse.
+Vendor has **no** Estoque / Ingerir NF-e / company marketplace-connection nodes. Paid decreases **company** stock, not a vendor warehouse.
 
 ---
 
@@ -66,8 +69,8 @@ Vendor has **no** Estoque / Ingerir NF-e nodes. Paid decreases **company** stock
 
 | Role | Badge | Sidebar (nothing else) |
 | --- | --- | --- |
-| **Admin** | Admin | Empresas, Usuários, Dashboard, **Estoque**, **Ingerir NF-e**, Produtos, Anúncios, **Vendas**, Vendedores, Marketplaces, Configurações |
-| **Company** | Empresa | Dashboard, **Estoque**, **Ingerir NF-e**, Produtos, Anúncios, **Vendas**, Vendedores, Marketplaces, Configurações |
+| **Admin** | Admin | Empresas, Usuários, Dashboard, **Estoque**, **Ingerir NF-e**, Produtos, Anúncios, **Vendas**, Vendedores, **Marketplaces** (campos de conexão), Configurações |
+| **Company** | Empresa | Dashboard, **Estoque**, **Ingerir NF-e**, Produtos, Anúncios, **Vendas**, Vendedores, **Marketplaces** (desta empresa), Configurações |
 | **Vendor** | Vendedor | Dashboard, **Minhas vendas**, Meus anúncios, Meus marketplaces, Perfil |
 
 Company switcher in the header: **Admin only** (any CNPJ). Company/Vendor: name of their CNPJ, not a picker of other legal entities.
@@ -108,7 +111,7 @@ Readiness lights on each row (US-03):
 | --- | --- | --- |
 | 1 Identidade | Razão, CNPJ, IE, endereço, CEP 8 | Save Draft |
 | 2 Fiscal | A1 Dropzone, série/nNF, regime, CFOP | `ready_to_invoice` |
-| 3 Marketplaces | Checkboxes ML / Shopee / SHEIN / Magalu + app keys / OAuth | `ready_to_list` / `ready_to_sync_sales` |
+| 3 Marketplaces | Checkboxes + **connection fields per code** (ClientId, PartnerKey, …) + OAuth | `ready_to_list` / `ready_to_sync_sales` |
 | 4 Usuário empresa | Optional US-09 | Company login |
 
 Traffic lights on the right stay gray until each block is complete. **Salvar rascunho** is allowed with only step 1.
@@ -242,18 +245,33 @@ Admin and Company only. Vendor: no menu.
 └─────────────────────────────────────────────────────┘
 ```
 
-### Marketplaces (company apps)
+### Marketplaces da empresa — connection fields (US-15)
+
+Admin and Company only. Vendor: **Meus marketplaces** (own shop), not this screen.
 
 ```
-┌ Marketplaces da empresa ────────────────────────────┐
-│ ML      Linked     [Reconectar]  tokens masked      │
-│ Shopee  Pending    [Conectar]                       │
-│ Magalu  Linked                                      │
-│ SHEIN   off                                         │
-└─────────────────────────────────────────────────────┘
+┌ Marketplaces da empresa  (VILMO … 68.431.371/0001-61) ──┐
+│ ▾ Mercado Livre     [Habilitado]  Linked                │
+│   ClientId (APP ID)  [ 1234567890123456            ]    │
+│   ClientSecret       [ ••••••••••              ] keep   │
+│   SiteId             [ MLB                         ]    │
+│   Redirect  https://vilmomkt.com/oauth/MercadoLivre/…   │
+│   Webhook   https://vilmomkt.com/webhooks/MercadoLivre  │
+│   Avançado: AccessToken / RefreshToken / UserId masked  │
+│                    [Salvar]  [Reconectar]               │
+│ ▾ Shopee            [Habilitado]  PendingConnect        │
+│   PartnerId          [                                 ] │
+│   PartnerKey         [                                 ] │
+│                    [Salvar]  [Conectar]                 │
+│ ▸ Magalu            [ ] off                             │
+│ ▸ SHEIN             [ ] off                             │
+└─────────────────────────────────────────────────────────┘
 ```
 
-Admin catalog **Registrar marketplace** is a separate form (`POST /marketplaces`, new `code`, no deploy).
+- Fields come from `marketplace_parameter_definition` (`scope = company`), not a C# switch.
+- Secrets: GET never returns the full value; omit on save = keep.
+- Same fields appear in Nova empresa wizard step 3.
+- Admin catalog **Registrar marketplace** is a separate form (`POST /marketplaces`, new `code`, no deploy). That new code then appears here with its own fields.
 
 ### Configurações — A1
 

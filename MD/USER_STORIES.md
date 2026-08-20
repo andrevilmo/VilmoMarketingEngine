@@ -1,18 +1,18 @@
 # User stories — login, roles, provisioning, sales, NF-e, labels
 
-This document is the **depth plan** for identity, company/vendor provisioning, **company stock + sale price**, inbound NF-e ingest, sales, outbound invoice, and shipping labels. It extends [PLAN.md](./PLAN.md) and [MarketPlaceEngine.MD](./MarketPlaceEngine.MD). No application code in this revision.
+This document is the **depth plan** for identity, company/vendor provisioning, **per-company marketplace connection fields**, **company stock + sale price**, inbound NF-e ingest, sales, outbound invoice, and shipping labels. It extends [PLAN.md](./PLAN.md) and [MarketPlaceEngine.MD](./MarketPlaceEngine.MD). No application code in this revision.
 
 UI copy in Portuguese; API codes in English.
 
 | Login level | Profile | After login, sees |
 | --- | --- | --- |
 | **Admin** | `IsPlatformSuperUser` (`admin@vilmomkt.com`) | All companies, all users, all sales. Can **create companies** and **create users** (company + vendor). |
-| **Company** | `CompanyAdmin` on `UserCompany` | Everything of **that CNPJ**: vendors, marketplace links, **all their sales**, **stock and sale prices**. Can **create vendor users** for this company. |
-| **Vendor** | `UserProfile.Vendor` | Own marketplace links and **own sales** (status, items, NF-e, labels). Cannot create users or companies. **No stock, no sale price, no NF-e ingest.** |
+| **Company** | `CompanyAdmin` on `UserCompany` | Everything of **that CNPJ**: vendors, **marketplace connection fields**, **all their sales**, **stock and sale prices**. Can **create vendor users** for this company. |
+| **Vendor** | `UserProfile.Vendor` | Own marketplace links and **own sales** (status, items, NF-e, labels). Cannot create users or companies. **No stock, no sale price, no NF-e ingest, no company app credentials.** |
 
 `Operator` / `Viewer` are staff profiles (warehouse / read-only), not a fourth login persona.
 
-Index: [US-01](#us-01--login-as-a-user) login · [US-02](#us-02--show-information-at-my-user-level) home by level · [US-03](#us-03--admin-creates-a-company-ready-to-operate) admin creates company · [US-08](#us-08--admin-creates-users) admin creates users · [US-09](#us-09--admin-creates-a-company-user-with-marketplace-access) admin creates company user · [US-10](#us-10--admin-creates-a-vendor-user-and-related-marketplace-users) admin creates vendor · [US-11](#us-11--company-user-creates-vendors-and-checks-their-sales) company creates vendors · [US-12](#us-12--vendor-checks-own-sales-and-status) vendor sales · [US-13](#us-13--admin-and-company-see-stock-and-set-sale-price) stock + sale price · [US-14](#us-14--ingest-nf-e-by-cnpj-and-chave-to-increase-stock) NF-e ingest to stock · [US-04](#us-04--sales-stay-in-sync-common-table--per-marketplace-attributes)–[US-07](#us-07--after-preparando-para-envio-print-correios-format-shipping-label) sales / NF-e / label. Paid sales **decrease company stock** (US-13).
+Index: [US-01](#us-01--login-as-a-user) login · [US-02](#us-02--show-information-at-my-user-level) home by level · [US-03](#us-03--admin-creates-a-company-ready-to-operate) admin creates company · [US-15](#us-15--edit-each-marketplace-connection-on-the-company) edit marketplace connections · [US-08](#us-08--admin-creates-users) admin creates users · [US-09](#us-09--admin-creates-a-company-user-with-marketplace-access) admin creates company user · [US-10](#us-10--admin-creates-a-vendor-user-and-related-marketplace-users) admin creates vendor · [US-11](#us-11--company-user-creates-vendors-and-checks-their-sales) company creates vendors · [US-12](#us-12--vendor-checks-own-sales-and-status) vendor sales · [US-13](#us-13--admin-and-company-see-stock-and-set-sale-price) stock + sale price · [US-14](#us-14--ingest-nf-e-by-cnpj-and-chave-to-increase-stock) NF-e ingest to stock · [US-04](#us-04--sales-stay-in-sync-common-table--per-marketplace-attributes)–[US-07](#us-07--after-preparando-para-envio-print-correios-format-shipping-label) sales / NF-e / label. Paid sales **decrease company stock** (US-13).
 
 **Screens:** [WIREFRAMES.md](./WIREFRAMES.md). **First company seed:** [FirstCompany.md](./FirstCompany.md).
 
@@ -79,7 +79,7 @@ Metronic `demo1/authentication/branded/sign-in.html`. After success, store token
 | Create company user | Yes (US-09) | No | No |
 | Create vendor | Yes, for selected company (US-10) | Yes, for **my** company (US-11) | No |
 | Marketplaces catalog | Yes (`POST /marketplaces`) | No | No |
-| Company marketplace apps | Yes (selected company) | Yes (this CNPJ) | Read own shop links only |
+| Company marketplace apps | Yes — **edit connection fields** (US-15) | Yes — **this CNPJ only** (US-15) | Own shop links only. **Cannot** edit company ClientId / PartnerKey |
 | Products / **stock** / sale price | Selected company | **This CNPJ only** | **Hidden** |
 | Ingest NF-e (CNPJ + chave) | Yes | Yes (own CNPJ locked) | **Hidden** |
 | Advertisements | Selected company | This CNPJ | Own ads only |
@@ -142,7 +142,7 @@ Without A1: `ready_to_invoice = false`. Ingest XML still allowed; emit button hi
 
 #### Step 3 — Selected marketplaces (required to **post items** and **check sales**)
 
-Admin checks which channels this company will use (`MercadoLivre`, `Shopee`, `Shein`, `Magalu`, …). For **each selected** `code`:
+Admin checks which channels this company will use (`MercadoLivre`, `Shopee`, `Shein`, `Magalu`, …). For **each selected** `code`, the wizard shows that channel’s **connection fields** (same form as [US-15](#us-15--edit-each-marketplace-connection-on-the-company)):
 
 1. Insert `company_marketplace_config` (`is_enabled = true`).
 2. Collect **company app** parameters from `marketplace_parameter_definition` where `scope = company` (ClientId, PartnerId, secrets). Secrets never in git.
@@ -151,7 +151,7 @@ Admin checks which channels this company will use (`MercadoLivre`, `Shopee`, `Sh
 
 Until tokens exist for a selected code: that code is `PendingConnect`. Listings and sale sync for that code stay disabled.
 
-Omitted `marketplaceCodes` on create → no channels yet (`ready_to_list = false`). Admin can add them later with `PUT /companies/{id}/marketplaces/{code}`.
+Omitted `marketplaceCodes` on create → no channels yet (`ready_to_list = false`). Admin or company can **add or edit** them later on **Marketplaces da empresa** (US-15) with `PUT /companies/{id}/marketplaces/{code}`.
 
 #### Step 4 — Optional first company user
 
@@ -414,7 +414,7 @@ Route: `POST /vendors` (company implied) or `POST /companies/{myId}/vendors`.
 - Detail: common fields + EAV accordion + raw remote status (US-04, US-05).
 - Buttons: **Emitir NF-e** / **Imprimir etiqueta** on **own** sales only, same guards as US-06/US-07 (company A1 still signs).
 - **My marketplaces**: list `user_detail_marketplace` with `link_status` (no secrets). Can click Connect if `PendingConnect`.
-- Cannot: create users, create companies, list other vendors, change company A1 or company app ClientId.
+- Cannot: create users, create companies, list other vendors, change company A1 or **company marketplace connection fields** (US-15).
 - **Cannot** open **Estoque**, set **preço de venda**, or ingest NF-e (US-13, US-14). Menu hidden; API `404`.
 
 ### UI
@@ -531,12 +531,102 @@ Layout-1 form: CNPJ (select or locked) + chave 44 + Ingerir + Dropzone XML. Stat
 
 ---
 
+## US-15 — Edit each marketplace connection on the company
+
+**As** an **admin** or **company** user  
+**I want** a screen on **this company** where I can **view and edit the connection fields of each marketplace** (app id, secrets, site, connect/OAuth)  
+**So that** every CNPJ stores its own Mercado Livre / Shopee / SHEIN / Magalu credentials, and a later channel is just more fields from the definition table — not a new form in C#.
+
+Wizard step 3 (US-03) uses the **same fields**. This story is the **always-available editor** after the company exists.
+
+### Who
+
+| Level | Sees / edits |
+| --- | --- |
+| **Admin** | Connection of the **selected** company (`X-Company-Id`). Switcher required. |
+| **Company** | Connection of **their CNPJ only**. |
+| **Vendor** | Hidden. `GET`/`PUT` company marketplace params → `404`. Vendor has **Meus marketplaces** (own shop OAuth only). |
+
+Company A cannot read or write company B’s ClientSecret (`404`).
+
+### Screen — Marketplaces da empresa
+
+One card / accordion **per `marketplace.code`** that exists in the catalog (`is_active` or already enabled on this company). Not a hardcoded list of four.
+
+Each card:
+
+| Control | Source | Notes |
+| --- | --- | --- |
+| Toggle **Habilitado** | `company_marketplace_config.is_enabled` | Off → no listings/sync for this code. Does not delete stored parameters. |
+| Status chip | `PendingConnect` / `Linked` / `Error` / `Off` | Linked when required tokens exist |
+| **Connection fields** | `marketplace_parameter_definition` where `scope = company` | Rendered as inputs. Label from `display_name`. |
+| Secrets | `is_secret = true` | GET returns `hasValue` + last 4 (or `********`). PUT omit key = keep. PUT `""` = clear. Never echo full secret. |
+| Redirect URI | Platform, read-only copy | `https://<public>/oauth/{code}/callback` |
+| Webhook URL | Platform, read-only copy | `https://<public>/webhooks/{code}` |
+| **Conectar / Reconectar** | OAuth / HMAC authorize | `GET /marketplaces/{code}/connect?companyId=` — writes tokens, does not require re-typing ClientId |
+| **Salvar** | `PUT /companies/{id}/marketplaces/{code}` | `Idempotency-Key`. Postgres then `DEL marketplace-config:{companyId}:{code}` |
+
+Unknown `parameter_key` for that code → `400`. Extra keys not in the definition are rejected.
+
+### Seed fields (company scope) — launch channels
+
+Keys are **data** in `marketplace_parameter_definition`. The UI does not `switch` on `code`. Seed for v1 (also [HowToCreateCnpjMarketplaceAccounts.md](./HowToCreateCnpjMarketplaceAccounts.md) §5):
+
+| `marketplace.code` | Editable company fields | Filled by Connect (still shown, masked) |
+| --- | --- | --- |
+| `MercadoLivre` | `ClientId` (APP ID), `ClientSecret`, `SiteId` (default `MLB`) | `AccessToken`, `RefreshToken`, `UserId` |
+| `Shopee` | `PartnerId`, `PartnerKey` | `ShopId`, `AccessToken`, `RefreshToken` (shop; company-operated shop may live here until a vendor subaccount exists) |
+| `Shein` | `AppId`, `AppSecret` | `OpenKeyId`, `SecretKey` after seller auth |
+| `Magalu` | `ClientId`, `ClientSecret`, `Scope` | `AccessToken`, `RefreshToken` |
+
+A fifth marketplace (Amazon, …) adds definition rows; this screen grows new fields automatically.
+
+Tokens that OAuth writes may also be pasted in an **Avançado** accordion (support). Same secret masking rules.
+
+### Request
+
+`PUT /companies/{companyId}/marketplaces/{code}` + `Idempotency-Key`
+
+```
+{
+  "isEnabled": true,
+  "parameters": {
+    "ClientId": "…",
+    "ClientSecret": "…",
+    "SiteId": "MLB"
+  }
+}
+```
+
+`GET /companies/{companyId}/marketplaces` — list cards (enabled, status, masked params, field metadata).  
+`GET /companies/{companyId}/marketplaces/{code}` — one card.  
+`GET /marketplaces/{code}/parameter-definitions?scope=company` — field list for the form (Admin/Company).
+
+Vendor JWT on these routes → `404`.
+
+### Acceptance
+
+- Company user cannot PUT another company’s `{companyId}` (`403`/`404`).
+- Saving Mercado Livre ClientId for company A does not change company B.
+- GET never returns a full `is_secret` value.
+- PUT without `ClientSecret` leaves the stored secret unchanged.
+- After save, Redis `marketplace-config:{companyId}:{code}` is deleted.
+- Connect after save uses the **new** ClientId (not a stale Redis DTO).
+- Vendor cannot open **Marketplaces da empresa**. **Meus marketplaces** does not show company ClientSecret.
+- Disabling a channel keeps parameters; listings/sync for that code stop.
+
+### UI
+
+Metronic `demo1/account/integrations.html` + settings form. Portuguese labels. Sidebar **Marketplaces** for Admin and Company. Admin catalog **Registrar marketplace** is a **separate** screen (`POST /marketplaces`).
+
+---
+
 ## Binding (company CNPJ owns the legal process)
 
 ```
 Admin
   └── creates Company (CNPJ)           US-03
-        ├── company_marketplace_*      selected channels (apps)
+        ├── company_marketplace_*      selected channels + **editable connection fields** (US-15)
         ├── A1 + series                invoices
         ├── Company user               US-09  → user_company_marketplace
         └── Vendor users               US-10 / US-11
@@ -913,7 +1003,7 @@ v1 does not talk IPP/raw ZPL unless we add it later. The operator prints the PDF
 | Create vendor | yes (selected company) | yes (own CNPJ only) | no | no |
 | Users of company | yes | yes | no | no |
 | Vendor subaccounts | yes | yes | own only | no |
-| Company marketplace apps | yes | yes | no | no |
+| Company marketplace apps | yes — **edit fields** (US-15) | yes — **this CNPJ only** | **no** | no |
 | **Estoque + preço de venda** | selected company | **this CNPJ only** | **no** | no |
 | **Ingerir NF-e** (CNPJ + chave) | yes | yes (own CNPJ) | **no** | no |
 | Sales list | selected company / admin search-all | **all vendors** of CNPJ | own `vendor_user_id` | no |
@@ -938,7 +1028,10 @@ Mutating business calls: JWT + company context + `Idempotency-Key` (not on login
 | `POST` | `/companies` | Admin | US-03 wizard (legal). Idempotent on CNPJ |
 | `PUT` | `/companies/{id}` | Admin | Legal/fiscal fields |
 | `POST` | `/companies/{id}/certificate` | Admin / Company | A1 |
-| `PUT` | `/companies/{id}/marketplaces/{code}` | Admin / Company | Enable app + parameters (US-03 step 3) |
+| `PUT` | `/companies/{id}/marketplaces/{code}` | Admin / Company | US-15: enable + **edit connection fields**. Postgres then `DEL` Redis. Vendor `404`. |
+| `GET` | `/companies/{id}/marketplaces` | Admin / Company | List channels: enabled, status, masked params + field metadata. |
+| `GET` | `/companies/{id}/marketplaces/{code}` | Admin / Company | One channel’s connection form. Secrets masked. |
+| `GET` | `/marketplaces/{code}/parameter-definitions` | Admin / Company | Field list (`scope=company` for this screen). |
 | `POST` | `/companies/{id}/users` | Admin | Company user + `user_company_marketplace` (US-09) |
 | `POST` | `/companies/{id}/vendors` | Admin / Company (own id) | Vendor + related marketplace users (US-10, US-11) |
 | `PUT` | `/companies/{id}/vendors/{userId}/marketplaces/{code}` | Admin / Company | Extra channel for existing vendor |
@@ -971,7 +1064,8 @@ See [UI.md](./UI.md) for file sources. Behavior:
 | Button Emitir NF-e | US-06 | Confirm modal: dest name, CNPJ/CPF, CEP, items, emitente CNPJ |
 | Button Imprimir etiqueta para envio | US-07 | Size selector 10×15 / 13.8×10.6. Placement hint |
 | Sign-in / home by level | US-01, US-02 | Badge Admin / Empresa / Vendedor |
-| Create company wizard | US-03 | Admin. Readiness lights |
+| Create company wizard | US-03 | Admin. Step 3 = same connection fields as US-15 |
+| **Marketplaces da empresa** | US-15 | Admin + Company. Per-channel **editable** ClientId / PartnerKey / … Vendor hidden |
 | Create company user | US-09 | Admin. Marketplace checkboxes |
 | Create vendor | US-10, US-11 | Admin or Company. Selected marketplaces + Connect |
 | Sidebar | US-02 | Admin / Company / Vendor menus |
@@ -988,6 +1082,7 @@ See [UI.md](./UI.md) for file sources. Behavior:
 - Stock: ingest inbound NF-e twice does not double qty; Paid twice does not double-decrement; company B saldo unchanged.
 - Price: `PUT` sale-price as vendor → 404; as company A on company B sku → 404.
 - Provisioning: create vendor with two codes → two `user_detail_marketplace` `PendingConnect`; OAuth callback sets `Linked`. Same idempotency key does not duplicate. Create company user with a code not enabled on the company → `400`.
+- Marketplace connection (US-15): vendor `PUT /companies/{id}/marketplaces/{code}` → `404`; company A cannot PUT company B; GET omits full secrets; PUT without secret key keeps previous secret; unknown `parameter_key` → `400`; save `DEL`s Redis config cache.
 - Company readiness: no A1 → `ready_to_invoice = false`; emit returns `409 CertificateNotConfigured`.
 - Import: fixture ML order → one `sales` row + attributes `shipment_id`; second webhook updates `remote_status` only.
 - Emit: Testcontainers + stub `INfeAuthorizer` (do not call SEFAZ in CI); assert status `PreparingForDispatch` and XML stored; missing CEP → 400.

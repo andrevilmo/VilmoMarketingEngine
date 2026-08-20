@@ -115,7 +115,7 @@ flowchart TB
 
 Identity: `company`, `user`, `user_company`, `company_certificate`, `users_detail`, `user_detail_marketplace`, `user_company_marketplace`.
 
-Marketplace data: `marketplace`, `marketplace_parameter_definition`, `marketplace_operation_binding`, `marketplace_webhook_binding`, `company_marketplace_config`, `company_marketplace_parameter`, `marketplace_sale_field_definition`, `marketplace_sale_status_map`.
+Marketplace data: `marketplace`, `marketplace_parameter_definition`, `marketplace_operation_binding`, `marketplace_webhook_binding`, `company_marketplace_config`, `company_marketplace_parameter` (**per-company connection fields**, US-15), `marketplace_sale_field_definition`, `marketplace_sale_status_map`.
 
 Catalog: `product` (`sale_price`), `product_identifier`, `inventory_balance` (`on_hand`), `inventory_movement` (`NfeInbound` / `SalePaid` / `SalePaidReversal`), `listing`.
 

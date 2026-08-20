@@ -35,9 +35,9 @@ Login personas (see [USER_STORIES.md](./USER_STORIES.md)):
 
 | Persona | Who | Visibility | Creates |
 | --- | --- | --- | --- |
-| **Admin** | `IsPlatformSuperUser` | **All** companies, users, sales, **stock of selected CNPJ** | Companies, company users, vendors, **sale prices**, NF-e ingest |
-| **Company** | `CompanyAdmin` of a CNPJ | **All users of that company**, **all of their sales**, **stock of this CNPJ only** | Vendors of **this** CNPJ, **sale prices**, ingest for this CNPJ |
-| **Vendor user** | `UserProfile.Vendor` | Own marketplace links + **own sales** only | — **No stock, no sale price, no ingest** |
+| **Admin** | `IsPlatformSuperUser` | **All** companies, users, sales, **stock of selected CNPJ**, **marketplace connections** | Companies, company users, vendors, **sale prices**, NF-e ingest, **edit company marketplace fields** |
+| **Company** | `CompanyAdmin` of a CNPJ | **All users of that company**, **all of their sales**, **stock of this CNPJ only**, **this CNPJ’s marketplace connections** | Vendors of **this** CNPJ, **sale prices**, ingest, **edit this CNPJ’s marketplace fields** |
+| **Vendor user** | `UserProfile.Vendor` | Own marketplace links + **own sales** only | — **No stock, no sale price, no ingest, no company ClientId/PartnerKey** |
 
 Login is `POST /auth/login` (US-01). Home and menus follow the level (US-02). Creating a company includes legal + selected marketplace apps + A1 so listings, sale status, and NF-e can run (US-03). Creating a vendor on **selected** marketplaces inserts `user_detail_marketplace` and **connects** the remote shop user (US-10); production APIs do not silently register a seller. Depth: [USER_STORIES.md](./USER_STORIES.md).
 
@@ -146,6 +146,8 @@ Redis GET marketplace-config:{companyId}:{marketplaceCode}
 ```
 
 Writes: Postgres first, then `DEL marketplace-config:{companyId}:{marketplaceCode}`. Never update Redis only.
+
+**Company connection UI (US-15):** Admin and Company edit `company_marketplace_parameter` per `code` (ClientId, PartnerKey, AppId, …). GET masks `is_secret`. The form is generated from `marketplace_parameter_definition`; adding Amazon is new definition rows, not a new screen. Vendor JWT → `404`.
 
 Connectors receive `CompanyMarketplaceConfig` (app credentials) plus the vendor's `user_detail_marketplace` (subaccount). They must not read `IConfiguration["Shopee:PartnerId"]`. The executor looks up bindings by `marketplace_code` string.
 
