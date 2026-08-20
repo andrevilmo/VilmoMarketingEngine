@@ -483,7 +483,8 @@ Auth: bearer session/JWT with `user_id`, `is_platform_super_user`, and membershi
 | `PUT` | `/marketplaces/{code}` | Super user: update definition, parameter keys, operation bindings; `DEL marketplace-definition:{code}`. |
 | `GET` | `/inventory` | Admin/Company: on-hand + sale price (US-13). Vendor `404`. |
 | `PUT` | `/products/{sku}/sale-price` | Admin/Company. Vendor `404`. |
-| `POST` | `/nfe/chaves/{chaveAcesso}/ingest` | Validate chave, enqueue DistDFe with **this company's** A1. Body CNPJ must match company (US-14). Vendor `404`. |
+| `POST` | `/nfe/chaves/{chaveAcesso}/ingest` | Validate chave, enqueue DistDFe with **this company's** A1. Body CNPJ must match company (US-14). Writes `nfe_ingest_log`. Vendor `404`. |
+| `GET` | `/nfe/ingest-logs` | Company-scoped ingest progress. `ORDER BY created_at DESC` (last executed step first). Query `chave`, `runId`, `limit`. User message + hidden `technical_json`. Vendor `404`. |
 | `GET` | `/nfe/mobile/session` | Admin/Company: ephemeral RSA-OAEP public key for US-16. |
 | `POST` | `/nfe/mobile/ingest` | Encrypted AES-GCM envelope → unwrap → same as US-14 ingest. Pin TLS on the app. Vendor `404`. |
 | `POST` | `/nfe/xml` | Upload XML fallback. Chave from XML must match; emit/dest CNPJ must be compatible with the company CNPJ. |
@@ -525,6 +526,7 @@ Validate ChaveAcesso (44 + DV)
         ▼
 Redis SET NX idempotency:{companyId}:{chaveOrHeader}
 INSERT nfe_documents unique (company_id, chave_acesso)
+INSERT nfe_ingest_log (received → validated → queued / replayed)
         │
         ▼
 Stream: nfe.ingest.requested  { companyId, chave }
@@ -560,7 +562,7 @@ vilmo-nfe
 
 **Paid marketplace sale (US-13):** when canonical status becomes `Paid`, insert `InventoryMovement` kind `SalePaid` unique `(company_id, sale_id, sku)` and **on_hand -= qty**. Do not go negative (`stock_short` instead of Paid). Retry must not subtract twice. Outbound NF-e (US-06) does **not** subtract again. Cancelled/Returned after `SalePaid` posts `SalePaidReversal` (+qty).
 
-Inbound NF-e (US-14 UI: **CNPJ + chave**, Admin/Company only) **increases** on-hand for purchase CFOP. The chave may be **typed** or **scanned** (web webcam or **US-16 mobile app**). The mobile app POSTs an **encrypted** envelope (`POST /nfe/mobile/ingest`); after unwrap, the same DistDFe path runs. Only the 44 digits + CNPJ leave the device. Classification is a `CfopMovementPolicy` with explicit enums, not `if (cfop.StartsWith("5"))` scattered in parsers. The ingest screen and the mobile app are hidden from vendors.
+Inbound NF-e (US-14 UI: **CNPJ + chave**, Admin/Company only) **increases** on-hand for purchase CFOP. The chave may be **typed** or **scanned** (web webcam or **US-16 mobile app**). The mobile app POSTs an **encrypted** envelope (`POST /nfe/mobile/ingest`); after unwrap, the same DistDFe path runs. Only the 44 digits + CNPJ leave the device. Classification is a `CfopMovementPolicy` with explicit enums, not `if (cfop.StartsWith("5"))` scattered in parsers. The ingest screen and the mobile app are hidden from vendors. Progress is stored in `nfe_ingest_log` and shown on Ingerir NF-e (high-level PT message; technical JSON collapsed; last step first).
 
 ---
 
@@ -583,6 +585,7 @@ Inbound NF-e (US-14 UI: **CNPJ + chave**, Admin/Company only) **increases** on-h
 | Import sale | PostgreSQL unique | `(company_id, marketplace_code, remote_order_id)` | forever |
 | Sale attribute | PostgreSQL unique | `(sale_id, field_name)` | forever |
 | Emit outbound NF-e | PostgreSQL unique | `(company_id, sale_id)` on outbound `nfe_documents` | forever |
+| NF-e ingest log | PostgreSQL | `(company_id, created_at)` on `nfe_ingest_log` (append-only progress) | forever |
 | Emit NF-e lock | Redis | `lock:nfe-emit:{companyId}:{saleId}` | seconds |
 | Shipment label | PostgreSQL unique | `(sale_id, format)` until invalidated | forever |
 | Token refresh lock | Redis | `lock:token-refresh:{companyId}:{userId}:{marketplaceCode}` | seconds |
@@ -622,7 +625,7 @@ Do not build four C# marketplace projects. Build the **generic engine** first, t
 2. **Identity + tenancy** — `Company`, `User`, `UserCompany`, JWT/`X-Company-Id`, seed `admin@vilmomkt.com` + company CNPJ `68431371000161`. Login US-01, home by level US-02. Admin creates companies (US-03, readiness flags), company users (US-09, `user_company_marketplace`), vendors on **selected** marketplaces (US-10, `PendingConnect` until OAuth). Company users create vendors for their CNPJ (US-11). Vendor sees only own sales (US-12). Row filters by `company_id`.
 3. **Metronic UI shell** — `vilmo-web` from HTML starter layout-1 + demo1 sign-in and members datatable, proxied to the API. Company switcher for super user. Role-based sidebar. **Marketplaces da empresa (US-15):** one form per `code` with connection fields from `marketplace_parameter_definition` (ClientId, PartnerKey, …). Admin/Company only. Same fields on US-03 wizard step 3. See [UI.md](./UI.md).
 4. **Catalog + inventory domain** — Product (`sale_price`), identifiers, movements (`NfeInbound` / `SalePaid`), balances, uniqueness all include `company_id`. Vendor has no stock book.
-5. **NF-e ingest + Estoque UI** — HTML: CNPJ (admin select / company locked) + chave 44 (**webcam** barcode/QR or type) → DistDFe; stock table with **preço de venda**. Admin/Company only. Paid sale decrements on-hand (US-13, US-14). Camera uses `getUserMedia` in the browser; do not upload video. **US-16:** separate MAUI iOS/Android app scans DANFE, encrypted CNPJ cache (default last filled), `POST /nfe/mobile/ingest` (AES-GCM envelope) into the same pipeline.
+5. **NF-e ingest + Estoque UI** — HTML: CNPJ (admin select / company locked) + chave 44 (**webcam** barcode/QR or type) → DistDFe; **Andamento** log (`nfe_ingest_log`, newest first, user message + hidden technical JSON); stock table with **preço de venda**. Admin/Company only. Paid sale decrements on-hand (US-13, US-14). Camera uses `getUserMedia` in the browser; do not upload video. **US-16:** separate MAUI iOS/Android app scans DANFE, encrypted CNPJ cache (default last filled), `POST /nfe/mobile/ingest` (AES-GCM envelope) into the same pipeline.
 6. **Marketplace engine** — `IAuthProtocol` pack (`OAuth2AuthorizationCode`, `HmacSha256`, `BearerToken`, `ApiKeyHeader`), generic HTTP executor, JSON mappings, definition cache. Commands carry `CompanyId`, `VendorUserId`, and string `marketplace_code`. Advertisement publish: `marketplaceCodes` default all.
 7. **Seed four channels** — SQL/JSON fixtures for Mercado Livre, Magalu, Shopee, SHEIN (SHEIN may be `is_active = false` until Open Platform docs). Include `marketplace_sale_field_definition` and `marketplace_sale_status_map`. No per-brand class.
 8. **Sales sync** — `sales` + `sale_items` + `sale_marketplace_attributes`. Webhook → FetchOrder → upsert. Canonical `SaleStatus`. List/detail UI scoped by role.

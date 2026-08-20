@@ -57,7 +57,7 @@ Do not serve the 10GB-class template tree from Docker. `vilmo-web` is a small st
 | A1 certificate | settings form + Dropzone | Required for `ready_to_invoice`. |
 | Products | store-inventory **Product List / Details / Create** (HTML tables from demo1 members datatable + store-client `product-details.html` for the detail chrome) | Post items when `ready_to_list`. |
 | Inventory | store-inventory **All Stock / Current** | **US-13.** Admin + Company only. **Saldo** + inline **preço de venda**. Vendor: hidden. |
-| Ingest NF-e | custom form on layout-1 + camera overlay | **US-14.** Admin: Empresa/CNPJ select + chave 44. **Ler código (câmera):** `getUserMedia` + Code 128 / QR → 44 digits. Company: CNPJ **locked**. Optional XML Dropzone. Vendor: hidden. |
+| Ingest NF-e | custom form on layout-1 + camera overlay | **US-14.** Admin: Empresa/CNPJ select + chave 44. **Ler código (câmera):** `getUserMedia` + Code 128 / QR → 44 digits. **Andamento** log table (`nfe_ingest_log`, newest first; user message + collapsed technical JSON). Company: CNPJ **locked**. Optional XML Dropzone. Vendor: hidden. |
 | **Vilmo NF-e app** | .NET MAUI (not Metronic) | **US-16.** Separate iOS + Android. Scan DANFE, CNPJ history (encrypted, last filled default), encrypted POST. |
 | Advertisements | product list + “publish” modal with marketplace checkboxes | Default **linked** channels; optional `marketplaceCodes`. Vendor: own listings. |
 | **Sales list** | store-inventory **Order List** (DataTables) | Company: all vendors. Vendor: own (US-12). Status in PT. |

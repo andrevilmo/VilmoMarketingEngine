@@ -235,6 +235,11 @@ Admin and Company only. Vendor: no menu.
 │ [Ingerir na Receita / SEFAZ]                        │
 │ XML (opcional)   [ Dropzone ]                       │
 │ Resultado: +12 CAM1, +3 CAL2  | chave ABC…          │
+│                                                     │
+│ Andamento (último passo primeiro)                   │
+│ 14:02  último  Aguardando XML da Receita   [técnico]│
+│ 14:02          Nota na fila da Receita     [técnico]│
+│ 14:01          Chave validada              [técnico]│
 └─────────────────────────────────────────────────────┘
 
 ┌ Câmera ─────────────────────────────────────────────┐
@@ -249,6 +254,7 @@ Admin and Company only. Vendor: no menu.
 - Permission denied: type the chave. Video is not uploaded.
 - DistDFe with **that** company's A1. Inbound items **increase** saldo.
 - Same chave twice does not add qty again.
+- **Andamento** table: every step stored in `nfe_ingest_log`, shown newest first. High-level PT message; technical JSON hidden until expanded.
 
 ### App Vilmo NF-e — iOS / Android (US-16)
 

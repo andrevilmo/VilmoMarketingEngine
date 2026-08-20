@@ -2,6 +2,7 @@ sequenceDiagram
   autonumber
   participant User
   participant Cam as Webcam in browser
+  participant Web as vilmo-web
   participant Api as vilmo-api
   participant Redis
   participant Nfe as vilmo-nfe
@@ -15,8 +16,11 @@ sequenceDiagram
   User->>Api: POST /nfe/chaves/chave/ingest CNPJ equals company
   Api->>Redis: SET NX idempotency companyId chave
   Api->>Pg: INSERT nfe_documents unique company chave
+  Api->>Pg: INSERT nfe_ingest_log received validated queued
   Api->>Redis: XADD nfe.ingest.requested
   Nfe->>Pg: load A1 for companyId
   Nfe->>Sefaz: DistDFe consChNFe
   Sefaz-->>Nfe: nfeProc XML
   Nfe->>Pg: inbound CFOP NfeInbound on_hand plus qCom
+  Nfe->>Pg: INSERT nfe_ingest_log xml_parsed stock_applied
+  Web->>Api: GET /nfe/ingest-logs order created_at desc

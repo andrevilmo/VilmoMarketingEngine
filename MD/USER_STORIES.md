@@ -507,8 +507,11 @@ Metronic DataTables (demo1 members table). Price as currency input. Sidebar **Es
 | **Chave de acesso** | 44 digits, checksum. Required. Type **or** scan (camera). | Same |
 | **Ler código** | Webcam: barcode (Code 128) or QR on the DANFE → fills the 44 digits | Same |
 | XML file | Optional fallback Dropzone if DistDFe cannot return the XML | Same |
+| **Andamento** | Log table of this company’s ingest steps, **newest first**. Each row: high-level message + hidden technical JSON (`<details>`). Progress bar = last executed step. | Same |
 
 Submit: `POST /nfe/chaves/{chave}/ingest` + `Idempotency-Key`. Body may include `cnpj` only as a check; it **must** equal `Company.Cnpj` for the active company (`400 CnpjMismatch` otherwise).
+
+Each ingest **run** writes rows to `nfe_ingest_log` (`company_id`, `run_id`, `step_code`, `user_message`, `technical_json`, `created_at`). `GET /nfe/ingest-logs?chave=&runId=` returns them `ORDER BY created_at DESC` so the **last executed step is first**. Technical JSON is for support; the visible text is PT and non-secret (no A1 password, no XML body).
 
 vilmo-nfe: DistDFe `consChNFe` with **that company’s A1**. Parse `det/prod`. For inbound CFOP (purchase / return to us as dest): create/update `product` by `(company_id, EAN)` else `(company_id, cProd + emit CNPJ)`; `InventoryMovement` kind `NfeInbound` unique `(company_id, chave, n_item, NfeInbound)`; **on_hand += qCom**.
 
@@ -588,10 +591,11 @@ Do **not** follow the QR URL in the browser (no consulta SEFAZ portal). DistDFe 
 - After success, US-13 table shows new/updated SKUs and higher **Saldo**.
 - Unknown chave / SEFAZ timeout → row `nfe_documents.status = Failed` with `xMotivo`; saldo unchanged.
 - Camera: permission denied still allows typing the chave. Scan of a valid DANFE barcode or QR fills 44 digits and DV; garbage payload does not. Stream is stopped after read/cancel. Video is not POSTed.
+- Ingest log: after chave or XML submit, the Andamento table shows steps newest-first; the first row is the last executed step; technical JSON is collapsed. Vendor `GET /nfe/ingest-logs` is `404`. Company A cannot see company B rows.
 
 ### UI
 
-Layout-1 form: CNPJ (select or locked) + chave 44 + **Ler código (câmera)** + Ingerir + Dropzone XML. Status list of recent chaves for **this company only**. Camera overlay: live `<video>` + viewfinder.
+Layout-1 form: CNPJ (select or locked) + chave 44 + **Ler código (câmera)** + Ingerir + Dropzone XML. **Andamento da ingestão** log table (this company, `created_at DESC`). Camera overlay: live `<video>` + viewfinder.
 
 Native warehouse scanning (iOS/Android, encrypted POST) is [US-16](#us-16--iosandroid-app-scan-nfe-and-encrypted-ingest). The web camera path stays.
 
@@ -1196,7 +1200,8 @@ Mutating business calls: JWT + company context + `Idempotency-Key` (not on login
 | `PUT` | `/companies/{id}/vendors/{userId}/marketplaces/{code}` | Admin / Company | Extra channel for existing vendor |
 | `GET` | `/inventory` | Admin/Company | US-13 on-hand + sale price for active company. Vendor `404`. |
 | `PUT` | `/products/{sku}/sale-price` | Admin/Company | Set BRL sale price. Idempotent. |
-| `POST` | `/nfe/chaves/{chaveAcesso}/ingest` | Admin/Company | US-14. CNPJ must match company. Vendor `404`. |
+| `POST` | `/nfe/chaves/{chaveAcesso}/ingest` | Admin/Company | US-14. CNPJ must match company. Vendor `404`. Writes `nfe_ingest_log`. |
+| `GET` | `/nfe/ingest-logs` | Admin/Company | US-14 progress log, this company, `created_at DESC`. Query `chave`, `runId`, `limit`. Vendor `404`. |
 | `GET` | `/nfe/mobile/session` | Admin/Company | US-16 ephemeral wrap public key. Vendor `404`. |
 | `POST` | `/nfe/mobile/ingest` | Admin/Company | Encrypted envelope → same US-14 ingest. |
 | `POST` | `/nfe/xml` | Admin/Company | XML fallback. |

@@ -124,7 +124,7 @@ Marketplace data: `marketplace`, `marketplace_parameter_definition`, `marketplac
 
 Catalog: `product` (`sale_price`), `product_identifier`, `inventory_balance` (`on_hand`), `inventory_movement` (`NfeInbound` / `SalePaid` / `SalePaidReversal`), `listing`.
 
-Sales: `sales`, `sale_items`, `sale_marketplace_attributes`, `nfe_documents`, `shipment_labels`.
+Sales: `sales`, `sale_items`, `sale_marketplace_attributes`, `nfe_documents`, `nfe_ingest_log` (append-only ingest progress: user message + technical JSON), `shipment_labels`.
 
 Every business unique index includes `company_id` (except catalog of `marketplace.code`).
 
