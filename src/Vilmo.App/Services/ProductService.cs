@@ -1,10 +1,11 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Vilmo.Data;
 using Vilmo.Domain;
 
 namespace Vilmo.Services;
 
-public sealed class ProductService(AppDbContext db)
+public sealed class ProductService(AppDbContext db, AdvertisementService advertisements)
 {
     public async Task<List<Product>> ListAsync(Guid companyId, CancellationToken ct) =>
         await db.Products.AsNoTracking().Where(p => p.CompanyId == companyId).OrderBy(p => p.Sku).ToListAsync(ct);
@@ -32,41 +33,15 @@ public sealed class ProductService(AppDbContext db)
 
     public async Task<object> PublishAsync(Guid companyId, Guid vendorUserId, string sku, IReadOnlyList<string>? codes, CancellationToken ct)
     {
-        if (!await db.Products.AnyAsync(p => p.CompanyId == companyId && p.Sku == sku, ct))
-            throw new KeyNotFoundException("ProductNotFound");
-        var selected = codes is { Count: > 0 }
-            ? codes.ToList()
-            : await db.UserDetailMarketplaces.Where(v => v.CompanyId == companyId && v.UserId == vendorUserId)
-                .Select(v => v.MarketplaceCode).ToListAsync(ct);
-        var created = new List<object>();
-        foreach (var code in selected.Distinct())
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(new
         {
-            var listing = await db.Listings.FirstOrDefaultAsync(l =>
-                l.CompanyId == companyId && l.VendorUserId == vendorUserId && l.Sku == sku && l.MarketplaceCode == code, ct);
-            if (listing is null)
-            {
-                listing = new Listing
-                {
-                    Id = Guid.NewGuid(),
-                    CompanyId = companyId,
-                    VendorUserId = vendorUserId,
-                    Sku = sku,
-                    MarketplaceCode = code,
-                    Status = "Queued"
-                };
-                db.Listings.Add(listing);
-            }
-            db.WorkItems.Add(new WorkItem
-            {
-                Id = Guid.NewGuid(),
-                CompanyId = companyId,
-                Kind = WorkKinds.PublishListing,
-                PayloadJson = $"{{\"listingId\":\"{listing.Id}\"}}"
-            });
-            created.Add(new { listing.Id, code, listing.Status });
-        }
-        await db.SaveChangesAsync(ct);
-        return created;
+            sku,
+            kind = AdvertisementKinds.Product,
+            marketplaceCodes = codes,
+            vendorUserId,
+            items = new[] { new { sku, quantity = 1m } }
+        }));
+        return await advertisements.PublishAsync(companyId, vendorUserId, actorIsVendor: false, doc.RootElement.Clone(), ct);
     }
 }
 

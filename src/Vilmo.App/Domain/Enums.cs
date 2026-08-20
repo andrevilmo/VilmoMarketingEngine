@@ -75,6 +75,12 @@ public static class WorkKinds
     public const string PublishListing = "listing.publish.requested";
 }
 
+public static class AdvertisementKinds
+{
+    public const string Product = "Product";
+    public const string Kit = "Kit";
+}
+
 public static class NfeDocumentKinds
 {
     public const string Inbound = "Inbound";

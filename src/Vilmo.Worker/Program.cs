@@ -1,3 +1,4 @@
+using Vilmo.Data;
 using Vilmo.Domain;
 using Vilmo.Hosting;
 using Vilmo.Workers;
@@ -12,4 +13,9 @@ builder.Services.AddHostedService(sp => new PollingWorker(
 });
 var app = builder.Build();
 app.MapGet("/health", () => Results.Text("vilmo-worker\n", "text/plain"));
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    await SchemaPatches.EnsureAsync(db);
+}
 app.Run();

@@ -29,37 +29,44 @@ public sealed class InventoryService(AppDbContext db)
 
     public async Task<(bool Ok, string? Error)> ApplySalePaidAsync(Sale sale, CancellationToken ct)
     {
-        foreach (var item in sale.Items)
+        var needed = await ExpandSaleItemsAsync(sale, ct);
+        foreach (var (sku, qty) in needed)
         {
             var exists = await db.InventoryMovements.AnyAsync(m =>
-                m.CompanyId == sale.CompanyId && m.SaleId == sale.Id && m.Sku == item.Sku && m.Kind == InventoryMovementKinds.SalePaid, ct);
+                m.CompanyId == sale.CompanyId && m.SaleId == sale.Id && m.Sku == sku && m.Kind == InventoryMovementKinds.SalePaid, ct);
             if (exists) continue;
-
-            var bal = await db.InventoryBalances.FirstOrDefaultAsync(b => b.CompanyId == sale.CompanyId && b.Sku == item.Sku, ct);
+            var bal = await db.InventoryBalances.FirstOrDefaultAsync(b => b.CompanyId == sale.CompanyId && b.Sku == sku, ct);
             var onHand = bal?.OnHand ?? 0;
-            if (onHand < item.Quantity)
+            if (onHand < qty)
             {
-                sale.StockShort = item.Sku;
+                sale.StockShort = sku;
                 sale.Status = SaleStatuses.PendingPayment;
                 await db.SaveChangesAsync(ct);
                 return (false, "stock_short");
             }
+        }
 
+        foreach (var (sku, qty) in needed)
+        {
+            var exists = await db.InventoryMovements.AnyAsync(m =>
+                m.CompanyId == sale.CompanyId && m.SaleId == sale.Id && m.Sku == sku && m.Kind == InventoryMovementKinds.SalePaid, ct);
+            if (exists) continue;
             db.InventoryMovements.Add(new InventoryMovement
             {
                 Id = Guid.NewGuid(),
                 CompanyId = sale.CompanyId,
-                Sku = item.Sku,
+                Sku = sku,
                 Kind = InventoryMovementKinds.SalePaid,
-                Quantity = -item.Quantity,
+                Quantity = -qty,
                 SaleId = sale.Id
             });
+            var bal = await db.InventoryBalances.FirstOrDefaultAsync(b => b.CompanyId == sale.CompanyId && b.Sku == sku, ct);
             if (bal is null)
             {
-                bal = new InventoryBalance { Id = Guid.NewGuid(), CompanyId = sale.CompanyId, Sku = item.Sku, OnHand = 0 };
+                bal = new InventoryBalance { Id = Guid.NewGuid(), CompanyId = sale.CompanyId, Sku = sku, OnHand = 0 };
                 db.InventoryBalances.Add(bal);
             }
-            bal.OnHand -= item.Quantity;
+            bal.OnHand -= qty;
         }
         sale.StockShort = null;
         sale.Status = SaleStatuses.Paid;
@@ -95,25 +102,50 @@ public sealed class InventoryService(AppDbContext db)
 
     public async Task ReverseSalePaidAsync(Sale sale, CancellationToken ct)
     {
-        foreach (var item in sale.Items)
+        var needed = await ExpandSaleItemsAsync(sale, ct);
+        foreach (var (sku, qty) in needed)
         {
             var paid = await db.InventoryMovements.AnyAsync(m =>
-                m.CompanyId == sale.CompanyId && m.SaleId == sale.Id && m.Sku == item.Sku && m.Kind == InventoryMovementKinds.SalePaid, ct);
+                m.CompanyId == sale.CompanyId && m.SaleId == sale.Id && m.Sku == sku && m.Kind == InventoryMovementKinds.SalePaid, ct);
             var already = await db.InventoryMovements.AnyAsync(m =>
-                m.CompanyId == sale.CompanyId && m.SaleId == sale.Id && m.Sku == item.Sku && m.Kind == InventoryMovementKinds.SalePaidReversal, ct);
+                m.CompanyId == sale.CompanyId && m.SaleId == sale.Id && m.Sku == sku && m.Kind == InventoryMovementKinds.SalePaidReversal, ct);
             if (!paid || already) continue;
             db.InventoryMovements.Add(new InventoryMovement
             {
                 Id = Guid.NewGuid(),
                 CompanyId = sale.CompanyId,
-                Sku = item.Sku,
+                Sku = sku,
                 Kind = InventoryMovementKinds.SalePaidReversal,
-                Quantity = item.Quantity,
+                Quantity = qty,
                 SaleId = sale.Id
             });
-            var bal = await db.InventoryBalances.FirstAsync(b => b.CompanyId == sale.CompanyId && b.Sku == item.Sku, ct);
-            bal.OnHand += item.Quantity;
+            var bal = await db.InventoryBalances.FirstAsync(b => b.CompanyId == sale.CompanyId && b.Sku == sku, ct);
+            bal.OnHand += qty;
         }
         await db.SaveChangesAsync(ct);
+    }
+
+    async Task<List<(string Sku, decimal Qty)>> ExpandSaleItemsAsync(Sale sale, CancellationToken ct)
+    {
+        var needed = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in sale.Items)
+        {
+            var ads = db.Advertisements.AsNoTracking().Include(a => a.Items)
+                .Where(a => a.CompanyId == sale.CompanyId && a.Sku == item.Sku);
+            Advertisement? ad = null;
+            if (sale.VendorUserId is Guid vendor)
+                ad = await ads.FirstOrDefaultAsync(a => a.VendorUserId == vendor, ct);
+            ad ??= await ads.FirstOrDefaultAsync(ct);
+            if (ad is { Items.Count: > 0 })
+            {
+                foreach (var line in ad.Items)
+                    needed[line.Sku] = needed.GetValueOrDefault(line.Sku) + (line.Quantity * item.Quantity);
+            }
+            else
+            {
+                needed[item.Sku] = needed.GetValueOrDefault(item.Sku) + item.Quantity;
+            }
+        }
+        return needed.Select(kv => (kv.Key, kv.Value)).ToList();
     }
 }

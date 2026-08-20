@@ -175,11 +175,66 @@ public class Listing
     public Guid Id { get; set; }
     public Guid CompanyId { get; set; }
     public Guid VendorUserId { get; set; }
+    public Guid? AdvertisementId { get; set; }
     public string Sku { get; set; } = "";
     public string MarketplaceCode { get; set; } = "";
     public string Status { get; set; } = "Pending";
     public string? RemoteId { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public class Advertisement
+{
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
+    public Guid VendorUserId { get; set; }
+    public string Kind { get; set; } = "Product";
+    public string Sku { get; set; } = "";
+    public string Title { get; set; } = "";
+    public string? Description { get; set; }
+    public decimal Price { get; set; }
+    public string Currency { get; set; } = "BRL";
+    public decimal AvailableQuantity { get; set; } = 1;
+    public string Condition { get; set; } = "new";
+    public string? Brand { get; set; }
+    public string? Gtin { get; set; }
+    public decimal? WeightGrams { get; set; }
+    public decimal? HeightCm { get; set; }
+    public decimal? WidthCm { get; set; }
+    public decimal? LengthCm { get; set; }
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public List<AdvertisementItem> Items { get; set; } = [];
+    public List<AdvertisementAttribute> Attributes { get; set; } = [];
+}
+
+public class AdvertisementItem
+{
+    public Guid Id { get; set; }
+    public Guid AdvertisementId { get; set; }
+    public string Sku { get; set; } = "";
+    public decimal Quantity { get; set; } = 1;
+    public int SortOrder { get; set; }
+}
+
+public class AdvertisementAttribute
+{
+    public Guid Id { get; set; }
+    public Guid AdvertisementId { get; set; }
+    public string MarketplaceCode { get; set; } = "";
+    public string FieldName { get; set; } = "";
+    public string FieldValue { get; set; } = "";
+}
+
+public class MarketplaceListingFieldDefinition
+{
+    public Guid Id { get; set; }
+    public string MarketplaceCode { get; set; } = "";
+    public string FieldKey { get; set; } = "";
+    public string Label { get; set; } = "";
+    public string ValueKind { get; set; } = "string";
+    public bool IsCommon { get; set; }
+    public bool Required { get; set; }
+    public int SortOrder { get; set; }
 }
 
 public class Sale

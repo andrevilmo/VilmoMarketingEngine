@@ -12,6 +12,7 @@ public static class SeedData
     public static async Task ApplyAsync(AppDbContext db, IConfiguration config, CancellationToken ct = default)
     {
         await SeedMarketplacesAsync(db, ct);
+        await SeedListingFieldsAsync(db, ct);
         await SeedFirstCompanyAsync(db, config, ct);
     }
 
@@ -65,6 +66,53 @@ public static class SeedData
         Def("Magalu", "Scope", "company", false, false, "Scope", 3);
         Def("Magalu", "AccessToken", "company", true, true, "Access Token", 10);
         Def("Magalu", "RefreshToken", "company", true, true, "Refresh Token", 11);
+
+        await db.SaveChangesAsync(ct);
+    }
+
+    static async Task SeedListingFieldsAsync(AppDbContext db, CancellationToken ct)
+    {
+        if (await db.MarketplaceListingFieldDefinitions.AnyAsync(ct)) return;
+
+        void Field(string code, string key, string label, string kind, bool common, bool required, int order) =>
+            db.MarketplaceListingFieldDefinitions.Add(new MarketplaceListingFieldDefinition
+            {
+                Id = Guid.NewGuid(),
+                MarketplaceCode = code,
+                FieldKey = key,
+                Label = label,
+                ValueKind = kind,
+                IsCommon = common,
+                Required = required,
+                SortOrder = order
+            });
+
+        Field("*", "title", "Título", "string", true, true, 1);
+        Field("*", "description", "Descrição", "text", true, false, 2);
+        Field("*", "price", "Preço (BRL)", "money", true, true, 3);
+        Field("*", "availableQuantity", "Quantidade do anúncio", "number", true, true, 4);
+        Field("*", "condition", "Condição (new/used)", "string", true, true, 5);
+        Field("*", "brand", "Marca", "string", true, false, 6);
+        Field("*", "gtin", "EAN / GTIN", "string", true, false, 7);
+        Field("*", "weightGrams", "Peso (g)", "number", true, false, 8);
+        Field("*", "heightCm", "Altura (cm)", "number", true, false, 9);
+        Field("*", "widthCm", "Largura (cm)", "number", true, false, 10);
+        Field("*", "lengthCm", "Comprimento (cm)", "number", true, false, 11);
+
+        Field("MercadoLivre", "categoryId", "Categoria ML", "string", false, true, 20);
+        Field("MercadoLivre", "listingTypeId", "Tipo de anúncio (gold_special, gold_pro)", "string", false, false, 21);
+        Field("MercadoLivre", "buyingMode", "Modo de compra (buy_it_now)", "string", false, false, 22);
+        Field("MercadoLivre", "shippingMode", "Envio (me2 / not_specified)", "string", false, false, 23);
+
+        Field("Shopee", "categoryId", "Categoria Shopee", "string", false, true, 20);
+        Field("Shopee", "daysToShip", "Dias para envio", "number", false, false, 21);
+        Field("Shopee", "itemStatus", "Status do item (NORMAL)", "string", false, false, 22);
+
+        Field("Magalu", "categoryId", "Categoria Magalu", "string", false, true, 20);
+        Field("Magalu", "freightType", "Tipo de frete", "string", false, false, 21);
+
+        Field("Shein", "categoryId", "Categoria SHEIN", "string", false, true, 20);
+        Field("Shein", "siteCountry", "País do site (BR)", "string", false, false, 21);
 
         await db.SaveChangesAsync(ct);
     }
@@ -234,6 +282,29 @@ public static class SeedData
                 CompanyId = company.Id,
                 Sku = "CAMISETA-001",
                 OnHand = 10
+            });
+            await db.SaveChangesAsync(ct);
+        }
+
+        if (!await db.Products.AnyAsync(p => p.CompanyId == company.Id && p.Sku == "CALCA-001", ct))
+        {
+            db.Products.Add(new Product
+            {
+                Id = Guid.NewGuid(),
+                CompanyId = company.Id,
+                Sku = "CALCA-001",
+                Name = "Calça Vilmo",
+                Ean = "7891234567802",
+                Ncm = "62034200",
+                Cfop = "5102",
+                SalePrice = 129.90m
+            });
+            db.InventoryBalances.Add(new InventoryBalance
+            {
+                Id = Guid.NewGuid(),
+                CompanyId = company.Id,
+                Sku = "CALCA-001",
+                OnHand = 8
             });
             await db.SaveChangesAsync(ct);
         }

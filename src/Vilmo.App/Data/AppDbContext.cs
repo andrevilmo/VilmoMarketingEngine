@@ -19,6 +19,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<InventoryBalance> InventoryBalances => Set<InventoryBalance>();
     public DbSet<InventoryMovement> InventoryMovements => Set<InventoryMovement>();
     public DbSet<Listing> Listings => Set<Listing>();
+    public DbSet<Advertisement> Advertisements => Set<Advertisement>();
+    public DbSet<AdvertisementItem> AdvertisementItems => Set<AdvertisementItem>();
+    public DbSet<AdvertisementAttribute> AdvertisementAttributes => Set<AdvertisementAttribute>();
+    public DbSet<MarketplaceListingFieldDefinition> MarketplaceListingFieldDefinitions => Set<MarketplaceListingFieldDefinition>();
     public DbSet<Sale> Sales => Set<Sale>();
     public DbSet<SaleItem> SaleItems => Set<SaleItem>();
     public DbSet<SaleMarketplaceAttribute> SaleMarketplaceAttributes => Set<SaleMarketplaceAttribute>();
@@ -102,6 +106,28 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         {
             e.ToTable("listing");
             e.HasIndex(x => new { x.CompanyId, x.VendorUserId, x.Sku, x.MarketplaceCode }).IsUnique();
+        });
+        b.Entity<Advertisement>(e =>
+        {
+            e.ToTable("advertisement");
+            e.HasIndex(x => new { x.CompanyId, x.VendorUserId, x.Sku }).IsUnique();
+            e.HasMany(x => x.Items).WithOne().HasForeignKey(i => i.AdvertisementId);
+            e.HasMany(x => x.Attributes).WithOne().HasForeignKey(a => a.AdvertisementId);
+        });
+        b.Entity<AdvertisementItem>(e =>
+        {
+            e.ToTable("advertisement_item");
+            e.HasIndex(x => new { x.AdvertisementId, x.Sku }).IsUnique();
+        });
+        b.Entity<AdvertisementAttribute>(e =>
+        {
+            e.ToTable("advertisement_attribute");
+            e.HasIndex(x => new { x.AdvertisementId, x.MarketplaceCode, x.FieldName }).IsUnique();
+        });
+        b.Entity<MarketplaceListingFieldDefinition>(e =>
+        {
+            e.ToTable("marketplace_listing_field_definition");
+            e.HasIndex(x => new { x.MarketplaceCode, x.FieldKey }).IsUnique();
         });
         b.Entity<Sale>(e =>
         {
