@@ -376,14 +376,26 @@ public sealed class MercadoLivreCategoryService(
         try
         {
             using var doc = JsonDocument.Parse(raw);
-            var msg = Str(doc.RootElement, "message") ?? Str(doc.RootElement, "error");
-            if (!string.IsNullOrWhiteSpace(msg)) return msg;
+            var el = doc.RootElement;
+            var parts = new List<string>();
+            var msg = Str(el, "message") ?? Str(el, "error");
+            if (!string.IsNullOrWhiteSpace(msg)) parts.Add(msg);
+            if (el.TryGetProperty("cause", out var cause) && cause.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var c in cause.EnumerateArray())
+                {
+                    var m = Str(c, "message") ?? Str(c, "code");
+                    if (!string.IsNullOrWhiteSpace(m) && !parts.Contains(m)) parts.Add(m);
+                }
+            }
+            if (parts.Count > 0) return string.Join(" — ", parts);
         }
         catch (JsonException)
         {
             /* keep status */
         }
         var t = (raw ?? "").Trim();
+        if (t.StartsWith("<", StringComparison.Ordinal)) return $"HTTP {(int)status}";
         if (t.Length > 180) t = t[..180];
         return t.Length > 0 ? t : $"HTTP {(int)status}";
     }
