@@ -174,8 +174,8 @@ public sealed class ListingPublishRunner(
         await logs.WriteAsync(ad.CompanyId, runId, ad.Id, listing.Id, listing.MarketplaceCode, action,
             ListingPublishLogSteps.Callback, call.Ok ? "info" : "warning",
             call.Ok
-                ? $"Callback do marketplace HTTP {call.StatusCode}."
-                : $"Callback do marketplace HTTP {call.StatusCode} (não publicado no canal).",
+                ? $"Resposta do marketplace HTTP {call.StatusCode}."
+                : $"Resposta do marketplace HTTP {call.StatusCode} (não publicado no canal).",
             TryParseJson(call.TechnicalJson), ct);
     }
 
@@ -203,8 +203,8 @@ public sealed class ListingPublishRunner(
         var (method, url, payload) = BuildRequest(ad, listing, baseUrl, action);
         await logs.WriteAsync(ad.CompanyId, runId, ad.Id, listing.Id, listing.MarketplaceCode, action,
             ListingPublishLogSteps.Calling, "info",
-            $"Chamando {method} {url}",
-            new { method, url, request = payload }, ct);
+            $"Enviando {method} {url} ao marketplace.",
+            new { request = new { method, url, body = payload } }, ct);
 
         try
         {
@@ -223,7 +223,8 @@ public sealed class ListingPublishRunner(
                 method,
                 url,
                 httpStatus = (int)resp.StatusCode,
-                request = payload,
+                request = new { method, url, body = payload },
+                response = new { httpStatus = (int)resp.StatusCode, body = TryParseJson(body) },
                 callbackResponse = TryParseJson(body)
             }, JsonOpts);
             return new MarketplaceCall(resp.IsSuccessStatusCode, (int)resp.StatusCode, url, body, tech);
@@ -236,7 +237,8 @@ public sealed class ListingPublishRunner(
                 method,
                 url,
                 httpStatus = 0,
-                request = payload,
+                request = new { method, url, body = payload },
+                response = new { error = ex.Message },
                 callbackResponse = (object?)null,
                 error = ex.Message
             }, JsonOpts);
@@ -329,7 +331,8 @@ public sealed class ListingPublishRunner(
             url = $"demo://{listing.MarketplaceCode}/items",
             httpStatus = 201,
             warning = note,
-            request = new { ad.Sku, ad.Title, ad.Price },
+            request = new { method = action == "refresh" ? "GET" : "POST", url = $"demo://{listing.MarketplaceCode}/items", body = new { ad.Sku, ad.Title, ad.Price } },
+            response = new { httpStatus = 201, body = callback },
             callbackResponse = callback
         }, JsonOpts);
         return new MarketplaceCall(true, 201, $"demo://{listing.MarketplaceCode}/items", JsonSerializer.Serialize(callback, JsonOpts), tech);

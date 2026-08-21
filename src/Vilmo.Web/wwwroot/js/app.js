@@ -206,6 +206,70 @@ const Vilmo = (() => {
     try { return JSON.stringify(JSON.parse(raw), null, 2); } catch { return String(raw); }
   }
 
+  function stepTitle(code) {
+    return ({
+      received: "Pedido recebido",
+      credentials: "Credenciais",
+      authorize: "Autorização",
+      redirect: "Login do canal",
+      callback: "Resposta do canal",
+      exchanging: "Troca do código",
+      calling: "Envio ao canal",
+      applied: "Concluído",
+      failed: "Falhou",
+      saved: "Salvo",
+      validated: "Validado",
+      queued: "Na fila",
+      worker_started: "Worker",
+      publish: "Publicar"
+    })[code] || code || "Passo";
+  }
+
+  function techPanel(raw) {
+    if (!raw) return `<pre>{}</pre>`;
+    let obj = null;
+    try { obj = typeof raw === "string" ? JSON.parse(raw) : raw; } catch { return `<pre>${esc(String(raw))}</pre>`; }
+    if (!obj || typeof obj !== "object") return `<pre>${esc(prettyTech(typeof raw === "string" ? raw : JSON.stringify(raw)))}</pre>`;
+    const request = obj.request || obj.sent || null;
+    const response = obj.response || obj.callbackResponse || null;
+    const rest = { ...obj };
+    delete rest.request; delete rest.sent; delete rest.response; delete rest.callbackResponse;
+    if (!request && !response) return `<pre>${esc(JSON.stringify(obj, null, 2))}</pre>`;
+    let html = "";
+    if (request) html += `<div class="tech-block"><div class="tech-block-label">Enviado</div><pre>${esc(JSON.stringify(request, null, 2))}</pre></div>`;
+    if (response) html += `<div class="tech-block"><div class="tech-block-label">Resposta</div><pre>${esc(JSON.stringify(response, null, 2))}</pre></div>`;
+    if (Object.keys(rest).length) html += `<div class="tech-block"><div class="tech-block-label">Contexto</div><pre>${esc(JSON.stringify(rest, null, 2))}</pre></div>`;
+    return html;
+  }
+
+  function stepAccordionHtml(title, steps, { open = false, dataAttr = "" } = {}) {
+    const list = Array.isArray(steps) ? steps : [];
+    const last = list[0];
+    const lastLabel = last ? last.userMessage : "Nenhum passo ainda";
+    const rows = list.length
+      ? list.map((l, i) => {
+          const when = l.createdAt ? fmtWhen(l.createdAt) : "";
+          return `<li class="ad-log-step ${esc(l.level || "")} ${i === 0 ? "latest" : ""}">
+            <div class="ad-log-step-head">
+              <span class="ingest-level ${esc(l.level || "")}">${esc(l.level || "")}</span>
+              <span class="text-xs text-muted-foreground">${esc(when)}</span>
+              ${i === 0 ? `<span class="badge-latest">último</span>` : ""}
+            </div>
+            <div class="font-medium text-sm">${esc(stepTitle(l.stepCode))}</div>
+            <div>${esc(l.userMessage || "")}</div>
+            <details class="ingest-tech">
+              <summary>Ver técnico (enviado / resposta)</summary>
+              ${techPanel(l.technicalJson)}
+            </details>
+          </li>`;
+        }).join("")
+      : `<li class="text-sm text-muted-foreground">Nenhum passo ainda.</li>`;
+    return `<details class="ad-log" ${open ? "open" : ""} ${dataAttr}>
+      <summary>${esc(title)} <span class="ad-log-last text-xs text-muted-foreground">· ${esc(lastLabel)}</span></summary>
+      <ol class="ad-log-steps">${rows}</ol>
+    </details>`;
+  }
+
   function ingestProgressMeta(step, level) {
     const order = ["received", "xml_received", "validated", "queued", "replayed", "worker_started", "waiting_distdfe", "certificate_missing", "xml_parsed", "stock_applied"];
     const idx = order.indexOf(step);
@@ -474,27 +538,6 @@ const Vilmo = (() => {
           ? `Atualizado ${esc(fmtWhen(c.lastSyncedAt))}`
           : "Sem dados online ainda";
         const steps = c.publishLog || [];
-        const last = c.lastStep || steps[0];
-        const lastLabel = last ? `${esc(last.userMessage)}` : "Nenhum passo ainda";
-        const stepRows = steps.length
-          ? steps.map((l, i) => {
-              const when = l.createdAt ? fmtWhen(l.createdAt) : "";
-              const tech = prettyTech(l.technicalJson);
-              return `<li class="ad-log-step ${esc(l.level || "")} ${i === 0 ? "latest" : ""}">
-                <div class="ad-log-step-head">
-                  <span class="ingest-level ${esc(l.level || "")}">${esc(l.level || "")}</span>
-                  <span class="text-xs text-muted-foreground">${esc(when)}</span>
-                  ${i === 0 ? `<span class="badge-latest">último</span>` : ""}
-                </div>
-                <div>${esc(l.userMessage)}</div>
-                <div class="text-xs text-muted-foreground">${esc(l.action || "")} · ${esc(l.stepCode || "")}</div>
-                <details class="ingest-tech">
-                  <summary>Ver técnico / callback</summary>
-                  <pre>${esc(tech)}</pre>
-                </details>
-              </li>`;
-            }).join("")
-          : `<li class="text-sm text-muted-foreground">Salve ou publique para ver os passos.</li>`;
         return `<div class="ad-channel" data-ad="${esc(a.id)}" data-code="${esc(c.marketplaceCode)}">
           <div class="ad-channel-head">
             <div>
@@ -510,10 +553,7 @@ const Vilmo = (() => {
           <div class="text-xs text-muted-foreground">${remoteBits.join(" · ") || synced}</div>
           <div class="text-xs text-muted-foreground">${esc(synced)}</div>
           ${link}
-          <details class="ad-log" data-ad="${esc(a.id)}" data-code="${esc(c.marketplaceCode)}">
-            <summary>Passos da publicação <span class="ad-log-last text-xs text-muted-foreground">· ${lastLabel}</span></summary>
-            <ol class="ad-log-steps">${stepRows}</ol>
-          </details>
+          ${stepAccordionHtml("Passos da publicação", steps, { dataAttr: `data-ad="${esc(a.id)}" data-code="${esc(c.marketplaceCode)}"` })}
         </div>`;
       }).join("") || `<p class="text-sm text-muted-foreground">Nenhum marketplace neste anúncio.</p>`;
       return `<article class="vilmo-card ad-card mb-3" data-ad="${esc(a.id)}">
@@ -636,19 +676,24 @@ const Vilmo = (() => {
       : (oauth === "error" || oauth === "denied"
         ? `<div class="vilmo-card mb-4 text-sm">Falha ao conectar${oauthErr ? ": " + oauthErr : ""}.</div>`
         : "");
+    const connected = q.get("connected");
     const cards = list.map(m => `
-      <form class="vilmo-card mkt-form" data-code="${m.code}">
+      <form class="vilmo-card mkt-form" data-code="${esc(m.code)}">
         <div class="flex justify-between items-center mb-3">
-          <h3 class="font-medium">${m.displayName}</h3>
+          <h3 class="font-medium">${esc(m.displayName)}</h3>
           <label class="text-sm"><input type="checkbox" name="isEnabled" ${m.isEnabled ? "checked" : ""}> Ativo</label>
         </div>
-        <div class="text-xs mb-2">Status: ${m.linkStatus}</div>
-        ${(m.fields||[]).map(f => f.filledByOauth ? `<div class="text-sm text-muted-foreground">${f.label}: ${f.value || "—"}</div>` :
-          `<label class="block mb-2 text-sm">${f.label}<input class="kt-input" name="${f.parameterKey}" value="${f.value || ""}" ${f.isSecret ? 'type="password"' : ""}></label>`).join("")}
+        <div class="text-xs mb-2">Status: ${esc(m.linkStatus)}</div>
+        ${(m.fields||[]).map(f => f.filledByOauth ? `<div class="text-sm text-muted-foreground">${esc(f.label)}: ${esc(f.value || "—")}</div>` :
+          `<label class="block mb-2 text-sm">${esc(f.label)}<input class="kt-input" name="${esc(f.parameterKey)}" value="${esc(f.value || "")}" ${f.isSecret ? 'type="password"' : ""}></label>`).join("")}
         <div class="flex gap-2 mt-3">
           <button class="kt-btn kt-btn-primary" type="submit">Salvar</button>
-          <button class="kt-btn kt-btn-outline connect" type="button" data-code="${m.code}">Conectar</button>
+          <button class="kt-btn kt-btn-outline connect" type="button" data-code="${esc(m.code)}">Conectar</button>
         </div>
+        ${stepAccordionHtml("Passos da conexão", m.connectLog || [], {
+          open: !!(connected && connected === m.code && (oauth === "ok" || oauth === "error" || oauth === "denied")),
+          dataAttr: `data-code="${esc(m.code)}"`
+        })}
       </form>`).join("");
     return page("Marketplaces da empresa", "", `${oauthBanner}<div class="vilmo-grid cols-2">${cards}</div>`);
   }
@@ -891,8 +936,22 @@ const Vilmo = (() => {
       renderRoute();
     });
     document.querySelectorAll(".connect").forEach(btn => btn.onclick = async () => {
-      const r = await api(`/marketplaces/${btn.dataset.code}/connect`, { method: "POST", body: {} });
-      location.href = r.authorizationUrl;
+      btn.disabled = true;
+      try {
+        const r = await api(`/marketplaces/${btn.dataset.code}/connect`, { method: "POST", body: {} });
+        const logEl = document.querySelector(`.mkt-form[data-code="${CSS.escape(btn.dataset.code)}"] .ad-log`);
+        if (logEl && r.logs) {
+          logEl.outerHTML = stepAccordionHtml("Passos da conexão", r.logs, {
+            open: true,
+            dataAttr: `data-code="${esc(btn.dataset.code)}"`
+          });
+          document.querySelector(`.mkt-form[data-code="${CSS.escape(btn.dataset.code)}"] .ad-log`).open = true;
+        }
+        if (r.authorizationUrl) location.href = r.authorizationUrl;
+      } catch (ex) {
+        btn.disabled = false;
+        alert(ex.message || "Falha ao conectar.");
+      }
     });
     if ($("#emit-nfe")) $("#emit-nfe").onclick = async () => {
       const id = location.hash.split("/")[2];

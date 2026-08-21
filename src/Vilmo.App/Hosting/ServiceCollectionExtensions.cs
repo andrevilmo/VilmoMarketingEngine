@@ -37,6 +37,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<SalesService>();
         services.AddScoped<LabelService>();
         services.AddScoped<MarketplaceService>();
+        services.AddScoped<MarketplaceConnectLogService>();
         services.AddScoped<ProvisioningService>();
         services.AddScoped<ProductService>();
         services.AddScoped<ListingPublishLogService>();

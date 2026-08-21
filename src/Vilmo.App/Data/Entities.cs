@@ -206,6 +206,20 @@ public class ListingPublishLog
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
+public class MarketplaceConnectLog
+{
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
+    public Guid RunId { get; set; }
+    public string MarketplaceCode { get; set; } = "";
+    public string Action { get; set; } = "connect";
+    public string StepCode { get; set; } = "";
+    public string Level { get; set; } = "info";
+    public string UserMessage { get; set; } = "";
+    public string TechnicalJson { get; set; } = "{}";
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
 public class Advertisement
 {
     public Guid Id { get; set; }

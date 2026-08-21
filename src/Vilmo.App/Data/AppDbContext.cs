@@ -20,6 +20,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<InventoryMovement> InventoryMovements => Set<InventoryMovement>();
     public DbSet<Listing> Listings => Set<Listing>();
     public DbSet<ListingPublishLog> ListingPublishLogs => Set<ListingPublishLog>();
+    public DbSet<MarketplaceConnectLog> MarketplaceConnectLogs => Set<MarketplaceConnectLog>();
     public DbSet<Advertisement> Advertisements => Set<Advertisement>();
     public DbSet<AdvertisementItem> AdvertisementItems => Set<AdvertisementItem>();
     public DbSet<AdvertisementAttribute> AdvertisementAttributes => Set<AdvertisementAttribute>();
@@ -112,6 +113,12 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         {
             e.ToTable("listing_publish_log");
             e.HasIndex(x => new { x.CompanyId, x.ListingId, x.CreatedAt });
+            e.HasIndex(x => x.RunId);
+        });
+        b.Entity<MarketplaceConnectLog>(e =>
+        {
+            e.ToTable("marketplace_connect_log");
+            e.HasIndex(x => new { x.CompanyId, x.MarketplaceCode, x.CreatedAt });
             e.HasIndex(x => x.RunId);
         });
         b.Entity<Advertisement>(e =>

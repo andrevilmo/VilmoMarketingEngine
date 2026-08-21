@@ -272,7 +272,10 @@ public class AdvertisementApiTests : IClassFixture<ApiFactory>
         Assert.True(log.GetArrayLength() >= 3);
         Assert.Contains(log.EnumerateArray(), x => x.GetProperty("stepCode").GetString() == "callback");
         var callback = log.EnumerateArray().First(x => x.GetProperty("stepCode").GetString() == "callback");
-        Assert.Contains("callbackResponse", callback.GetProperty("technicalJson").GetString()!);
+        var callbackTech = callback.GetProperty("technicalJson").GetString()!;
+        Assert.Contains("callbackResponse", callbackTech);
+        Assert.Contains("\"request\"", callbackTech);
+        Assert.Contains("\"response\"", callbackTech);
 
         var shopeeDraft = live.RootElement.GetProperty("advertisement").GetProperty("channels").EnumerateArray()
             .First(c => c.GetProperty("marketplaceCode").GetString() == "Shopee");

@@ -205,6 +205,16 @@ public static class Endpoints
             return one is null ? Results.NotFound() : Results.Ok(one);
         }).RequireAuthorization();
 
+        app.MapGet("/companies/{companyId:guid}/marketplaces/{code}/logs", async (Guid companyId, string code, HttpContext http, AppDbContext db, MarketplaceConnectLogService logs, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            var ctx = (CompanyContext)ctxr;
+            if (ctx.IsVendor) return Results.NotFound();
+            if (!ctx.IsAdmin && ctx.CompanyId != companyId) return Results.NotFound();
+            return Results.Ok(new { items = await logs.ListAsync(companyId, code, ct) });
+        }).RequireAuthorization();
+
         app.MapPut("/companies/{companyId:guid}/marketplaces/{code}", async (Guid companyId, string code, JsonElement body, HttpContext http, AppDbContext db, MarketplaceService svc, CancellationToken ct) =>
         {
             var ctx = await NeedCompanyStaff(http, db, ct, companyId);

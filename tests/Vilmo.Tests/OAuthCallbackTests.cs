@@ -43,6 +43,13 @@ public class OAuthCallbackTests : IClassFixture<ApiFactory>
         using var doc = JsonDocument.Parse(await list.Content.ReadAsStringAsync());
         var ml = doc.RootElement.EnumerateArray().First(x => x.GetProperty("code").GetString() == "MercadoLivre");
         Assert.Equal("Linked", ml.GetProperty("linkStatus").GetString());
+        var steps = ml.GetProperty("connectLog").EnumerateArray().Select(x => x.GetProperty("stepCode").GetString()).ToList();
+        Assert.Contains("callback", steps);
+        Assert.Contains("applied", steps);
+        var logsRes = await client.SendAsync(Authed(HttpMethod.Get, $"/companies/{companyId}/marketplaces/MercadoLivre/logs", token, companyId));
+        logsRes.EnsureSuccessStatusCode();
+        using var logsDoc = JsonDocument.Parse(await logsRes.Content.ReadAsStringAsync());
+        Assert.True(logsDoc.RootElement.GetProperty("items").GetArrayLength() >= 2);
     }
 
     [Fact]
@@ -57,6 +64,14 @@ public class OAuthCallbackTests : IClassFixture<ApiFactory>
         Assert.Contains("/oauth/Shopee/callback", url);
         Assert.Contains("demo=1", url);
         Assert.Contains(companyId.ToString("D"), url);
+        var logs = doc.RootElement.GetProperty("logs").EnumerateArray().ToList();
+        Assert.Contains(logs, x => x.GetProperty("stepCode").GetString() == "received");
+        Assert.Contains(logs, x => x.GetProperty("stepCode").GetString() == "credentials");
+        Assert.Contains(logs, x => x.GetProperty("stepCode").GetString() == "authorize");
+        Assert.Contains(logs, x => x.GetProperty("stepCode").GetString() == "redirect");
+        var authorize = logs.First(x => x.GetProperty("stepCode").GetString() == "authorize");
+        Assert.Contains("request", authorize.GetProperty("technicalJson").GetString()!);
+        Assert.Contains("demo", authorize.GetProperty("technicalJson").GetString()!);
     }
 
     static async Task<(string Token, Guid CompanyId)> AdminAsync(HttpClient client)
@@ -187,6 +202,24 @@ public class MercadoLivreOAuthExchangeTests : IClassFixture<OAuthApiFactory>
         Assert.Equal("3632941126", fields["UserId"]);
         Assert.DoesNotContain("APP_USR-test-access", fields["AccessToken"]);
         Assert.Contains("••", fields["AccessToken"]);
+
+        var connectLog = ml.GetProperty("connectLog").EnumerateArray().ToList();
+        Assert.Contains(connectLog, x => x.GetProperty("stepCode").GetString() == "calling");
+        Assert.Contains(connectLog, x => x.GetProperty("stepCode").GetString() == "applied");
+        var calling = connectLog.First(x => x.GetProperty("stepCode").GetString() == "calling");
+        var callingTech = calling.GetProperty("technicalJson").GetString()!;
+        Assert.Contains("request", callingTech);
+        Assert.Contains("oauth/token", callingTech);
+        Assert.DoesNotContain("test-client-secret", callingTech);
+        Assert.DoesNotContain("APP_USR-test-access", callingTech);
+        var tokenCallback = connectLog.First(x =>
+            x.GetProperty("stepCode").GetString() == "callback"
+            && x.GetProperty("technicalJson").GetString()!.Contains("response"));
+        var tokenTech = tokenCallback.GetProperty("technicalJson").GetString()!;
+        Assert.Contains("response", tokenTech);
+        Assert.Contains("3632941126", tokenTech);
+        Assert.DoesNotContain("APP_USR-test-access", tokenTech);
+        Assert.DoesNotContain("TG-test-refresh", tokenTech);
     }
 
     static async Task SaveAppAsync(HttpClient client, string token, Guid companyId)

@@ -146,5 +146,27 @@ public static class SchemaPatches
             CREATE INDEX IF NOT EXISTS ix_listing_publish_log_run_id
               ON listing_publish_log (run_id);
             """, ct);
+        await db.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE IF NOT EXISTS marketplace_connect_log (
+              id uuid PRIMARY KEY,
+              company_id uuid NOT NULL,
+              run_id uuid NOT NULL,
+              marketplace_code varchar(64) NOT NULL,
+              action varchar(16) NOT NULL,
+              step_code varchar(64) NOT NULL,
+              "level" varchar(16) NOT NULL,
+              user_message text NOT NULL,
+              technical_json text NOT NULL,
+              created_at timestamptz NOT NULL
+            );
+            """, ct);
+        await db.Database.ExecuteSqlRawAsync("""
+            CREATE INDEX IF NOT EXISTS ix_marketplace_connect_log_company_code_created
+              ON marketplace_connect_log (company_id, marketplace_code, created_at);
+            """, ct);
+        await db.Database.ExecuteSqlRawAsync("""
+            CREATE INDEX IF NOT EXISTS ix_marketplace_connect_log_run_id
+              ON marketplace_connect_log (run_id);
+            """, ct);
     }
 }

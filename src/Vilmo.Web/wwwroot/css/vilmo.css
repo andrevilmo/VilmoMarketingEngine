@@ -58,6 +58,11 @@
   background: #0f172a; color: #e2e8f0; border-radius: 8px; font-size: .72rem;
   white-space: pre-wrap; word-break: break-word;
 }
+.tech-block + .tech-block { margin-top: .55rem; }
+.tech-block-label {
+  font-size: .7rem; text-transform: uppercase; letter-spacing: .04em;
+  color: #6b7280; margin-bottom: .15rem;
+}
 .ingest-level { font-size: .7rem; text-transform: uppercase; letter-spacing: .03em; font-weight: 600; }
 .ingest-level.info { color: #0f766e; }
 .ingest-level.warning { color: #b45309; }
