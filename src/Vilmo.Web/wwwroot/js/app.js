@@ -188,6 +188,9 @@ const Vilmo = (() => {
     return ({
       MarketplaceRequired: "Selecione ao menos um marketplace.",
       UnknownMarketplace: "Marketplace não habilitado para esta empresa.",
+      FamilyNameRequired: "Informe o nome da família do anúncio.",
+      FamilyNameTooLong: "Nome da família deve ter no máximo 60 caracteres.",
+      TitleRequired: "Informe o título do anúncio.",
       NoChannels: "Este anúncio não tem canais.",
       AdvertisementNotFound: "Anúncio não encontrado.",
       ListingNotFound: "Canal não encontrado neste anúncio."
@@ -486,7 +489,7 @@ const Vilmo = (() => {
   async function viewProducts() {
     const list = await api("/products");
     const rows = list.map(p => `<tr><td>${p.sku}</td><td>${p.name}</td><td>${p.ean || ""}</td><td>${p.salePrice}</td>
-      <td><button class="kt-btn kt-btn-sm kt-btn-primary pub" data-sku="${p.sku}">Publicar</button></td></tr>`);
+      <td><button class="kt-btn kt-btn-sm kt-btn-primary pub" data-sku="${esc(p.sku)}" data-name="${esc(p.name)}">Publicar</button></td></tr>`);
     return page("Produtos", "", table(["SKU", "Nome", "EAN", "Preço", ""], rows) + `
       <form id="product-form" class="vilmo-card vilmo-grid cols-2 mt-4">
         <h3 class="col-span-2 font-medium">Novo / atualizar produto</h3>
@@ -522,6 +525,7 @@ const Vilmo = (() => {
     const vendorSel = store.me.level === "Vendor" ? "" : `<label>Vendedor (opcional)
       <select class="kt-select" name="vendorUserId"><option value="">Eu / empresa</option>${(vendors || []).map(v => `<option value="${v.id || v.userId || ""}">${esc(v.name || v.email || "")}</option>`).join("")}</select></label>`;
     const list = Array.isArray(ads) ? ads : (ads && ads.advertisements) || [];
+    window.__vilmoAds = Object.fromEntries((list || []).map(a => [String(a.id), a]));
     const cards = list.map(a => {
       const items = (a.items || []).map(i => `${i.quantity}× ${i.sku}`).join(", ");
       const channels = (a.channels || []).map(c => {
@@ -562,10 +566,19 @@ const Vilmo = (() => {
             <h3 class="font-medium">${esc(a.title)}</h3>
             <div class="text-xs text-muted-foreground">${esc(a.sku)} · ${a.kind === "Kit" ? "conjunto" : "produto"} · ${esc(items)} · R$ ${esc(String(a.price))} · qtd ${esc(String(a.availableQuantity))}</div>
           </div>
-          <button type="button" class="kt-btn kt-btn-outline kt-btn-sm ad-refresh">Atualizar dados online</button>
+          <div class="ad-card-head-actions">
+            <label class="ad-switch" title="Mostrar ou ocultar canais">
+              <input type="checkbox" class="ad-card-open" role="switch" aria-label="Mostrar detalhes do anúncio">
+              <span class="ad-switch-label">Detalhes</span>
+            </label>
+            <button type="button" class="kt-btn kt-btn-outline kt-btn-sm ad-reuse">Aproveitar anúncio</button>
+            <button type="button" class="kt-btn kt-btn-outline kt-btn-sm ad-refresh">Atualizar dados online</button>
+          </div>
         </div>
-        <div class="ad-channels">${channels}</div>
-        <div class="ad-card-msg"></div>
+        <div class="ad-card-body">
+          <div class="ad-channels">${channels}</div>
+          <div class="ad-card-msg"></div>
+        </div>
       </article>`;
     }).join("") || `<p class="text-sm text-muted-foreground">Nenhum anúncio ainda.</p>`;
     return page("Anúncios", "", `
@@ -577,7 +590,8 @@ const Vilmo = (() => {
           <label class="text-sm"><input type="radio" name="kind" value="Kit"> Conjunto / kit</label>
         </div>
         ${vendorSel}
-        <label>Título<input class="kt-input" name="title" required></label>
+        <label>Título<input class="kt-input" name="title" required maxlength="180"></label>
+        <label>Nome da família (Mercado Livre, obrigatório)<input class="kt-input" name="familyName" required maxlength="60" placeholder="Ex.: Calça jeans feminina"></label>
         <label>SKU do anúncio (vazio = SKU do produto ou KIT-…)<input class="kt-input" name="sku"></label>
         <label class="col-span-2">Descrição<textarea class="kt-input" name="description" rows="3"></textarea></label>
         <label>Preço (BRL)<input class="kt-input" name="price" type="number" step="0.01" min="0" required></label>
@@ -795,7 +809,14 @@ const Vilmo = (() => {
       renderRoute();
     };
     document.querySelectorAll(".pub").forEach(btn => btn.onclick = async () => {
-      await api("/advertisements", { method: "POST", body: { sku: btn.dataset.sku, kind: "Product", items: [{ sku: btn.dataset.sku, quantity: 1 }] } });
+      const name = btn.dataset.name || btn.dataset.sku;
+      await api("/advertisements", { method: "POST", body: {
+        sku: btn.dataset.sku,
+        kind: "Product",
+        title: name,
+        familyName: String(name || "").slice(0, 60),
+        items: [{ sku: btn.dataset.sku, quantity: 1 }]
+      } });
       location.hash = "#/anuncios";
     });
     if ($("#ad-form")) {
@@ -834,6 +855,57 @@ const Vilmo = (() => {
       };
       document.querySelectorAll(".mkt-code").forEach(c => c.onchange = syncExtras);
       syncExtras();
+      const fillFromAd = (ad) => {
+        const form = $("#ad-form");
+        if (!form || !ad) return;
+        const kind = ad.kind === "Kit" ? "Kit" : "Product";
+        form.querySelectorAll("input[name=kind]").forEach(r => { r.checked = r.value === kind; });
+        syncKind();
+        const sku = String(ad.sku || "");
+        form.sku.value = sku && sku.length <= 58 ? `${sku}-COPIA` : "";
+        form.title.value = ad.title || "";
+        form.familyName.value = ad.familyName || String(ad.title || "").slice(0, 60);
+        form.description.value = ad.description || "";
+        form.price.value = ad.price != null ? ad.price : "";
+        form.availableQuantity.value = ad.availableQuantity != null ? ad.availableQuantity : 1;
+        form.condition.value = ad.condition || "new";
+        form.brand.value = ad.brand || "";
+        form.gtin.value = ad.gtin || "";
+        form.weightGrams.value = ad.weightGrams != null ? ad.weightGrams : "";
+        form.heightCm.value = ad.heightCm != null ? ad.heightCm : "";
+        form.widthCm.value = ad.widthCm != null ? ad.widthCm : "";
+        form.lengthCm.value = ad.lengthCm != null ? ad.lengthCm : "";
+        if (form.vendorUserId) form.vendorUserId.value = ad.vendorUserId || "";
+        itemsBox.querySelectorAll(".ad-item-row").forEach(row => row.remove());
+        const items = ad.items && ad.items.length ? ad.items : [{ sku: "", quantity: 1 }];
+        items.forEach(i => addRow(i.sku, i.quantity));
+        syncKind();
+        const codes = new Set((ad.channels || []).map(c => c.marketplaceCode));
+        document.querySelectorAll(".mkt-code").forEach(c => { c.checked = codes.size ? codes.has(c.value) : true; });
+        document.querySelectorAll(".attr-field").forEach(inp => { inp.value = ""; });
+        (ad.attributes || []).forEach(x => {
+          const inp = document.querySelector(`.attr-field[data-mkt="${CSS.escape(x.marketplaceCode)}"][data-key="${CSS.escape(x.fieldName)}"]`);
+          if (inp) inp.value = x.fieldValue || "";
+        });
+        syncExtras();
+        const msg = $("#ad-msg");
+        if (msg) msg.innerHTML = `<div class="kt-alert kt-alert-success">Formulário preenchido a partir de ${esc(ad.sku)}. Confira o SKU novo e salve.</div>`;
+        form.scrollIntoView({ behavior: "smooth", block: "start" });
+        form.familyName.focus();
+      };
+      document.querySelectorAll(".ad-reuse").forEach(btn => {
+        btn.onclick = () => {
+          const card = btn.closest(".ad-card");
+          const ad = (window.__vilmoAds || {})[card && card.dataset.ad];
+          fillFromAd(ad);
+        };
+      });
+      document.querySelectorAll(".ad-card-open").forEach(sw => {
+        sw.onchange = () => {
+          const card = sw.closest(".ad-card");
+          if (card) card.classList.toggle("is-open", sw.checked);
+        };
+      });
       $("#ad-form").onsubmit = async (e) => {
         e.preventDefault();
         const fd = new FormData(e.target);
@@ -850,6 +922,7 @@ const Vilmo = (() => {
           kind: fd.get("kind"),
           sku: fd.get("sku") || undefined,
           title: fd.get("title"),
+          familyName: fd.get("familyName"),
           description: fd.get("description") || undefined,
           price: num("price"),
           availableQuantity: num("availableQuantity"),
@@ -889,12 +962,25 @@ const Vilmo = (() => {
       try {
         await api(path, { method: "POST", body: {} });
         await renderRoute();
+        if (adId) {
+          const cardEl = document.querySelector(`.ad-card[data-ad="${CSS.escape(adId)}"]`);
+          if (cardEl) {
+            cardEl.classList.add("is-open");
+            const sw = cardEl.querySelector(".ad-card-open");
+            if (sw) sw.checked = true;
+          }
+        }
         if (adId && code) {
           const logEl = document.querySelector(`.ad-log[data-ad="${adId}"][data-code="${CSS.escape(code)}"]`);
           if (logEl) logEl.open = true;
         }
       } catch (ex) {
         el.disabled = false;
+        if (card) {
+          card.classList.add("is-open");
+          const sw = card.querySelector(".ad-card-open");
+          if (sw) sw.checked = true;
+        }
         if (msg) msg.innerHTML = `<div class="kt-alert kt-alert-danger">${esc(adErr(ex.message))}</div>`;
         if (ch) {
           const logEl = ch.querySelector(".ad-log");

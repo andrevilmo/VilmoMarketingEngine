@@ -75,6 +75,45 @@
 .ad-card-head, .ad-channel-head {
   display: flex; justify-content: space-between; gap: .75rem; align-items: flex-start; flex-wrap: wrap;
 }
+.ad-card-head-actions { display: flex; gap: .45rem; flex-wrap: wrap; align-items: center; }
+.ad-card-body { display: none; }
+.ad-card.is-open .ad-card-body { display: block; }
+.ad-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  cursor: pointer;
+  user-select: none;
+  margin: 0;
+}
+.ad-switch input {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 2.35rem;
+  height: 1.28rem;
+  border-radius: 999px;
+  background: #cbd5e1;
+  position: relative;
+  border: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background .15s ease;
+}
+.ad-switch input::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 1.02rem;
+  height: 1.02rem;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .25);
+  transition: transform .15s ease;
+}
+.ad-switch input:checked { background: #0f766e; }
+.ad-switch input:checked::after { transform: translateX(1.05rem); }
+.ad-switch-label { font-size: .75rem; color: #64748b; }
 .ad-channels { display: grid; gap: .75rem; margin-top: .85rem; }
 .ad-channel {
   border: 1px solid #e5e7eb; border-radius: 10px; padding: .75rem;
