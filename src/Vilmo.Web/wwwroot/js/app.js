@@ -473,6 +473,28 @@ const Vilmo = (() => {
         const synced = c.lastSyncedAt
           ? `Atualizado ${esc(fmtWhen(c.lastSyncedAt))}`
           : "Sem dados online ainda";
+        const steps = c.publishLog || [];
+        const last = c.lastStep || steps[0];
+        const lastLabel = last ? `${esc(last.userMessage)}` : "Nenhum passo ainda";
+        const stepRows = steps.length
+          ? steps.map((l, i) => {
+              const when = l.createdAt ? fmtWhen(l.createdAt) : "";
+              const tech = prettyTech(l.technicalJson);
+              return `<li class="ad-log-step ${esc(l.level || "")} ${i === 0 ? "latest" : ""}">
+                <div class="ad-log-step-head">
+                  <span class="ingest-level ${esc(l.level || "")}">${esc(l.level || "")}</span>
+                  <span class="text-xs text-muted-foreground">${esc(when)}</span>
+                  ${i === 0 ? `<span class="badge-latest">último</span>` : ""}
+                </div>
+                <div>${esc(l.userMessage)}</div>
+                <div class="text-xs text-muted-foreground">${esc(l.action || "")} · ${esc(l.stepCode || "")}</div>
+                <details class="ingest-tech">
+                  <summary>Ver técnico / callback</summary>
+                  <pre>${esc(tech)}</pre>
+                </details>
+              </li>`;
+            }).join("")
+          : `<li class="text-sm text-muted-foreground">Salve ou publique para ver os passos.</li>`;
         return `<div class="ad-channel" data-ad="${esc(a.id)}" data-code="${esc(c.marketplaceCode)}">
           <div class="ad-channel-head">
             <div>
@@ -488,6 +510,10 @@ const Vilmo = (() => {
           <div class="text-xs text-muted-foreground">${remoteBits.join(" · ") || synced}</div>
           <div class="text-xs text-muted-foreground">${esc(synced)}</div>
           ${link}
+          <details class="ad-log" data-ad="${esc(a.id)}" data-code="${esc(c.marketplaceCode)}">
+            <summary>Passos da publicação <span class="ad-log-last text-xs text-muted-foreground">· ${lastLabel}</span></summary>
+            <ol class="ad-log-steps">${stepRows}</ol>
+          </details>
         </div>`;
       }).join("") || `<p class="text-sm text-muted-foreground">Nenhum marketplace neste anúncio.</p>`;
       return `<article class="vilmo-card ad-card mb-3" data-ad="${esc(a.id)}">
@@ -801,15 +827,26 @@ const Vilmo = (() => {
       };
     }
     const runAdAction = async (el, path) => {
-      const card = el.closest(".ad-card") || el.closest(".ad-channel");
-      const msg = (el.closest(".ad-card") || document).querySelector(".ad-card-msg");
+      const ch = el.closest(".ad-channel");
+      const card = el.closest(".ad-card");
+      const msg = (card || document).querySelector(".ad-card-msg");
+      const adId = (ch || card)?.dataset.ad;
+      const code = ch?.dataset.code;
       el.disabled = true;
       try {
         await api(path, { method: "POST", body: {} });
-        renderRoute();
+        await renderRoute();
+        if (adId && code) {
+          const logEl = document.querySelector(`.ad-log[data-ad="${adId}"][data-code="${CSS.escape(code)}"]`);
+          if (logEl) logEl.open = true;
+        }
       } catch (ex) {
         el.disabled = false;
         if (msg) msg.innerHTML = `<div class="kt-alert kt-alert-danger">${esc(adErr(ex.message))}</div>`;
+        if (ch) {
+          const logEl = ch.querySelector(".ad-log");
+          if (logEl) logEl.open = true;
+        }
       }
     };
     document.querySelectorAll(".ad-publish-ch").forEach(btn => btn.onclick = () => {

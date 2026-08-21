@@ -292,10 +292,10 @@ Separate from Metronic. Same login (Admin / Empresa). Vendor: blocked.
 │ extras do canal (categoria, tipo de anúncio, …)     │
 │ [Salvar anúncio]                                    │
 │ Card: anúncio + itens + preço                       │
-│   Mercado Livre  Rascunho                           │
+│   Mercado Livre  Publicado / Erro                   │
 │     [Cancelar] [Publicar neste canal]               │
-│   Shopee         Publicado · id demo-… · R$ 89,90   │
-│     [Cancelar] [Publicar neste canal]               │
+│     ▸ Passos da publicação (fechado)                │
+│       Ver técnico / callback (fechado)              │
 │   [Atualizar dados online]                          │
 └─────────────────────────────────────────────────────┘
 ```

@@ -323,7 +323,8 @@ Vendor subaccount params: Redis cache-aside `vendor-marketplace:{companyId}:{use
 - Common listing fields live on `advertisement`. Per-channel extras (ML category, Shopee `daysToShip`, …) live on `advertisement_attribute`. Catalog: `GET /marketplaces/listing-fields`.
 - **Omitted / null `marketplaceCodes` = all** enabled company marketplaces (vendor: that vendor's subaccounts). **Empty array → `400 MarketplaceRequired`.** Unknown codes → `400`.
 - One `listing` row per selected marketplace, unique `(company_id, vendor_user_id, sku, marketplace_code)`, FK `advertisement_id`. Status starts as `Draft` unless `enqueuePublish: true`.
-- Per channel: `POST /advertisements/{id}/channels/{code}/publish` proceeds (demo snapshot + queue `listing.publish.requested`). `POST .../cancel` sets `Cancelled` / remote `paused` and queues `listing.cancel.requested`.
+- Per channel: `POST /advertisements/{id}/channels/{code}/publish` proceeds. If the company marketplace is **Linked** with an AccessToken, Vilmo POSTs to `{baseUrl}/items` and stores the HTTP callback. Demo OAuth tokens typically get HTTP 401 — listing status `Error`, accordion shows the body. If the channel is not connected, a **demo** snapshot is stored locally and the log warns that nothing was sent.
+- Each channel keeps `listing_publish_log` rows (passo + mensagem + `technical_json` with `callbackResponse`). UI accordion is closed by default (**Passos da publicação** / **Ver técnico / callback**).
 - Per ad: `POST /advertisements/{id}/refresh` pulls online snapshot for **every** channel (demo connector today) and queues `listing.refresh.requested`.
 - Connector uses company app credentials **plus** that vendor's `user_detail_marketplace` parameters.
 
@@ -503,8 +504,9 @@ Auth: bearer session/JWT with `user_id`, `is_platform_super_user`, and membershi
 | `GET` | `/advertisements/{id}` | One ad + channels. `404` outside company/vendor scope. |
 | `POST` | `/advertisements` | Save a product or a **kit** for the selected company. `marketplaceCodes` omitted = all; empty array = `400 MarketplaceRequired`. Default `enqueuePublish: false` → **Draft** listings. |
 | `POST` | `/listings` | Same as `/advertisements` (alias). |
-| `POST` | `/advertisements/{id}/channels/{code}/publish` | Proceed: publish **this** marketplace (demo snapshot + queue). |
-| `POST` | `/advertisements/{id}/channels/{code}/cancel` | Cancel **this** marketplace (`Cancelled`, remote `paused`). |
+| `POST` | `/advertisements/{id}/channels/{code}/publish` | Proceed: call the marketplace (OAuth2 HTTP) or demo if not connected. Writes `listing_publish_log` steps + callback JSON. |
+| `POST` | `/advertisements/{id}/channels/{code}/cancel` | Cancel **this** marketplace (`Cancelled`, remote `paused`). Logs steps + callback. |
+| `GET` | `/advertisements/{id}/channels/{code}/logs` | Publish/cancel/refresh steps for that channel (newest first). Technical JSON includes `callbackResponse`. |
 | `POST` | `/advertisements/{id}/refresh` | Refresh online anúncio data from **every** marketplace of this ad. |
 | `POST` | `/inventory/{sku}/publish` | Fan-out this SKU as a one-item product ad on selected marketplaces (default all). |
 | `GET` | `/sales` | Company/Admin: all sales of the active CNPJ. Vendor: own sales only. Filters: `status`, `marketplace_code`. |

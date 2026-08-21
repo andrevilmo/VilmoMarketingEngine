@@ -77,6 +77,19 @@
 }
 .ad-channel-actions { display: flex; gap: .4rem; flex-wrap: wrap; }
 .ad-card-msg { margin-top: .5rem; }
+.ad-log { margin-top: .65rem; border-top: 1px dashed #e5e7eb; padding-top: .5rem; }
+.ad-log > summary {
+  cursor: pointer; font-size: .85rem; color: #334155; list-style: none;
+  display: flex; gap: .35rem; align-items: baseline; flex-wrap: wrap;
+}
+.ad-log > summary::-webkit-details-marker { display: none; }
+.ad-log > summary::before { content: "▸ "; color: #0f766e; }
+.ad-log[open] > summary::before { content: "▾ "; }
+.ad-log-steps { margin: .5rem 0 0; padding: 0; list-style: none; display: grid; gap: .5rem; }
+.ad-log-step { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: .55rem .65rem; }
+.ad-log-step.latest { border-color: #0f766e; }
+.ad-log-step.error { border-color: #b91c1c; }
+.ad-log-step-head { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; margin-bottom: .2rem; }
 
 /* Mobile logged-in menu (iPhone): hamburger opens a drawer. Tailwind `hidden`
    on the aside used to leave the toggle with no effect. */

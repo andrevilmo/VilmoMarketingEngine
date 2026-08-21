@@ -268,6 +268,11 @@ public class AdvertisementApiTests : IClassFixture<ApiFactory>
         Assert.Equal("active", ml.GetProperty("remoteStatus").GetString());
         Assert.False(string.IsNullOrWhiteSpace(ml.GetProperty("remotePermalink").GetString()));
         Assert.True(ml.GetProperty("lastSyncedAt").ValueKind == JsonValueKind.String);
+        var log = ml.GetProperty("publishLog");
+        Assert.True(log.GetArrayLength() >= 3);
+        Assert.Contains(log.EnumerateArray(), x => x.GetProperty("stepCode").GetString() == "callback");
+        var callback = log.EnumerateArray().First(x => x.GetProperty("stepCode").GetString() == "callback");
+        Assert.Contains("callbackResponse", callback.GetProperty("technicalJson").GetString()!);
 
         var shopeeDraft = live.RootElement.GetProperty("advertisement").GetProperty("channels").EnumerateArray()
             .First(c => c.GetProperty("marketplaceCode").GetString() == "Shopee");
@@ -295,7 +300,9 @@ public class AdvertisementApiTests : IClassFixture<ApiFactory>
         Assert.True(mlSync.GetProperty("lastSyncedAt").ValueKind == JsonValueKind.String);
         Assert.Equal(ListingStatuses.Cancelled, shSync.GetProperty("status").GetString());
         Assert.Equal("paused", shSync.GetProperty("remoteStatus").GetString());
-        Assert.Contains("refresh", shSync.GetProperty("lastSyncJson").GetString()!);
+        Assert.Contains("callbackResponse", shSync.GetProperty("lastSyncJson").GetString()!);
+        Assert.Contains(shSync.GetProperty("publishLog").EnumerateArray(),
+            x => x.GetProperty("action").GetString() == "refresh");
 
         var get = await _client.SendAsync(Authed(HttpMethod.Get, $"/advertisements/{id}", token, companyId: companyId));
         get.EnsureSuccessStatusCode();

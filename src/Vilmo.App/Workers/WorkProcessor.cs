@@ -5,7 +5,7 @@ using Vilmo.Services;
 
 namespace Vilmo.Workers;
 
-public sealed class WorkProcessor(AppDbContext db, NfeIngestService nfe, SalesService sales, ILogger<WorkProcessor> log)
+public sealed class WorkProcessor(AppDbContext db, NfeIngestService nfe, SalesService sales, ListingPublishLogService listingLogs, ILogger<WorkProcessor> log)
 {
     public async Task<int> DrainAsync(string[] kinds, CancellationToken ct)
     {
@@ -70,13 +70,25 @@ public sealed class WorkProcessor(AppDbContext db, NfeIngestService nfe, SalesSe
             case WorkKinds.PublishListing:
             {
                 var listing = await LoadListingAsync(item, ct);
-                if (listing is not null && listing.Status != ListingStatuses.Cancelled)
+                if (listing is not null)
                 {
-                    if (listing.Status is ListingStatuses.Queued or ListingStatuses.Draft or "PublishedDemo")
-                        listing.Status = ListingStatuses.Published;
-                    listing.RemoteId ??= $"demo-{listing.Id:N}"[..12];
-                    listing.RemoteStatus ??= "active";
-                    listing.LastSyncedAt ??= DateTimeOffset.UtcNow;
+                    if (listing.AdvertisementId is { } adId)
+                        await listingLogs.WriteAsync(listing.CompanyId, Guid.NewGuid(), adId, listing.Id, listing.MarketplaceCode,
+                            "publish", ListingPublishLogSteps.WorkerStarted, "info",
+                            $"Fila processou a publicação. Situação atual: {listing.Status}.",
+                            new { listing.Id, listing.Status, listing.RemoteId, workId = item.Id }, ct);
+                    if (listing.Status == ListingStatuses.Cancelled)
+                        break;
+                    if (listing.Status is ListingStatuses.Queued)
+                    {
+                        listing.Status = ListingStatuses.Error;
+                        listing.RemoteStatus = "error";
+                        if (listing.AdvertisementId is { } aid)
+                            await listingLogs.WriteAsync(listing.CompanyId, Guid.NewGuid(), aid, listing.Id, listing.MarketplaceCode,
+                                "publish", ListingPublishLogSteps.Failed, "error",
+                                "A fila encontrou o anúncio ainda na fila, sem callback do marketplace.",
+                                new { listing.Id, workId = item.Id }, ct);
+                    }
                 }
                 break;
             }

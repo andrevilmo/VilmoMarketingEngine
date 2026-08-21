@@ -73,3 +73,24 @@ ALTER TABLE listing ADD COLUMN IF NOT EXISTS remote_status varchar(32) NULL;
 ALTER TABLE listing ADD COLUMN IF NOT EXISTS remote_permalink text NULL;
 ALTER TABLE listing ADD COLUMN IF NOT EXISTS last_synced_at timestamptz NULL;
 ALTER TABLE listing ADD COLUMN IF NOT EXISTS last_sync_json text NULL;
+
+CREATE TABLE IF NOT EXISTS listing_publish_log (
+  id uuid PRIMARY KEY,
+  company_id uuid NOT NULL,
+  run_id uuid NOT NULL,
+  advertisement_id uuid NOT NULL,
+  listing_id uuid NOT NULL,
+  marketplace_code varchar(64) NOT NULL,
+  action varchar(16) NOT NULL,
+  step_code varchar(64) NOT NULL,
+  "level" varchar(16) NOT NULL,
+  user_message text NOT NULL,
+  technical_json text NOT NULL,
+  created_at timestamptz NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS ix_listing_publish_log_listing_created
+  ON listing_publish_log (company_id, listing_id, created_at);
+
+CREATE INDEX IF NOT EXISTS ix_listing_publish_log_run_id
+  ON listing_publish_log (run_id);

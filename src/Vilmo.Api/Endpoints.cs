@@ -415,6 +415,14 @@ public static class Endpoints
             }, ct);
         }).RequireAuthorization();
 
+        app.MapGet("/advertisements/{id:guid}/channels/{code}/logs", async (Guid id, string code, HttpContext http, AppDbContext db, AdvertisementService ads, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            try { return Results.Ok(await ads.ListChannelLogsAsync((CompanyContext)ctxr, id, code, ct)); }
+            catch (KeyNotFoundException ex) { return Results.NotFound(new { error = ex.Message }); }
+        }).RequireAuthorization();
+
         app.MapPost("/inventory/{sku}/publish", async (string sku, JsonElement body, HttpContext http, AppDbContext db, AdvertisementService ads, CancellationToken ct) =>
         {
             var ctxr = await Need(http, db, ct);

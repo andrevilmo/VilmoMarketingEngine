@@ -6,7 +6,7 @@ using Vilmo.Security;
 
 namespace Vilmo.Services;
 
-public sealed class AdvertisementService(AppDbContext db)
+public sealed class AdvertisementService(AppDbContext db, ListingPublishLogService publishLogs, ListingPublishRunner publisher)
 {
     public async Task<object> ListAsync(CompanyContext ctx, CancellationToken ct)
     {
@@ -32,7 +32,8 @@ public sealed class AdvertisementService(AppDbContext db)
             .Where(l => l.CompanyId == ctx.CompanyId && l.AdvertisementId != null && ids.Contains(l.AdvertisementId.Value))
             .ToListAsync(ct);
         var names = await MarketplaceNamesAsync(ct);
-        return ads.Select(a => Map(a, listings.Where(l => l.AdvertisementId == a.Id).ToList(), names)).ToList();
+        var logMap = await publishLogs.ListForListingsAsync(ctx.RequireCompany(), listings.Select(l => l.Id).ToList(), ct);
+        return ads.Select(a => Map(a, listings.Where(l => l.AdvertisementId == a.Id).ToList(), names, logMap)).ToList();
     }
 
     public async Task<object> ListingFieldsAsync(CancellationToken ct)
@@ -167,6 +168,12 @@ public sealed class AdvertisementService(AppDbContext db)
             else
                 listing.Status = ListingStatuses.Draft;
             createdListings.Add(new { listing.Id, code, listing.Status });
+            await publishLogs.WriteAsync(companyId, Guid.NewGuid(), ad.Id, listing.Id, code, "save",
+                ListingPublishLogSteps.Saved, "info",
+                draft.EnqueuePublish
+                    ? "Anúncio salvo e publicação enfileirada neste canal."
+                    : "Rascunho salvo neste canal. Use Publicar neste canal para enviar ao marketplace.",
+                new { listing.Id, code, listing.Status, draft.EnqueuePublish }, ct);
         }
         await db.SaveChangesAsync(ct);
         return await GetMappedAsync(ad.Id, ct);
@@ -187,39 +194,31 @@ public sealed class AdvertisementService(AppDbContext db)
 
     public async Task<object> ProceedChannelAsync(CompanyContext ctx, Guid advertisementId, string marketplaceCode, CancellationToken ct)
     {
-        var ad = await RequireAdAsync(ctx, advertisementId, ct);
+        var ad = await RequireAdAsync(ctx, advertisementId, includeItems: true, ct);
         var codes = await ResolveCodesAsync(ad.CompanyId, ad.VendorUserId, ctx.IsVendor, [marketplaceCode], ct);
         var code = codes[0];
         var listing = await EnsureListingAsync(ad.CompanyId, ad.VendorUserId, ad.Sku, code, ad.Id, ct);
-        QueuePublish(ad.CompanyId, ad.Id, listing);
-        ApplyPublishedSnapshot(listing, ad);
+        var runId = Guid.NewGuid();
+        await publisher.PublishAsync(ad, listing, runId, ct);
+        QueuePublish(ad.CompanyId, ad.Id, listing, overwriteStatus: false);
         await db.SaveChangesAsync(ct);
         return await GetMappedAsync(ad.Id, ct);
     }
 
     public async Task<object> CancelChannelAsync(CompanyContext ctx, Guid advertisementId, string marketplaceCode, CancellationToken ct)
     {
-        var ad = await RequireAdAsync(ctx, advertisementId, ct);
+        var ad = await RequireAdAsync(ctx, advertisementId, includeItems: true, ct);
         var listing = await db.Listings.FirstOrDefaultAsync(l =>
             l.AdvertisementId == ad.Id && l.MarketplaceCode == marketplaceCode, ct)
             ?? throw new KeyNotFoundException("ListingNotFound");
-        listing.Status = ListingStatuses.Cancelled;
-        listing.RemoteStatus = "paused";
-        listing.LastSyncedAt = DateTimeOffset.UtcNow;
-        listing.LastSyncJson = JsonSerializer.Serialize(new
-        {
-            source = "cancel",
-            marketplaceCode,
-            fetchedAt = listing.LastSyncedAt,
-            remoteId = listing.RemoteId,
-            status = "paused"
-        });
+        var runId = Guid.NewGuid();
+        await publisher.CancelAsync(ad, listing, runId, ct);
         db.WorkItems.Add(new WorkItem
         {
             Id = Guid.NewGuid(),
             CompanyId = ad.CompanyId,
             Kind = WorkKinds.ListingCancel,
-            PayloadJson = $"{{\"listingId\":\"{listing.Id}\",\"advertisementId\":\"{ad.Id}\"}}"
+            PayloadJson = $"{{\"listingId\":\"{listing.Id}\",\"advertisementId\":\"{ad.Id}\",\"runId\":\"{runId}\"}}"
         });
         await db.SaveChangesAsync(ct);
         return await GetMappedAsync(ad.Id, ct);
@@ -231,17 +230,9 @@ public sealed class AdvertisementService(AppDbContext db)
         var listings = await db.Listings.Where(l => l.AdvertisementId == ad.Id).ToListAsync(ct);
         if (listings.Count == 0)
             throw new InvalidOperationException("NoChannels");
+        var runId = Guid.NewGuid();
         foreach (var listing in listings)
-        {
-            PullRemoteSnapshot(listing, ad);
-            db.WorkItems.Add(new WorkItem
-            {
-                Id = Guid.NewGuid(),
-                CompanyId = ad.CompanyId,
-                Kind = WorkKinds.ListingRefresh,
-                PayloadJson = $"{{\"listingId\":\"{listing.Id}\",\"advertisementId\":\"{ad.Id}\"}}"
-            });
-        }
+            await publisher.RefreshAsync(ad, listing, runId, ct);
         await db.SaveChangesAsync(ct);
         return await GetMappedAsync(ad.Id, ct);
     }
@@ -264,7 +255,18 @@ public sealed class AdvertisementService(AppDbContext db)
             .FirstAsync(a => a.Id == advertisementId, ct);
         var listings = await db.Listings.AsNoTracking().Where(l => l.AdvertisementId == loaded.Id).ToListAsync(ct);
         var names = await MarketplaceNamesAsync(ct);
-        return new { advertisement = Map(loaded, listings, names) };
+        var logMap = await publishLogs.ListForListingsAsync(loaded.CompanyId, listings.Select(l => l.Id).ToList(), ct);
+        return new { advertisement = Map(loaded, listings, names, logMap) };
+    }
+
+    public async Task<object> ListChannelLogsAsync(CompanyContext ctx, Guid advertisementId, string marketplaceCode, CancellationToken ct)
+    {
+        var ad = await RequireAdAsync(ctx, advertisementId, ct);
+        var listing = await db.Listings.AsNoTracking().FirstOrDefaultAsync(l =>
+            l.AdvertisementId == ad.Id && l.MarketplaceCode == marketplaceCode, ct)
+            ?? throw new KeyNotFoundException("ListingNotFound");
+        var items = await publishLogs.ListAsync(ad.CompanyId, listing.Id, ct);
+        return new { items = items.Select(ListingPublishLogService.Map).ToList() };
     }
 
     async Task<Dictionary<string, string>> MarketplaceNamesAsync(CancellationToken ct) =>
@@ -291,9 +293,9 @@ public sealed class AdvertisementService(AppDbContext db)
         return listing;
     }
 
-    void QueuePublish(Guid companyId, Guid advertisementId, Listing listing)
+    void QueuePublish(Guid companyId, Guid advertisementId, Listing listing, bool overwriteStatus = true)
     {
-        listing.Status = ListingStatuses.Queued;
+        if (overwriteStatus) listing.Status = ListingStatuses.Queued;
         db.WorkItems.Add(new WorkItem
         {
             Id = Guid.NewGuid(),
@@ -327,57 +329,6 @@ public sealed class AdvertisementService(AppDbContext db)
         });
     }
 
-    static void PullRemoteSnapshot(Listing listing, Advertisement ad)
-    {
-        listing.LastSyncedAt = DateTimeOffset.UtcNow;
-        if (listing.Status is ListingStatuses.Cancelled)
-        {
-            listing.RemoteStatus = "paused";
-            listing.LastSyncJson = JsonSerializer.Serialize(new
-            {
-                source = "refresh",
-                marketplaceCode = listing.MarketplaceCode,
-                fetchedAt = listing.LastSyncedAt,
-                remoteId = listing.RemoteId,
-                status = "paused",
-                note = "Anúncio cancelado neste canal."
-            });
-            return;
-        }
-        if (listing.Status is ListingStatuses.Published or "PublishedDemo" || !string.IsNullOrEmpty(listing.RemoteId))
-        {
-            listing.Status = ListingStatuses.Published;
-            listing.RemoteId ??= $"demo-{listing.Id:N}"[..12];
-            listing.RemoteTitle = ad.Title;
-            listing.RemotePrice = ad.Price;
-            listing.RemoteQuantity = ad.AvailableQuantity;
-            listing.RemoteStatus = "active";
-            listing.RemotePermalink = $"https://demo.vilmomkt.com/{listing.MarketplaceCode}/{listing.RemoteId}";
-            listing.LastSyncJson = JsonSerializer.Serialize(new
-            {
-                source = "refresh",
-                marketplaceCode = listing.MarketplaceCode,
-                fetchedAt = listing.LastSyncedAt,
-                remoteId = listing.RemoteId,
-                title = listing.RemoteTitle,
-                price = listing.RemotePrice,
-                quantity = listing.RemoteQuantity,
-                status = listing.RemoteStatus,
-                permalink = listing.RemotePermalink
-            });
-            return;
-        }
-        listing.RemoteStatus = "not_published";
-        listing.LastSyncJson = JsonSerializer.Serialize(new
-        {
-            source = "refresh",
-            marketplaceCode = listing.MarketplaceCode,
-            fetchedAt = listing.LastSyncedAt,
-            status = "not_published",
-            note = "Ainda não publicado neste marketplace."
-        });
-    }
-
     async Task<List<string>> ResolveCodesAsync(Guid companyId, Guid vendorId, bool actorIsVendor, IReadOnlyList<string>? requested, CancellationToken ct)
     {
         List<string> allowed;
@@ -408,7 +359,11 @@ public sealed class AdvertisementService(AppDbContext db)
         return allowed.Distinct().ToList();
     }
 
-    static object Map(Advertisement a, List<Listing> listings, IReadOnlyDictionary<string, string> names) => new
+    static object Map(
+        Advertisement a,
+        List<Listing> listings,
+        IReadOnlyDictionary<string, string> names,
+        IReadOnlyDictionary<Guid, List<ListingPublishLog>> logs) => new
     {
         a.Id,
         a.CompanyId,
@@ -444,7 +399,12 @@ public sealed class AdvertisementService(AppDbContext db)
             l.RemoteStatus,
             l.RemotePermalink,
             l.LastSyncedAt,
-            l.LastSyncJson
+            l.LastSyncJson,
+            lastStep = (logs.TryGetValue(l.Id, out var chLogs) ? chLogs.FirstOrDefault() : null) is { } latest
+                ? ListingPublishLogService.Map(latest) : null,
+            publishLog = logs.TryGetValue(l.Id, out var steps)
+                ? steps.Select(ListingPublishLogService.Map).ToList()
+                : []
         })
     };
 
