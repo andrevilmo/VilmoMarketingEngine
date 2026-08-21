@@ -889,7 +889,7 @@ const Vilmo = (() => {
           return opts.join("");
         },
         selectHtml(list, selected, depth) {
-          return `<label>Nível ${depth + 1}<select class="kt-select ml-cat-select" data-depth="${depth}">${this.optionHtml(list, selected)}</select></label>`;
+          return `<label>Nível ${depth + 1}<select class="kt-input ml-cat-select" data-depth="${depth}">${this.optionHtml(list, selected)}</select></label>`;
         },
         async setValue(id, meta) {
           const inp = this.valueInp();
@@ -913,19 +913,36 @@ const Vilmo = (() => {
           const depth = Number(sel.dataset.depth || 0);
           const id = sel.value;
           const box = this.levels();
-          if (box) [...box.querySelectorAll("label")].forEach((lab, i) => { if (i > depth) lab.remove(); });
+          if (!box) return;
+          const snapshot = [...box.querySelectorAll(".ml-cat-select")].slice(0, depth + 1).map(s => ({
+            selected: s === sel ? id : s.value,
+            options: [...s.options].filter(o => o.value).map(o => {
+              const label = (o.textContent || "").replace(/\s*\([^)]+\)\s*$/, "");
+              return { id: o.value, name: label || o.value };
+            })
+          }));
+          this.seq = (this.seq || 0) + 1;
+          const seq = this.seq;
+          const paint = (levels) => {
+            box.innerHTML = levels.map((lv, i) => this.selectHtml(lv.options, lv.selected, i)).join("");
+            this.bindSelects();
+          };
           if (!id) {
-            await this.setValue("");
+            paint(snapshot);
+            await this.setValue(depth > 0 ? snapshot[depth - 1].selected : "");
             return;
           }
           try {
             const detail = await api(`/marketplaces/MercadoLivre/categories/${encodeURIComponent(id)}`);
+            if (seq !== this.seq) return;
+            const levels = snapshot.slice();
+            if (detail.children && detail.children.length)
+              levels.push({ options: detail.children, selected: "" });
+            paint(levels);
             await this.setValue(detail.id, detail);
-            if (detail.children && detail.children.length) {
-              box.insertAdjacentHTML("beforeend", this.selectHtml(detail.children, "", depth + 1));
-              this.bindSelects();
-            }
           } catch {
+            if (seq !== this.seq) return;
+            paint(snapshot);
             await this.setValue(id, { name: id, leaf: true });
           }
         },
