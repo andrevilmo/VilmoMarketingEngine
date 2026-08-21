@@ -366,6 +366,109 @@ public class MercadoLivreCategoryTests : IClassFixture<ApiFactory>
     }
 
     [Fact]
+    public async Task Size_charts_retry_without_custom_brand()
+    {
+        var company = Guid.NewGuid();
+        var bodies = new List<string>();
+        var handler = new StubHandler();
+        handler.Impl = req =>
+        {
+            var path = req.RequestUri!.PathAndQuery;
+            if (path.Contains("/categories/MLB107292", StringComparison.Ordinal)
+                && !path.Contains("attributes", StringComparison.Ordinal)
+                && !path.Contains("charts", StringComparison.Ordinal))
+            {
+                return Json(200, """{"id":"MLB107292","name":"Camisas","children_categories":[],"path_from_root":[],"settings":{"catalog_domain":"MLB-SHIRTS","listing_allowed":true}}""");
+            }
+            if (path.Contains("/catalog/charts/search", StringComparison.Ordinal))
+            {
+                var body = req.Content?.ReadAsStringAsync().GetAwaiter().GetResult() ?? "";
+                bodies.Add(body);
+                if (body.Contains("VilmoTeste", StringComparison.Ordinal))
+                    return Json(200, """{"charts":[]}""");
+                return Json(200, """{"charts":[{"id":"26008","names":{"MLB":"Guia padrao"},"type":"STANDARD","domain_id":"SHIRTS"}]}""");
+            }
+            return Json(404, "{}");
+        };
+        await using var db = Sqlite();
+        var cfg = new CompanyMarketplaceConfig
+        {
+            Id = Guid.NewGuid(),
+            CompanyId = company,
+            MarketplaceCode = "MercadoLivre",
+            IsEnabled = true,
+            LinkStatus = "Linked"
+        };
+        db.CompanyMarketplaceConfigs.Add(cfg);
+        db.CompanyMarketplaceParameters.Add(new CompanyMarketplaceParameter
+        {
+            Id = Guid.NewGuid(), ConfigId = cfg.Id, ParameterKey = "AccessToken",
+            ParameterValue = "APP_USR-test", IsSecret = false
+        });
+        db.CompanyMarketplaceParameters.Add(new CompanyMarketplaceParameter
+        {
+            Id = Guid.NewGuid(), ConfigId = cfg.Id, ParameterKey = "UserId",
+            ParameterValue = "123456", IsSecret = false
+        });
+        await db.SaveChangesAsync();
+        var svc = new MercadoLivreCategoryService(db, new StubFactory(handler), new MemoryCache(new MemoryCacheOptions()));
+        var list = await svc.ListSizeChartsAsync(company, "MLB107292", "19159491", "Sem gênero infantil", "VilmoTeste", default);
+        Assert.Equal("mercadolivre", list.Source);
+        Assert.Equal("26008", Assert.Single(list.Items).Id);
+        Assert.Contains(bodies, b => b.Contains("VilmoTeste", StringComparison.Ordinal));
+        Assert.Contains(bodies, b => b.Contains("GENDER", StringComparison.Ordinal) && !b.Contains("VilmoTeste", StringComparison.Ordinal));
+        Assert.Contains("SHIRTS", bodies[0]);
+    }
+
+    [Fact]
+    public async Task Size_charts_resolve_seller_from_users_me()
+    {
+        long? sellerSent = null;
+        var company = Guid.NewGuid();
+        var handler = new StubHandler();
+        handler.Impl = req =>
+        {
+            var path = req.RequestUri!.PathAndQuery;
+            if (path.Contains("/users/me", StringComparison.Ordinal))
+                return Json(200, """{"id":778899}""");
+            if (path.Contains("/categories/MLB107292", StringComparison.Ordinal)
+                && !path.Contains("charts", StringComparison.Ordinal)
+                && !path.Contains("attributes", StringComparison.Ordinal))
+            {
+                return Json(200, """{"id":"MLB107292","name":"Camisas","children_categories":[],"path_from_root":[],"settings":{"catalog_domain":"MLB-SHIRTS","listing_allowed":true}}""");
+            }
+            if (path.Contains("/catalog/charts/search", StringComparison.Ordinal))
+            {
+                var body = req.Content?.ReadAsStringAsync().GetAwaiter().GetResult() ?? "";
+                using var doc = JsonDocument.Parse(body);
+                sellerSent = doc.RootElement.GetProperty("seller_id").GetInt64();
+                return Json(200, """{"charts":[{"id":"26008","names":{"MLB":"Guia"},"type":"STANDARD","domain_id":"SHIRTS"}]}""");
+            }
+            return Json(404, "{}");
+        };
+        await using var db = Sqlite();
+        var cfg = new CompanyMarketplaceConfig
+        {
+            Id = Guid.NewGuid(),
+            CompanyId = company,
+            MarketplaceCode = "MercadoLivre",
+            IsEnabled = true,
+            LinkStatus = "Linked"
+        };
+        db.CompanyMarketplaceConfigs.Add(cfg);
+        db.CompanyMarketplaceParameters.Add(new CompanyMarketplaceParameter
+        {
+            Id = Guid.NewGuid(), ConfigId = cfg.Id, ParameterKey = "AccessToken",
+            ParameterValue = "APP_USR-test", IsSecret = false
+        });
+        await db.SaveChangesAsync();
+        var svc = new MercadoLivreCategoryService(db, new StubFactory(handler), new MemoryCache(new MemoryCacheOptions()));
+        var list = await svc.ListSizeChartsAsync(company, "MLB107292", "339665", "Feminino", null, default);
+        Assert.Equal(778899, sellerSent);
+        Assert.Equal("26008", Assert.Single(list.Items).Id);
+    }
+
+    [Fact]
     public async Task Size_charts_without_token_do_not_call_search()
     {
         var handler = new StubHandler();

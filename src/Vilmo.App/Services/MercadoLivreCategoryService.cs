@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -258,26 +259,45 @@ public sealed class MercadoLivreCategoryService(
             throw new ArgumentException("InvalidCategoryId");
         var domain = (await GetAsync(id, ct))?.CatalogDomain;
         if (string.IsNullOrWhiteSpace(domain))
-            return new MlSizeChartList(id, domain, [], "no_domain");
+            return new MlSizeChartList(id, domain, [], "no_domain", "Esta categoria não tem domínio de guia de tamanhos.");
         var creds = await ReadSellerAsync(companyId, ct);
         if (creds is null)
-            return new MlSizeChartList(id, domain, [], "needs_token");
-        var body = new Dictionary<string, object?>
+            return new MlSizeChartList(id, domain, [], "needs_token", "Conecte o Mercado Livre para listar as guias de tamanho.");
+        IReadOnlyList<MlSizeChartRef> charts = [];
+        string? lastError = null;
+        var usedDomain = domain;
+        foreach (var domainId in DomainIds(domain))
         {
-            ["domain_id"] = domain,
-            ["site_id"] = Site,
-            ["seller_id"] = creds.Value.SellerId,
-            ["attributes"] = SizeChartFilters(genderId, genderName, brand)
-        };
-        var json = await SendJsonAsync(HttpMethod.Post, "/catalog/charts/search", ct, creds.Value.Token, creds.Value.SellerId, body);
-        var charts = ReadCharts(json);
-        if (charts.Count == 0 && domain.StartsWith($"{Site}-", StringComparison.OrdinalIgnoreCase))
-        {
-            body["domain_id"] = domain[(Site.Length + 1)..];
-            json = await SendJsonAsync(HttpMethod.Post, "/catalog/charts/search", ct, creds.Value.Token, creds.Value.SellerId, body);
-            charts = ReadCharts(json);
+            foreach (var filters in SizeChartFilterSets(genderId, genderName, brand))
+            {
+                var body = new Dictionary<string, object?>
+                {
+                    ["domain_id"] = domainId,
+                    ["site_id"] = Site,
+                    ["seller_id"] = creds.Value.SellerId,
+                    ["attributes"] = filters
+                };
+                var call = await CallAsync(HttpMethod.Post, "/catalog/charts/search", ct, creds.Value.Token, creds.Value.SellerId, body);
+                if (call.Json is null)
+                {
+                    lastError = call.Error ?? $"HTTP {call.Status}";
+                    continue;
+                }
+                var found = ReadCharts(call.Json);
+                if (found.Count == 0) continue;
+                charts = MergeCharts(charts, found);
+                usedDomain = domainId;
+                break;
+            }
+            if (charts.Count > 0) break;
         }
-        return new MlSizeChartList(id, domain, charts, charts.Count > 0 ? "mercadolivre" : "empty");
+        var source = charts.Count > 0 ? "mercadolivre" : lastError is null ? "empty" : "error";
+        var message = charts.Count > 0
+            ? null
+            : lastError is not null
+                ? $"Mercado Livre não listou guias ({lastError})."
+                : "Nenhuma guia para este gênero. Escolha outro gênero ou crie a guia no Mercado Livre.";
+        return new MlSizeChartList(id, usedDomain, charts, source, message);
     }
 
     public async Task<MlSizeChartDetail?> GetSizeChartAsync(Guid companyId, string chartId, CancellationToken ct)
@@ -302,9 +322,14 @@ public sealed class MercadoLivreCategoryService(
     }
 
     async Task<JsonElement?> GetJsonAsync(string path, CancellationToken ct) =>
-        await SendJsonAsync(HttpMethod.Get, path, ct);
+        (await CallAsync(HttpMethod.Get, path, ct)).Json;
 
     async Task<JsonElement?> SendJsonAsync(
+        HttpMethod method, string path, CancellationToken ct,
+        string? bearer = null, long? callerId = null, object? body = null) =>
+        (await CallAsync(method, path, ct, bearer, callerId, body)).Json;
+
+    async Task<MlHttp> CallAsync(
         HttpMethod method, string path, CancellationToken ct,
         string? bearer = null, long? callerId = null, object? body = null)
     {
@@ -322,14 +347,32 @@ public sealed class MercadoLivreCategoryService(
                 req.Content = JsonContent.Create(body);
             using var resp = await client.SendAsync(req, ct);
             var raw = await resp.Content.ReadAsStringAsync(ct);
-            if (!resp.IsSuccessStatusCode) return null;
+            if (!resp.IsSuccessStatusCode)
+                return new(null, (int)resp.StatusCode, TrimErr(raw, resp.StatusCode));
             using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(raw) ? "null" : raw);
-            return doc.RootElement.Clone();
+            return new(doc.RootElement.Clone(), (int)resp.StatusCode, null);
         }
-        catch
+        catch (Exception ex)
         {
-            return null;
+            return new(null, 0, ex.Message);
         }
+    }
+
+    static string TrimErr(string raw, HttpStatusCode status)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            var msg = Str(doc.RootElement, "message") ?? Str(doc.RootElement, "error");
+            if (!string.IsNullOrWhiteSpace(msg)) return msg;
+        }
+        catch (JsonException)
+        {
+            /* keep status */
+        }
+        var t = (raw ?? "").Trim();
+        if (t.Length > 180) t = t[..180];
+        return t.Length > 0 ? t : $"HTTP {(int)status}";
     }
 
     async Task<(string Token, long SellerId)?> ReadSellerAsync(Guid companyId, CancellationToken ct)
@@ -350,22 +393,53 @@ public sealed class MercadoLivreCategoryService(
         }
         if (token.Contains("demo", StringComparison.OrdinalIgnoreCase)) return null;
         long.TryParse(userRow?.ParameterValue, out var sellerId);
+        if (sellerId <= 0)
+        {
+            var me = await SendJsonAsync(HttpMethod.Get, "/users/me", ct, token);
+            if (me is { ValueKind: JsonValueKind.Object } obj && obj.TryGetProperty("id", out var idEl))
+            {
+                if (idEl.ValueKind == JsonValueKind.Number && idEl.TryGetInt64(out var n)) sellerId = n;
+                else long.TryParse(idEl.GetString(), out sellerId);
+            }
+        }
         return (token, sellerId);
     }
 
-    static List<object> SizeChartFilters(string? genderId, string? genderName, string? brand)
+    static IReadOnlyList<string> DomainIds(string domain)
     {
-        var filters = new List<object>();
-        if (!string.IsNullOrWhiteSpace(genderId) || !string.IsNullOrWhiteSpace(genderName))
-        {
-            var val = new Dictionary<string, string>();
-            if (!string.IsNullOrWhiteSpace(genderId)) val["id"] = genderId.Trim();
-            if (!string.IsNullOrWhiteSpace(genderName)) val["name"] = genderName.Trim();
-            filters.Add(new { id = "GENDER", values = new[] { val } });
-        }
-        if (!string.IsNullOrWhiteSpace(brand))
-            filters.Add(new { id = "BRAND", values = new[] { new { name = brand.Trim() } } });
-        return filters;
+        var d = domain.Trim();
+        if (d.StartsWith($"{Site}-", StringComparison.OrdinalIgnoreCase))
+            return [d[(Site.Length + 1)..], d];
+        return [d, $"{Site}-{d}"];
+    }
+
+    static IEnumerable<List<object>> SizeChartFilterSets(string? genderId, string? genderName, string? brand)
+    {
+        var gender = SizeChartGender(genderId, genderName);
+        var hasBrand = !string.IsNullOrWhiteSpace(brand);
+        if (gender is not null && hasBrand)
+            yield return [gender, new { id = "BRAND", values = new[] { new { name = brand!.Trim() } } }];
+        if (gender is not null)
+            yield return [gender];
+        yield return [];
+    }
+
+    static object? SizeChartGender(string? genderId, string? genderName)
+    {
+        if (string.IsNullOrWhiteSpace(genderId) && string.IsNullOrWhiteSpace(genderName))
+            return null;
+        var val = new Dictionary<string, string>();
+        if (!string.IsNullOrWhiteSpace(genderId)) val["id"] = genderId.Trim();
+        if (!string.IsNullOrWhiteSpace(genderName)) val["name"] = genderName.Trim();
+        return new { id = "GENDER", values = new[] { val } };
+    }
+
+    static IReadOnlyList<MlSizeChartRef> MergeCharts(IReadOnlyList<MlSizeChartRef> current, IReadOnlyList<MlSizeChartRef> extra)
+    {
+        var map = current.ToDictionary(x => x.Id, StringComparer.Ordinal);
+        foreach (var c in extra)
+            map.TryAdd(c.Id, c);
+        return map.Values.ToList();
     }
 
     static IReadOnlyList<MlSizeChartRef> ReadCharts(JsonElement? json)
@@ -633,7 +707,8 @@ public sealed record MlSizeChartList(
     string CategoryId,
     string? DomainId,
     IReadOnlyList<MlSizeChartRef> Items,
-    string Source);
+    string Source,
+    string? Message = null);
 
 public sealed record MlSizeChartRow(string Id, string Size);
 
@@ -642,6 +717,8 @@ public sealed record MlSizeChartDetail(string Id, string Name, string Type, IRea
 public sealed record MlListingType(string Id, string Name);
 
 public sealed record MlListingTypeList(IReadOnlyList<MlListingType> Items, string Source);
+
+sealed record MlHttp(JsonElement? Json, int Status, string? Error);
 
 public sealed record MlCategoryRef(string Id, string Name);
 
