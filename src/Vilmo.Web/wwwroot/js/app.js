@@ -973,6 +973,10 @@ const Vilmo = (() => {
           inp.value = id;
           return id;
         },
+        bumpNav() {
+          this.navSeq = (this.navSeq || 0) + 1;
+          return this.navSeq;
+        },
         async setValue(id, meta, extraSaved) {
           const code = this.catCode(id);
           const inp = this.valueInp();
@@ -1089,17 +1093,19 @@ const Vilmo = (() => {
               <span class="text-xs text-muted-foreground">${hint}</span>
             </label>`;
           }
+          const listed = [...values].sort((a, b) =>
+            String(a.name || a.Name || "").localeCompare(String(b.name || b.Name || ""), "pt-BR", { sensitivity: "base" }));
           const useSelect = type === "list" || type === "boolean"
-            || (id !== "BRAND" && values.length >= 1 && values.length <= 250);
+            || (id !== "BRAND" && listed.length >= 1 && listed.length <= 250);
           if (useSelect) {
-            const opts = [`<option value="">Selecionar…</option>`].concat(values.map(v => {
+            const opts = [`<option value="">Selecionar…</option>`].concat(listed.map(v => {
               const vid = v.id || v.Id || "";
               const vname = v.name || v.Name || vid;
               if (this.isNaName(vname) || vid === "-1") return "";
               const sel = (seedId && vid === seedId) || (!seedId && seedName && vname === seedName) ? " selected" : "";
               return `<option value="${esc(vid || vname)}" data-ml-value-id="${esc(vid)}" data-ml-value-name="${esc(vname)}"${sel}>${esc(vname)}</option>`;
             }).filter(Boolean));
-            if (seedName && !values.some(v => (v.id || v.Id) === seedId || (v.name || v.Name) === seedName))
+            if (seedName && !listed.some(v => (v.id || v.Id) === seedId || (v.name || v.Name) === seedName))
               opts.push(`<option value="${esc(seedId || seedName)}" data-ml-value-id="${esc(seedId)}" data-ml-value-name="${esc(seedName)}" selected>${esc(seedName)}</option>`);
             return `<label>${esc(name)}${mark}<select class="kt-select ml-attr-field" ${extra}>${opts.join("")}</select></label>`;
           }
@@ -1120,13 +1126,13 @@ const Vilmo = (() => {
         async loadAttrs(code, extraSaved) {
           const box = this.attrsBox();
           if (!box) return;
+          this.attrSeq = (this.attrSeq || 0) + 1;
+          const seq = this.attrSeq;
           if (!code) {
             box.innerHTML = "";
             return;
           }
           const prev = Object.assign({}, this.savedFromDom(), extraSaved || {});
-          this.attrSeq = (this.attrSeq || 0) + 1;
-          const seq = this.attrSeq;
           box.innerHTML = `<p class="text-xs text-muted-foreground">Carregando atributos da categoria…</p>`;
           try {
             const r = await api(`/marketplaces/MercadoLivre/categories/${encodeURIComponent(code)}/attributes`);
@@ -1359,10 +1365,13 @@ const Vilmo = (() => {
         async showRoots(selected) {
           const box = this.levels();
           if (!box) return;
+          const seq = this.bumpNav();
           const roots = await this.rootsList();
+          if (seq !== this.navSeq) return;
           const code = this.catCode(selected);
           box.innerHTML = this.selectHtml(roots, code, 0);
           this.bindSelects();
+          if (seq !== this.navSeq) return;
           if (!code) await this.setValue("");
           else await this.setValue(code);
         },
@@ -1370,6 +1379,7 @@ const Vilmo = (() => {
           const box = this.levels();
           if (!box) return;
           const code = this.catCode(id);
+          const seq = this.bumpNav();
           if (!code) {
             await this.showRoots();
             if (id) this.hint(adErr("InvalidCategoryId"));
@@ -1377,16 +1387,19 @@ const Vilmo = (() => {
           }
           try {
             const detail = await api(`/marketplaces/MercadoLivre/categories/${encodeURIComponent(code)}`);
+            if (seq !== this.navSeq) return;
             const path = (detail.pathFromRoot && detail.pathFromRoot.length)
               ? detail.pathFromRoot
               : (detail.PathFromRoot && detail.PathFromRoot.length)
                 ? detail.PathFromRoot
                 : [{ id: detail.id || detail.Id || code, name: this.catName(detail) }];
             const roots = await this.rootsList();
+            if (seq !== this.navSeq) return;
             let html = this.selectHtml(roots, this.catCode(path[0]), 0);
             for (let i = 0; i < path.length; i++) {
               const nodeId = this.catCode(path[i]);
               const node = i === path.length - 1 ? detail : await api(`/marketplaces/MercadoLivre/categories/${encodeURIComponent(nodeId)}`);
+              if (seq !== this.navSeq) return;
               const kids = node.children || node.Children || [];
               const nextId = path[i + 1] ? this.catCode(path[i + 1]) : "";
               if (kids.length)
@@ -1396,6 +1409,7 @@ const Vilmo = (() => {
             this.bindSelects();
             await this.setValue(detail.id || detail.Id || code, detail, extraSaved);
           } catch {
+            if (seq !== this.navSeq) return;
             await this.showRoots(code);
           }
         },
@@ -1452,9 +1466,10 @@ const Vilmo = (() => {
           }
         }
       };
-      const syncExtras = () => {
+      const syncExtras = (opts) => {
         const selected = [...document.querySelectorAll(".mkt-code:checked")].map(c => c.value);
         document.querySelectorAll(".ad-extra").forEach(el => el.classList.toggle("on", selected.includes(el.dataset.extra)));
+        if (opts && opts.skipEnsure) return;
         if (selected.includes("MercadoLivre")) mlCat.ensure();
       };
       document.querySelectorAll(".mkt-code").forEach(c => c.onchange = syncExtras);
@@ -1496,7 +1511,7 @@ const Vilmo = (() => {
         const savedListingType = (ad.attributes || []).find(x =>
           x.marketplaceCode === "MercadoLivre" && x.fieldName === "listingTypeId")?.fieldValue;
         await mlListingType.load(savedListingType);
-        syncExtras();
+        syncExtras({ skipEnsure: true });
         const mlSaved = {};
         (ad.attributes || []).forEach(x => {
           if (x.marketplaceCode === "MercadoLivre" && String(x.fieldName || "").startsWith("ml:"))
