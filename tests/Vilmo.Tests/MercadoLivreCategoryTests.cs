@@ -481,10 +481,15 @@ public class MercadoLivreCategoryTests : IClassFixture<ApiFactory>
                 return Json(200, """{"id":"MLB107292","name":"Camisas","children_categories":[],"path_from_root":[],"settings":{"catalog_domain":"MLB-SHIRTS","listing_allowed":true}}""");
             if (req.Method == HttpMethod.Post && path.EndsWith("/catalog/charts/search", StringComparison.Ordinal))
                 return Json(200, """{"charts":[]}""");
-            if (req.Method == HttpMethod.Get && path.Contains("/technical_specs", StringComparison.Ordinal))
+            if (req.Method == HttpMethod.Post && path.Contains("/technical_specs", StringComparison.Ordinal))
             {
                 return Json(200, """
-                    {"input":{"groups":[{"components":[{"attributes":[{"id":"SIZE","tags":["main_attribute_candidate"]}]}]}]}}
+                    {"input":{"groups":[{"components":[{"attributes":[
+                      {"id":"GENDER","tags":["required","grid_template_required"],"hierarchy":"PARENT_PK","values":[{"id":"339665","name":"Feminino"}]},
+                      {"id":"SIZE","tags":["main_attribute_candidate"],"hierarchy":"ITEM","value_type":"string"},
+                      {"id":"CHEST_CIRCUMFERENCE_FROM","name":"Peito desde","value_type":"number_unit","tags":["BODY_MEASURE","required"],"default_unit_id":"cm","hierarchy":"CHILD_DEPENDENT"},
+                      {"id":"CHEST_CIRCUMFERENCE_TO","name":"Peito até","value_type":"number_unit","tags":["BODY_MEASURE","required"],"default_unit_id":"cm","hierarchy":"CHILD_DEPENDENT"}
+                    ]}]}]}}
                     """);
             }
             if (req.Method == HttpMethod.Post && path.EndsWith("/catalog/charts", StringComparison.Ordinal))
@@ -493,6 +498,8 @@ public class MercadoLivreCategoryTests : IClassFixture<ApiFactory>
                 var body = req.Content?.ReadAsStringAsync().GetAwaiter().GetResult() ?? "";
                 Assert.Contains("SHIRTS", body, StringComparison.Ordinal);
                 Assert.Contains("SIZE", body, StringComparison.Ordinal);
+                Assert.Contains("BODY_MEASURE", body, StringComparison.Ordinal);
+                Assert.Contains("CHEST_CIRCUMFERENCE_FROM", body, StringComparison.Ordinal);
                 Assert.DoesNotContain("MLB-SHIRTS", body, StringComparison.Ordinal);
                 return Json(201, """{"id":"998877","names":{"MLB":"Guia de tamanhos camisas Feminino"}}""");
             }
@@ -524,6 +531,57 @@ public class MercadoLivreCategoryTests : IClassFixture<ApiFactory>
         Assert.True(created);
         Assert.Equal("mercadolivre", list.Source);
         Assert.Equal("998877", Assert.Single(list.Items).Id);
+    }
+
+    [Fact]
+    public async Task Size_charts_create_uses_fallback_chest_when_spec_fails()
+    {
+        var company = Guid.NewGuid();
+        string? createdBody = null;
+        var handler = new StubHandler();
+        handler.Impl = req =>
+        {
+            var path = req.RequestUri!.AbsolutePath;
+            if (req.Method == HttpMethod.Get && path.Contains("/categories/MLB107292", StringComparison.Ordinal))
+                return Json(200, """{"id":"MLB107292","name":"Camisas","children_categories":[],"path_from_root":[],"settings":{"catalog_domain":"MLB-SHIRTS","listing_allowed":true}}""");
+            if (req.Method == HttpMethod.Post && path.EndsWith("/catalog/charts/search", StringComparison.Ordinal))
+                return Json(200, """{"charts":[]}""");
+            if (req.Method == HttpMethod.Post && path.Contains("/technical_specs", StringComparison.Ordinal))
+                return Json(400, """{"message":"Chart validation errors found","cause":[{"message":"missing FOOT_LENGTH","cell":{"attribute_id":"FOOT_LENGTH"}}]}""");
+            if (req.Method == HttpMethod.Post && path.EndsWith("/catalog/charts", StringComparison.Ordinal))
+            {
+                createdBody = req.Content?.ReadAsStringAsync().GetAwaiter().GetResult() ?? "";
+                return Json(201, """{"id":"112233","names":{"MLB":"Guia"}}""");
+            }
+            return Json(404, "{}");
+        };
+        await using var db = Sqlite();
+        var cfg = new CompanyMarketplaceConfig
+        {
+            Id = Guid.NewGuid(),
+            CompanyId = company,
+            MarketplaceCode = "MercadoLivre",
+            IsEnabled = true,
+            LinkStatus = "Linked"
+        };
+        db.CompanyMarketplaceConfigs.Add(cfg);
+        db.CompanyMarketplaceParameters.Add(new CompanyMarketplaceParameter
+        {
+            Id = Guid.NewGuid(), ConfigId = cfg.Id, ParameterKey = "AccessToken",
+            ParameterValue = "APP_USR-test", IsSecret = false
+        });
+        db.CompanyMarketplaceParameters.Add(new CompanyMarketplaceParameter
+        {
+            Id = Guid.NewGuid(), ConfigId = cfg.Id, ParameterKey = "UserId",
+            ParameterValue = "123456", IsSecret = false
+        });
+        await db.SaveChangesAsync();
+        var svc = new MercadoLivreCategoryService(db, new StubFactory(handler), new MemoryCache(new MemoryCacheOptions()));
+        var list = await svc.ListSizeChartsAsync(company, "MLB107292", "19159491", "Sem gênero infantil", "VilmoTeste", default);
+        Assert.Equal("112233", Assert.Single(list.Items).Id);
+        Assert.Contains("BODY_MEASURE", createdBody, StringComparison.Ordinal);
+        Assert.Contains("CHEST_CIRCUMFERENCE_FROM", createdBody, StringComparison.Ordinal);
+        Assert.Contains("PP", createdBody, StringComparison.Ordinal);
     }
 
     [Fact]

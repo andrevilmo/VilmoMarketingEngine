@@ -385,6 +385,12 @@ public sealed class MercadoLivreCategoryService(
                 foreach (var c in cause.EnumerateArray())
                 {
                     var m = Str(c, "message") ?? Str(c, "code");
+                    if (c.TryGetProperty("cell", out var cell) && cell.ValueKind == JsonValueKind.Object)
+                    {
+                        var attr = Str(cell, "attribute_id");
+                        if (!string.IsNullOrWhiteSpace(attr) && (m is null || !m.Contains(attr, StringComparison.Ordinal)))
+                            m = string.IsNullOrWhiteSpace(m) ? attr : $"{m} [{attr}]";
+                    }
                     if (!string.IsNullOrWhiteSpace(m) && !parts.Contains(m)) parts.Add(m);
                 }
             }
@@ -473,16 +479,27 @@ public sealed class MercadoLivreCategoryService(
     {
         if (string.IsNullOrWhiteSpace(genderId) && string.IsNullOrWhiteSpace(genderName))
             return (null, null);
-        var mainId = await ReadMainSizeAttributeAsync(domainId, creds, ct) ?? "SIZE";
+        var spec = await ReadGridSpecAsync(domainId, genderId, genderName, brand, creds, ct);
+        var mainId = spec.MainId ?? "SIZE";
         var genderVal = new Dictionary<string, string>();
         if (!string.IsNullOrWhiteSpace(genderId)) genderVal["id"] = genderId.Trim();
         if (!string.IsNullOrWhiteSpace(genderName)) genderVal["name"] = genderName.Trim();
         var attrs = new List<object> { new { id = "GENDER", values = new[] { genderVal } } };
         if (!string.IsNullOrWhiteSpace(brand))
             attrs.Add(new { id = "BRAND", values = new[] { new { name = brand.Trim() } } });
-        var rows = new[] { "PP", "P", "M", "G", "GG" }.Select(size => new
+        foreach (var field in spec.ChartFields)
         {
-            attributes = new[] { new { id = mainId, values = new[] { new { name = size } } } }
+            if (field.Id.Equals("GENDER", StringComparison.OrdinalIgnoreCase)
+                || field.Id.Equals("BRAND", StringComparison.OrdinalIgnoreCase))
+                continue;
+            var value = ChartFieldValue(field);
+            if (value is null) continue;
+            attrs.Add(new { id = field.Id, values = new[] { value } });
+        }
+        var sizes = RowSizeNames(spec, mainId);
+        var rows = sizes.Select((size, i) => new
+        {
+            attributes = RowAttributes(spec, mainId, size, i)
         }).ToArray();
         var body = new Dictionary<string, object?>
         {
@@ -493,6 +510,8 @@ public sealed class MercadoLivreCategoryService(
             ["attributes"] = attrs,
             ["rows"] = rows
         };
+        if (!string.IsNullOrWhiteSpace(spec.MeasureType))
+            body["measure_type"] = spec.MeasureType;
         var call = await CallAsync(HttpMethod.Post, "/catalog/charts", ct, creds.Token, creds.SellerId, body);
         if (call.Json is { ValueKind: JsonValueKind.Object } json)
         {
@@ -502,27 +521,54 @@ public sealed class MercadoLivreCategoryService(
             if (!string.IsNullOrWhiteSpace(id))
                 return (new MlSizeChartRef(id, ChartTitle(genderName, brand), "SPECIFIC", domainId), null);
         }
-        return (null, call.Error ?? "create_failed");
+        return (null, call.Error ?? spec.Error ?? "create_failed");
     }
 
-    async Task<string?> ReadMainSizeAttributeAsync(string domainId, (string Token, long SellerId) creds, CancellationToken ct)
+    async Task<GridSpec> ReadGridSpecAsync(
+        string domainId, string? genderId, string? genderName, string? brand,
+        (string Token, long SellerId) creds, CancellationToken ct)
     {
-        foreach (var d in new[] { $"{Site}-{domainId}", domainId }.Distinct(StringComparer.OrdinalIgnoreCase))
+        var filter = new List<object>();
+        var genderVal = new Dictionary<string, string>();
+        if (!string.IsNullOrWhiteSpace(genderId)) genderVal["id"] = genderId.Trim();
+        if (!string.IsNullOrWhiteSpace(genderName)) genderVal["name"] = genderName.Trim();
+        if (genderVal.Count > 0)
+            filter.Add(new { id = "GENDER", values = new[] { genderVal } });
+        if (!string.IsNullOrWhiteSpace(brand))
+            filter.Add(new { id = "BRAND", values = new[] { new { name = brand.Trim() } } });
+        string? lastError = null;
+        foreach (var d in PrefixedDomainIds(domainId))
         {
-            var json = await SendJsonAsync(HttpMethod.Get, $"/domains/{Uri.EscapeDataString(d)}/technical_specs?section=grids", ct, creds.Token, creds.SellerId);
-            var found = FindMainAttribute(json);
-            if (!string.IsNullOrWhiteSpace(found)) return found;
+            var call = await CallAsync(
+                HttpMethod.Post,
+                $"/domains/{Uri.EscapeDataString(d)}/technical_specs?section=grids",
+                ct, creds.Token, creds.SellerId,
+                new { attributes = filter });
+            if (call.Json is not null)
+            {
+                var parsed = ParseGridSpec(call.Json);
+                if (parsed.RowFields.Count > 0 || parsed.MainId is not null)
+                    return parsed;
+            }
+            lastError = call.Error ?? lastError;
         }
-        return null;
+        return GridSpec.Fallback(lastError);
     }
 
-    static string? FindMainAttribute(JsonElement? json)
+    static IReadOnlyList<string> PrefixedDomainIds(string domainId)
     {
-        if (json is null) return null;
-        string? found = null;
+        var d = domainId.Trim();
+        if (d.StartsWith($"{Site}-", StringComparison.OrdinalIgnoreCase))
+            return [d, d[(Site.Length + 1)..]];
+        return [$"{Site}-{d}", d];
+    }
+
+    static GridSpec ParseGridSpec(JsonElement? json)
+    {
+        if (json is null) return GridSpec.Fallback(null);
+        var fields = new Dictionary<string, GridField>(StringComparer.OrdinalIgnoreCase);
         void Walk(JsonElement el)
         {
-            if (found is not null) return;
             if (el.ValueKind == JsonValueKind.Array)
             {
                 foreach (var c in el.EnumerateArray()) Walk(c);
@@ -530,10 +576,11 @@ public sealed class MercadoLivreCategoryService(
             }
             if (el.ValueKind != JsonValueKind.Object) return;
             var id = Str(el, "id");
-            if (!string.IsNullOrWhiteSpace(id) && (HasTag(el, "main_attribute_candidate") || id.Equals("SIZE", StringComparison.OrdinalIgnoreCase)))
+            if (!string.IsNullOrWhiteSpace(id) && (el.TryGetProperty("value_type", out _) || el.TryGetProperty("tags", out _)))
             {
-                if (HasTag(el, "main_attribute_candidate") || found is null)
-                    found = id;
+                var field = ReadGridField(el, id);
+                if (field is not null)
+                    fields[field.Id] = field;
             }
             foreach (var p in el.EnumerateObject())
             {
@@ -542,7 +589,156 @@ public sealed class MercadoLivreCategoryService(
             }
         }
         Walk(json.Value);
-        return found;
+        if (fields.Count == 0) return GridSpec.Fallback(null);
+        var main = fields.Values.FirstOrDefault(x => x.MainCandidate)?.Id
+            ?? (fields.ContainsKey("SIZE") ? "SIZE" : fields.Values.FirstOrDefault()?.Id);
+        var clothing = fields.Values.Any(x => x.Clothing && x.Required);
+        var body = fields.Values.Any(x => x.Body && x.Required);
+        var measureType = clothing ? "CLOTHING_MEASURE" : body ? "BODY_MEASURE" : null;
+        var chart = fields.Values.Where(IsChartField).ToList();
+        var rows = fields.Values.Where(x => IsRowField(x, measureType)).ToList();
+        if (rows.Count == 0 && main is not null && fields.TryGetValue(main, out var mainField))
+            rows.Add(mainField);
+        if (!rows.Any(x => x.Body || x.Clothing))
+        {
+            measureType ??= "BODY_MEASURE";
+            rows.AddRange(GridSpec.Fallback(null).RowFields.Where(x => x.Body || x.Clothing));
+        }
+        return new GridSpec(main, measureType, chart, rows, null);
+    }
+
+    static GridField? ReadGridField(JsonElement el, string id)
+    {
+        var hidden = HasTag(el, "hidden") || HasTag(el, "read_only");
+        var required = HasTag(el, "required") || HasTag(el, "new_required");
+        if (hidden && !required && !HasTag(el, "main_attribute_candidate"))
+            return null;
+        return new GridField(
+            id,
+            Str(el, "name") ?? id,
+            Str(el, "value_type") ?? "string",
+            required,
+            HasTag(el, "main_attribute_candidate"),
+            HasTag(el, "CLOTHING_MEASURE"),
+            HasTag(el, "BODY_MEASURE"),
+            Str(el, "default_unit_id") ?? FirstUnitId(el),
+            ReadAttributeValues(el),
+            Str(el, "hierarchy") ?? "");
+    }
+
+    static string? FirstUnitId(JsonElement el)
+    {
+        if (!el.TryGetProperty("units", out var units) || units.ValueKind != JsonValueKind.Array)
+            return null;
+        foreach (var u in units.EnumerateArray())
+        {
+            var id = Str(u, "id");
+            if (!string.IsNullOrWhiteSpace(id)) return id;
+        }
+        return null;
+    }
+
+    static bool IsChartField(GridField field)
+    {
+        if (field.Id.Equals("GENDER", StringComparison.OrdinalIgnoreCase)
+            || field.Id.Equals("BRAND", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (field.MainCandidate || field.Body || field.Clothing) return false;
+        var h = field.Hierarchy;
+        return field.Required && (
+            h.Equals("PARENT_PK", StringComparison.OrdinalIgnoreCase)
+            || h.Equals("FAMILY", StringComparison.OrdinalIgnoreCase)
+            || h.Length == 0);
+    }
+
+    static bool IsRowField(GridField field, string? measureType)
+    {
+        if (field.Id.Equals("GENDER", StringComparison.OrdinalIgnoreCase)
+            || field.Id.Equals("BRAND", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (measureType == "CLOTHING_MEASURE" && field.Body) return false;
+        if (measureType == "BODY_MEASURE" && field.Clothing) return false;
+        if (field.MainCandidate || field.Body || field.Clothing) return true;
+        var h = field.Hierarchy;
+        return h.Equals("CHILD_PK", StringComparison.OrdinalIgnoreCase)
+            || h.Equals("ITEM", StringComparison.OrdinalIgnoreCase)
+            || h.Equals("CHILD_DEPENDENT", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static Dictionary<string, string>? ChartFieldValue(GridField field)
+    {
+        var hit = field.Values.FirstOrDefault();
+        if (hit is not null)
+        {
+            var val = new Dictionary<string, string> { ["name"] = hit.Name };
+            if (!string.IsNullOrWhiteSpace(hit.Id)) val["id"] = hit.Id;
+            return val;
+        }
+        if (field.Id.Equals("STYLE", StringComparison.OrdinalIgnoreCase))
+            return new Dictionary<string, string> { ["name"] = "Casual" };
+        return null;
+    }
+
+    static IReadOnlyList<string> RowSizeNames(GridSpec spec, string mainId)
+    {
+        var preferred = new[] { "PP", "P", "M", "G", "GG" };
+        var main = spec.RowFields.FirstOrDefault(x => x.Id.Equals(mainId, StringComparison.OrdinalIgnoreCase))
+            ?? spec.RowFields.FirstOrDefault(x => x.MainCandidate);
+        var names = main?.Values.Select(v => v.Name).Where(n => !string.IsNullOrWhiteSpace(n)).ToList() ?? [];
+        var picked = preferred.Where(p => names.Any(n => n.Equals(p, StringComparison.OrdinalIgnoreCase))).ToList();
+        if (picked.Count > 0) return picked;
+        if (names.Count > 0) return names.Take(5).ToList();
+        return preferred;
+    }
+
+    static List<object> RowAttributes(GridSpec spec, string mainId, string size, int index)
+    {
+        var rows = spec.RowFields.Count > 0
+            ? spec.RowFields
+            : GridSpec.Fallback(null).RowFields;
+        var list = new List<object>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var field in rows)
+        {
+            if (!seen.Add(field.Id)) continue;
+            var value = RowFieldValue(spec, field, mainId, size, index);
+            if (value is null) continue;
+            list.Add(new { id = field.Id, values = new[] { value } });
+        }
+        if (!seen.Contains(mainId))
+            list.Insert(0, new { id = mainId, values = new[] { new Dictionary<string, string> { ["name"] = size } } });
+        return list;
+    }
+
+    static Dictionary<string, string>? RowFieldValue(GridSpec _, GridField field, string mainId, string size, int index)
+    {
+        if (field.Id.Equals(mainId, StringComparison.OrdinalIgnoreCase)
+            || field.MainCandidate
+            || field.Id.Equals("SIZE", StringComparison.OrdinalIgnoreCase)
+            || field.Id.Equals("FILTRABLE_SIZE", StringComparison.OrdinalIgnoreCase)
+            || field.Id.EndsWith("_SIZE", StringComparison.OrdinalIgnoreCase))
+        {
+            var hit = field.Values.FirstOrDefault(v => v.Name.Equals(size, StringComparison.OrdinalIgnoreCase));
+            var val = new Dictionary<string, string> { ["name"] = hit?.Name ?? size };
+            if (!string.IsNullOrWhiteSpace(hit?.Id)) val["id"] = hit!.Id;
+            return val;
+        }
+        if (field.ValueType.Equals("number_unit", StringComparison.OrdinalIgnoreCase)
+            || field.Body || field.Clothing)
+        {
+            var unit = string.IsNullOrWhiteSpace(field.DefaultUnit) ? "cm" : field.DefaultUnit;
+            var from = field.Id.Contains("TO", StringComparison.OrdinalIgnoreCase);
+            var cm = 80 + (index * 4) + (from ? 4 : 0);
+            return new Dictionary<string, string> { ["name"] = $"{cm} {unit}" };
+        }
+        var first = field.Values.FirstOrDefault();
+        if (first is not null)
+        {
+            var val = new Dictionary<string, string> { ["name"] = first.Name };
+            if (!string.IsNullOrWhiteSpace(first.Id)) val["id"] = first.Id;
+            return val;
+        }
+        return field.Required ? new Dictionary<string, string> { ["name"] = size } : null;
     }
 
     static string ChartTitle(string? genderName, string? brand)
@@ -832,6 +1028,37 @@ public sealed record MlListingType(string Id, string Name);
 public sealed record MlListingTypeList(IReadOnlyList<MlListingType> Items, string Source);
 
 sealed record MlHttp(JsonElement? Json, int Status, string? Error);
+
+sealed record GridField(
+    string Id,
+    string Name,
+    string ValueType,
+    bool Required,
+    bool MainCandidate,
+    bool Clothing,
+    bool Body,
+    string? DefaultUnit,
+    IReadOnlyList<MlAttributeValue> Values,
+    string Hierarchy);
+
+sealed record GridSpec(
+    string? MainId,
+    string? MeasureType,
+    IReadOnlyList<GridField> ChartFields,
+    IReadOnlyList<GridField> RowFields,
+    string? Error)
+{
+    public static GridSpec Fallback(string? error) => new(
+        "SIZE",
+        "BODY_MEASURE",
+        [],
+        [
+            new("SIZE", "Tamanho", "string", true, true, false, false, null, [], "ITEM"),
+            new("CHEST_CIRCUMFERENCE_FROM", "Circunferência do peito desde", "number_unit", true, false, false, true, "cm", [], "CHILD_DEPENDENT"),
+            new("CHEST_CIRCUMFERENCE_TO", "Circunferência do peito até", "number_unit", true, false, false, true, "cm", [], "CHILD_DEPENDENT")
+        ],
+        error);
+}
 
 public sealed record MlCategoryRef(string Id, string Name);
 
