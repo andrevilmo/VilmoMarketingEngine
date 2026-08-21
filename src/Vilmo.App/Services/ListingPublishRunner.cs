@@ -223,7 +223,7 @@ public sealed class ListingPublishRunner(
             }, JsonOpts));
         }
 
-        var blocked = await EnsureMercadoLivreCanListAsync(ad, listing, baseUrl, token, action, runId, ct);
+        var (blocked, accessToken) = await EnsureMercadoLivreCanListAsync(ad, listing, baseUrl, token, action, runId, ct);
         if (blocked is not null)
             return blocked;
 
@@ -235,29 +235,29 @@ public sealed class ListingPublishRunner(
 
         try
         {
-            var client = httpFactory.CreateClient("marketplace");
-            using var req = new HttpRequestMessage(new HttpMethod(method), url);
-            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-            req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-            if (payload is not null)
-                req.Content = new StringContent(JsonSerializer.Serialize(payload, JsonOpts), Encoding.UTF8, "application/json");
-            using var resp = await client.SendAsync(req, ct);
-            var body = await resp.Content.ReadAsStringAsync(ct);
-            if (body.Length > 16000) body = body[..16000] + "…";
-            var tech = JsonSerializer.Serialize(new
+            var call = await SendItemRequestAsync(method, url, payload, accessToken, ct);
+            if (call.StatusCode == 401 && listing.MarketplaceCode.Equals("MercadoLivre", StringComparison.OrdinalIgnoreCase))
             {
-                source = "marketplace",
-                method,
-                url,
-                httpStatus = (int)resp.StatusCode,
-                request = new { method, url, body = payload },
-                response = new { httpStatus = (int)resp.StatusCode, body = TryParseJson(body) },
-                callbackResponse = TryParseJson(body)
-            }, JsonOpts);
-            var userMessage = resp.IsSuccessStatusCode
-                ? null
-                : MercadoLivreSellerListing.UserMessageFromHttp((int)resp.StatusCode, body);
-            return new MarketplaceCall(resp.IsSuccessStatusCode, (int)resp.StatusCode, url, body, tech, userMessage);
+                var refreshed = await TryRefreshMercadoLivreTokenAsync(ad.CompanyId, ct);
+                if (!string.IsNullOrWhiteSpace(refreshed))
+                {
+                    await logs.WriteAsync(ad.CompanyId, runId, ad.Id, listing.Id, listing.MarketplaceCode, action,
+                        ListingPublishLogSteps.Calling, "info",
+                        "AccessToken expirado. Renovamos o token e tentamos publicar de novo.",
+                        new { httpStatus = 401 }, ct);
+                    call = await SendItemRequestAsync(method, url, payload, refreshed, ct);
+                }
+            }
+            if (!call.Ok
+                && listing.MarketplaceCode.Equals("MercadoLivre", StringComparison.OrdinalIgnoreCase)
+                && action == "publish"
+                && MercadoLivreSellerListing.NeedsAddress(MercadoLivreSellerListing.CausesFromHttpBody(call.Body)))
+            {
+                var gate = await EnsureMercadoLivreCanListAsync(ad, listing, baseUrl, accessToken, action, runId, ct);
+                if (gate.Blocked is null)
+                    call = await SendItemRequestAsync(method, url, payload, gate.Token, ct);
+            }
+            return call;
         }
         catch (Exception ex)
         {
@@ -462,20 +462,71 @@ public sealed class ListingPublishRunner(
         return null;
     }
 
-    async Task<MarketplaceCall?> EnsureMercadoLivreCanListAsync(
+    async Task<MarketplaceCall> SendItemRequestAsync(string method, string url, object? payload, string token, CancellationToken ct)
+    {
+        var client = httpFactory.CreateClient("marketplace");
+        using var req = new HttpRequestMessage(new HttpMethod(method), url);
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        if (payload is not null)
+            req.Content = new StringContent(JsonSerializer.Serialize(payload, JsonOpts), Encoding.UTF8, "application/json");
+        using var resp = await client.SendAsync(req, ct);
+        var body = await resp.Content.ReadAsStringAsync(ct);
+        if (body.Length > 16000) body = body[..16000] + "…";
+        var tech = JsonSerializer.Serialize(new
+        {
+            source = "marketplace",
+            method,
+            url,
+            httpStatus = (int)resp.StatusCode,
+            request = new { method, url, body = payload },
+            response = new { httpStatus = (int)resp.StatusCode, body = TryParseJson(body) },
+            callbackResponse = TryParseJson(body)
+        }, JsonOpts);
+        var userMessage = resp.IsSuccessStatusCode
+            ? null
+            : MercadoLivreSellerListing.UserMessageFromHttp((int)resp.StatusCode, body);
+        return new MarketplaceCall(resp.IsSuccessStatusCode, (int)resp.StatusCode, url, body, tech, userMessage);
+    }
+
+    async Task<(MarketplaceCall? Blocked, string Token)> EnsureMercadoLivreCanListAsync(
         Advertisement ad, Listing listing, string baseUrl, string token, string action, Guid runId, CancellationToken ct)
     {
-        if (action != "publish") return null;
-        if (!listing.MarketplaceCode.Equals("MercadoLivre", StringComparison.OrdinalIgnoreCase))
-            return null;
+        if (action != "publish" || !listing.MarketplaceCode.Equals("MercadoLivre", StringComparison.OrdinalIgnoreCase))
+            return (null, token);
 
         var me = await SendMlAsync(HttpMethod.Get, $"{baseUrl}/users/me", token, null, ct);
-        if (me.Json is null)
-            return null;
+        if (me.Status == 401)
+        {
+            var refreshed = await TryRefreshMercadoLivreTokenAsync(ad.CompanyId, ct);
+            if (string.IsNullOrWhiteSpace(refreshed))
+            {
+                var msg = MercadoLivreSellerListing.UserMessageFromHttp(401, me.Raw);
+                var tech = JsonSerializer.Serialize(new
+                {
+                    source = "marketplace",
+                    method = "GET",
+                    url = $"{baseUrl}/users/me",
+                    httpStatus = 401,
+                    response = new { httpStatus = 401, body = TryParseJson(me.Raw) },
+                    callbackResponse = TryParseJson(me.Raw)
+                }, JsonOpts);
+                return (new MarketplaceCall(false, 401, $"{baseUrl}/users/me", me.Raw, tech, msg), token);
+            }
+            token = refreshed;
+            await logs.WriteAsync(ad.CompanyId, runId, ad.Id, listing.Id, listing.MarketplaceCode, action,
+                ListingPublishLogSteps.Calling, "info",
+                "AccessToken expirado. Renovamos o token e consultamos a conta de novo.",
+                new { httpStatus = 401 }, ct);
+            me = await SendMlAsync(HttpMethod.Get, $"{baseUrl}/users/me", token, null, ct);
+        }
+
+        if (me.Json is null || !MercadoLivreSellerListing.IsSellerProfile(me.Json.Value))
+            return (null, token);
 
         var user = me.Json.Value;
         if (MercadoLivreSellerListing.CanList(user))
-            return null;
+            return (null, token);
 
         var codes = MercadoLivreSellerListing.ListCodes(user);
         var company = await db.Companies.AsNoTracking().FirstAsync(c => c.Id == ad.CompanyId, ct);
@@ -502,12 +553,12 @@ public sealed class ListingPublishRunner(
                 ListingPublishLogSteps.Calling, "info",
                 "Endereço enviado. Seguimos com a publicação no Mercado Livre.",
                 new { putHttpStatus = put.Status, codesAfter = MercadoLivreSellerListing.ListCodes(again.Json.Value) }, ct);
-            return null;
+            return (null, token);
         }
 
         var still = again.Json is not null ? MercadoLivreSellerListing.ListCodes(again.Json.Value) : codes;
-        var message = MercadoLivreSellerListing.UserMessage(still);
-        var tech = JsonSerializer.Serialize(new
+        var message = MercadoLivreSellerListing.UserMessage(still.Count > 0 ? still : codes);
+        var blockedTech = JsonSerializer.Serialize(new
         {
             source = "marketplace",
             method = "PUT",
@@ -519,7 +570,83 @@ public sealed class ListingPublishRunner(
             seller = MercadoLivreSellerListing.PublicStatus(again.Json ?? me.Json, true),
             listCodes = still
         }, JsonOpts);
-        return new MarketplaceCall(false, 403, putUrl, put.Raw, tech, message);
+        return (new MarketplaceCall(false, 403, putUrl, put.Raw, blockedTech, message), token);
+    }
+
+    async Task<string?> TryRefreshMercadoLivreTokenAsync(Guid companyId, CancellationToken ct)
+    {
+        var cfg = await db.CompanyMarketplaceConfigs
+            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.MarketplaceCode == "MercadoLivre", ct);
+        if (cfg is null) return null;
+        var refresh = await ReadMarketplaceParamAsync(cfg.Id, "RefreshToken", ct);
+        var clientId = await ReadMarketplaceParamAsync(cfg.Id, "ClientId", ct);
+        var clientSecret = await ReadMarketplaceParamAsync(cfg.Id, "ClientSecret", ct);
+        if (string.IsNullOrWhiteSpace(refresh) || string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(clientSecret))
+            return null;
+        if (refresh.Contains("demo", StringComparison.OrdinalIgnoreCase))
+            return null;
+        try
+        {
+            var client = httpFactory.CreateClient("marketplace");
+            using var req = new HttpRequestMessage(HttpMethod.Post, "https://api.mercadolibre.com/oauth/token");
+            req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            req.Content = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["grant_type"] = "refresh_token",
+                ["client_id"] = clientId,
+                ["client_secret"] = clientSecret,
+                ["refresh_token"] = refresh
+            });
+            using var resp = await client.SendAsync(req, ct);
+            var raw = await resp.Content.ReadAsStringAsync(ct);
+            if (!resp.IsSuccessStatusCode) return null;
+            using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(raw) ? "{}" : raw);
+            var access = doc.RootElement.TryGetProperty("access_token", out var a) ? a.GetString() : null;
+            if (string.IsNullOrWhiteSpace(access)) return null;
+            var newRefresh = doc.RootElement.TryGetProperty("refresh_token", out var r) ? r.GetString() : null;
+            await UpsertMarketplaceParamAsync(cfg.Id, "AccessToken", access, true, ct);
+            if (!string.IsNullOrWhiteSpace(newRefresh))
+                await UpsertMarketplaceParamAsync(cfg.Id, "RefreshToken", newRefresh, true, ct);
+            return access;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    async Task<string?> ReadMarketplaceParamAsync(Guid configId, string key, CancellationToken ct)
+    {
+        var row = await db.CompanyMarketplaceParameters
+            .FirstOrDefaultAsync(p => p.ConfigId == configId && p.ParameterKey == key, ct);
+        if (row is null || string.IsNullOrWhiteSpace(row.ParameterValue)) return null;
+        if (!row.IsSecret) return row.ParameterValue;
+        try { return protector.Unprotect(row.ParameterValue); }
+        catch { return row.ParameterValue; }
+    }
+
+    async Task UpsertMarketplaceParamAsync(Guid configId, string key, string value, bool secret, CancellationToken ct)
+    {
+        var stored = secret ? protector.Protect(value) : value;
+        var row = await db.CompanyMarketplaceParameters
+            .FirstOrDefaultAsync(p => p.ConfigId == configId && p.ParameterKey == key, ct);
+        if (row is null)
+        {
+            db.CompanyMarketplaceParameters.Add(new CompanyMarketplaceParameter
+            {
+                Id = Guid.NewGuid(),
+                ConfigId = configId,
+                ParameterKey = key,
+                ParameterValue = stored,
+                IsSecret = secret
+            });
+        }
+        else
+        {
+            row.ParameterValue = stored;
+            row.IsSecret = secret;
+        }
+        await db.SaveChangesAsync(ct);
     }
 
     async Task<MlRaw> SendMlAsync(HttpMethod method, string url, string token, object? payload, CancellationToken ct)

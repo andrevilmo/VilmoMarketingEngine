@@ -29,6 +29,14 @@ public class MercadoLivreSellerListingTests
     }
 
     [Fact]
+    public void Http_401_maps_reconnect_message()
+    {
+        var msg = MercadoLivreSellerListing.UserMessageFromHttp(401, """{"code":"unauthorized","message":"invalid access token"}""");
+        Assert.Contains("Reconecte", msg);
+        Assert.DoesNotContain("endereço", msg, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Http_403_body_maps_address_pending()
     {
         var msg = MercadoLivreSellerListing.UserMessageFromHttp(403, """
@@ -164,7 +172,44 @@ public class MercadoLivrePublishAddressGateTests
         Assert.Contains("address_pending", failed.UserMessage);
     }
 
-    static async Task<(Advertisement Ad, Listing Listing, Company Company)> SeedAsync(AppDbContext db)
+    [Fact]
+    public async Task Publish_refreshes_expired_token_then_posts_item()
+    {
+        await using var db = Db();
+        var (ad, listing, _) = await SeedAsync(db, withRefresh: true);
+        var calls = new List<string>();
+        var handler = new StubHandler
+        {
+            Impl = req =>
+            {
+                var path = req.RequestUri!.AbsolutePath;
+                calls.Add($"{req.Method.Method} {path}");
+                var auth = req.Headers.Authorization?.Parameter ?? "";
+                if (req.Method == HttpMethod.Post && path.EndsWith("/oauth/token", StringComparison.Ordinal))
+                    return Json(200, """{"access_token":"APP_USR-fresh","refresh_token":"TG-fresh","user_id":"99"}""");
+                if (req.Method == HttpMethod.Get && path.EndsWith("/users/me", StringComparison.Ordinal))
+                {
+                    if (auth.Contains("fresh", StringComparison.Ordinal))
+                        return Json(200, """{"id":99,"nickname":"VILMOTESTE","status":{"list":{"allow":true,"codes":[]}}}""");
+                    return Json(401, """{"code":"unauthorized","message":"invalid access token"}""");
+                }
+                if (req.Method == HttpMethod.Post && path.EndsWith("/items", StringComparison.Ordinal))
+                {
+                    Assert.Contains("fresh", auth, StringComparison.Ordinal);
+                    return Json(201, """{"id":"MLB999","status":"active","permalink":"https://mercadolivre.com.br/MLB999"}""");
+                }
+                return Json(404, "{}");
+            }
+        };
+        var runner = new ListingPublishRunner(db, new ListingPublishLogService(db), Protector(), new StubFactory(handler));
+        await runner.PublishAsync(ad, listing, Guid.NewGuid(), default);
+        Assert.Equal(ListingStatuses.Published, listing.Status);
+        Assert.Equal("MLB999", listing.RemoteId);
+        Assert.Contains(calls, c => c.Contains("/oauth/token", StringComparison.Ordinal));
+        Assert.Contains("POST /items", calls);
+    }
+
+    static async Task<(Advertisement Ad, Listing Listing, Company Company)> SeedAsync(AppDbContext db, bool withRefresh = false)
     {
         var company = new Company
         {
@@ -206,6 +251,24 @@ public class MercadoLivrePublishAddressGateTests
             ParameterValue = "APP_USR-test-token",
             IsSecret = false
         });
+        if (withRefresh)
+        {
+            db.CompanyMarketplaceParameters.Add(new CompanyMarketplaceParameter
+            {
+                Id = Guid.NewGuid(), ConfigId = cfg.Id, ParameterKey = "RefreshToken",
+                ParameterValue = "TG-refresh", IsSecret = false
+            });
+            db.CompanyMarketplaceParameters.Add(new CompanyMarketplaceParameter
+            {
+                Id = Guid.NewGuid(), ConfigId = cfg.Id, ParameterKey = "ClientId",
+                ParameterValue = "ml-client", IsSecret = false
+            });
+            db.CompanyMarketplaceParameters.Add(new CompanyMarketplaceParameter
+            {
+                Id = Guid.NewGuid(), ConfigId = cfg.Id, ParameterKey = "ClientSecret",
+                ParameterValue = "ml-secret", IsSecret = false
+            });
+        }
         var ad = new Advertisement
         {
             Id = Guid.NewGuid(),

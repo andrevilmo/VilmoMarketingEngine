@@ -21,8 +21,21 @@ public static class MercadoLivreSellerListing
         return codes;
     }
 
+    public static bool IsSellerProfile(JsonElement user)
+    {
+        if (user.ValueKind != JsonValueKind.Object) return false;
+        if (!user.TryGetProperty("id", out _)) return false;
+        var code = Str(user, "code") ?? Str(user, "error");
+        if (string.Equals(code, "unauthorized", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (string.Equals(Str(user, "message"), "invalid access token", StringComparison.OrdinalIgnoreCase))
+            return false;
+        return true;
+    }
+
     public static bool CanList(JsonElement user)
     {
+        if (!IsSellerProfile(user)) return false;
         var codes = ListCodes(user);
         if (NeedsAddress(codes) || NeedsPhone(codes) || NeedsIdentification(codes))
             return false;
@@ -96,6 +109,8 @@ public static class MercadoLivreSellerListing
 
     public static string UserMessageFromHttp(int status, string? body)
     {
+        if (status == 401 || (body ?? "").Contains("invalid access token", StringComparison.OrdinalIgnoreCase))
+            return "Token do Mercado Livre inválido ou expirado. Reconecte o canal em Marketplaces e publique de novo.";
         var causes = CausesFromHttpBody(body);
         if (status == 403 || causes.Count > 0)
         {

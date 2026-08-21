@@ -132,8 +132,26 @@ public sealed class MercadoLivreCategoryService(
         var seller = await ReadSellerAsync(companyId, ct);
         if (seller is null)
             return MercadoLivreSellerListing.PublicStatus(null, false);
-        var me = await SendJsonAsync(HttpMethod.Get, "/users/me", ct, seller.Value.Token, seller.Value.SellerId);
-        return MercadoLivreSellerListing.PublicStatus(me, true);
+        var call = await CallAsync(HttpMethod.Get, "/users/me", ct, seller.Value.Token, seller.Value.SellerId);
+        if (call.Json is null)
+        {
+            var expired = call.Status == 401;
+            return new
+            {
+                connected = true,
+                canList = false,
+                codes = Array.Empty<string>(),
+                nickname = (string?)null,
+                address = (object?)null,
+                tokenExpired = expired,
+                httpStatus = call.Status,
+                fixUrl = MercadoLivreSellerListing.AddressesUrl,
+                message = expired
+                    ? "Token do Mercado Livre inválido ou expirado. Reconecte o canal em Marketplaces."
+                    : "Não lemos o perfil do vendedor no Mercado Livre."
+            };
+        }
+        return MercadoLivreSellerListing.PublicStatus(call.Json, true);
     }
 
     static MlListingType? ReadListingType(JsonElement x)
