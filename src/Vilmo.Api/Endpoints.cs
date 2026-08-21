@@ -266,14 +266,34 @@ public static class Endpoints
             if (ctx.IsVendor) return Results.NotFound();
             var companyId = ctx.CompanyId ?? throw new InvalidOperationException("CompanyRequired");
             var pub = config["PUBLIC_BASE_URL"] ?? $"{http.Request.Scheme}://{http.Request.Host}";
-            return Results.Ok(await svc.ConnectUrlAsync(companyId, code, pub));
+            return Results.Ok(await svc.ConnectUrlAsync(companyId, code, pub, ct));
         }).RequireAuthorization();
 
-        app.MapGet("/oauth/{code}/callback", async (string code, Guid? companyId, HttpContext http, MarketplaceService svc, CancellationToken ct) =>
+        app.MapGet("/oauth/{marketplaceCode}/callback", async (
+            string marketplaceCode,
+            Guid? companyId,
+            string? state,
+            string? code,
+            string? error,
+            string? error_description,
+            int? demo,
+            HttpContext http,
+            MarketplaceService svc,
+            IConfiguration config,
+            CancellationToken ct) =>
         {
-            if (companyId is null) return Results.BadRequest(new { error = "companyId required" });
-            await svc.HandleOAuthCallbackAsync(code, companyId.Value, ct);
-            return Results.Redirect("/web/#/marketplaces?connected=" + code);
+            if (!string.IsNullOrWhiteSpace(error))
+                return Results.Redirect(MarketplaceOAuthRedirect(marketplaceCode, "denied", error_description ?? error));
+            Guid tenant;
+            if (companyId is Guid cid)
+                tenant = cid;
+            else if (!Guid.TryParse(state, out tenant))
+                return Results.BadRequest(new { error = "companyId required" });
+            var pub = config["PUBLIC_BASE_URL"] ?? $"{http.Request.Scheme}://{http.Request.Host}";
+            var result = await svc.HandleOAuthCallbackAsync(marketplaceCode, tenant, code, demo == 1, pub, ct);
+            if (!result.Ok)
+                return Results.Redirect(MarketplaceOAuthRedirect(marketplaceCode, "error", result.Error ?? "OAuthFailed"));
+            return Results.Redirect(MarketplaceOAuthRedirect(marketplaceCode, "ok", null));
         });
 
         app.MapPost("/webhooks/{code}", async (string code, JsonElement body, MarketplaceService svc, CancellationToken ct) =>
@@ -793,6 +813,14 @@ public static class Endpoints
         try { await db.SaveChangesAsync(ct); }
         catch (DbUpdateException) { /* raced */ }
         return Results.Json(payload, statusCode: st);
+    }
+
+    static string MarketplaceOAuthRedirect(string marketplaceCode, string oauth, string? error)
+    {
+        var url = $"/web/#/marketplaces?connected={Uri.EscapeDataString(marketplaceCode)}&oauth={Uri.EscapeDataString(oauth)}";
+        if (string.IsNullOrWhiteSpace(error)) return url;
+        var clipped = error.Length > 180 ? error[..180] : error;
+        return url + "&error=" + Uri.EscapeDataString(clipped);
     }
 
     public sealed record LoginBody(string? Email, string? Password);

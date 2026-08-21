@@ -628,6 +628,14 @@ const Vilmo = (() => {
 
   async function viewMarketplaces() {
     const list = await api(`/companies/${store.companyId}/marketplaces`);
+    const q = new URLSearchParams((location.hash.split("?")[1] || ""));
+    const oauth = q.get("oauth");
+    const oauthErr = q.get("error");
+    const oauthBanner = oauth === "ok"
+      ? `<div class="vilmo-card mb-4 text-sm">Marketplace conectado. AccessToken gravado.</div>`
+      : (oauth === "error" || oauth === "denied"
+        ? `<div class="vilmo-card mb-4 text-sm">Falha ao conectar${oauthErr ? ": " + oauthErr : ""}.</div>`
+        : "");
     const cards = list.map(m => `
       <form class="vilmo-card mkt-form" data-code="${m.code}">
         <div class="flex justify-between items-center mb-3">
@@ -642,7 +650,7 @@ const Vilmo = (() => {
           <button class="kt-btn kt-btn-outline connect" type="button" data-code="${m.code}">Conectar</button>
         </div>
       </form>`).join("");
-    return page("Marketplaces da empresa", "", `<div class="vilmo-grid cols-2">${cards}</div>`);
+    return page("Marketplaces da empresa", "", `${oauthBanner}<div class="vilmo-grid cols-2">${cards}</div>`);
   }
 
   async function viewMyMarketplaces() {

@@ -497,7 +497,7 @@ Auth: bearer session/JWT with `user_id`, `is_platform_super_user`, and membershi
 | `GET` | `/products` / `GET /products/{sku}` | Catalog of the active company (includes `sale_price`). List: Admin/Company/Vendor (Anúncios picker). `GET /{sku}` and `POST` stay Admin/Company. |
 | `GET` | `/inventory/{sku}` | On-hand for the active company. Admin/Company. Vendor `404`. |
 | `POST` | `/marketplaces/{code}/connect` | Start OAuth/HMAC for **this company's** shop; `{code}` is the table PK, not an enum. |
-| `GET` | `/oauth/{code}/callback` | Store tokens as parameters; invalidate Redis. Same route for every future code. |
+| `GET` | `/oauth/{code}/callback` | Mercado Livre (and Magalu) send `code` + `state` (company id). Vilmo exchanges `code` at the channel token URL and stores `AccessToken` / `RefreshToken` / `UserId`. `companyId` still accepted. `demo=1` keeps the local demo tokens. |
 | `POST` | `/webhooks/{code}` | Verify using that code's `marketplace_webhook_binding`, resolve company **and vendor**, enqueue, 200. |
 | `GET` | `/marketplaces/listing-fields` | Common listing fields (`*`) plus extras per `marketplace_code` for the Anúncios form. |
 | `GET` | `/advertisements` / `GET /listings` | Ads of the active company (vendor: own). Includes `items`, `attributes`, `channels` (status + remote snapshot fields). |

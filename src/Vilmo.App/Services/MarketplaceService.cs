@@ -1,3 +1,4 @@
+using System.Net.Http.Headers;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Vilmo.Data;
@@ -6,8 +7,9 @@ using Vilmo.Security;
 
 namespace Vilmo.Services;
 
-public sealed class MarketplaceService(AppDbContext db, SecretProtector protector)
+public sealed class MarketplaceService(AppDbContext db, SecretProtector protector, IHttpClientFactory httpFactory)
 {
+    public sealed record OAuthCallbackResult(bool Ok, string? Error = null);
     public async Task<List<object>> CatalogAsync(bool includeInactive, CancellationToken ct)
     {
         var q = db.Marketplaces.AsNoTracking().AsQueryable();
@@ -118,21 +120,37 @@ public sealed class MarketplaceService(AppDbContext db, SecretProtector protecto
         await db.SaveChangesAsync(ct);
     }
 
-    public async Task<object> ConnectUrlAsync(Guid companyId, string code, string publicBase)
+    public async Task<object> ConnectUrlAsync(Guid companyId, string marketplaceCode, string publicBase, CancellationToken ct)
     {
-        var callback = $"{publicBase.TrimEnd('/')}/oauth/{code}/callback";
-        return new { marketplace = code, authorizationUrl = callback + $"?companyId={companyId}&demo=1", callback };
+        var callback = $"{publicBase.TrimEnd('/')}/oauth/{marketplaceCode}/callback";
+        var clientId = await ReadParamAsync(companyId, marketplaceCode, "ClientId", ct);
+        var authorize = AuthorizeUrl(marketplaceCode, clientId, callback, companyId);
+        var authorizationUrl = authorize
+            ?? $"{callback}?companyId={companyId:D}&demo=1";
+        return new { marketplace = marketplaceCode, authorizationUrl, callback };
     }
 
-    public async Task HandleOAuthCallbackAsync(string code, Guid companyId, CancellationToken ct)
+    public async Task<OAuthCallbackResult> HandleOAuthCallbackAsync(
+        string marketplaceCode,
+        Guid companyId,
+        string? oauthCode,
+        bool demo,
+        string publicBase,
+        CancellationToken ct)
     {
-        var cfg = await db.CompanyMarketplaceConfigs.FirstOrDefaultAsync(c => c.CompanyId == companyId && c.MarketplaceCode == code, ct);
+        var cfg = await db.CompanyMarketplaceConfigs.FirstOrDefaultAsync(c => c.CompanyId == companyId && c.MarketplaceCode == marketplaceCode, ct);
         if (cfg is null)
         {
-            cfg = new CompanyMarketplaceConfig { Id = Guid.NewGuid(), CompanyId = companyId, MarketplaceCode = code, IsEnabled = true };
+            cfg = new CompanyMarketplaceConfig
+            {
+                Id = Guid.NewGuid(),
+                CompanyId = companyId,
+                MarketplaceCode = marketplaceCode,
+                IsEnabled = true
+            };
             db.CompanyMarketplaceConfigs.Add(cfg);
         }
-        cfg.LinkStatus = LinkStatuses.Linked;
+
         async Task Upsert(string key, string value, bool secret)
         {
             var row = await db.CompanyMarketplaceParameters.FirstOrDefaultAsync(p => p.ConfigId == cfg.Id && p.ParameterKey == key, ct);
@@ -142,12 +160,144 @@ public sealed class MarketplaceService(AppDbContext db, SecretProtector protecto
                 {
                     Id = Guid.NewGuid(), ConfigId = cfg.Id, ParameterKey = key, ParameterValue = stored, IsSecret = secret
                 });
-            else row.ParameterValue = stored;
+            else
+            {
+                row.ParameterValue = stored;
+                row.IsSecret = secret;
+            }
         }
-        await Upsert("AccessToken", "demo-access-token", true);
-        await Upsert("RefreshToken", "demo-refresh-token", true);
+
+        if (demo || string.IsNullOrWhiteSpace(oauthCode))
+        {
+            cfg.LinkStatus = LinkStatuses.Linked;
+            await Upsert("AccessToken", "demo-access-token", true);
+            await Upsert("RefreshToken", "demo-refresh-token", true);
+            await db.SaveChangesAsync(ct);
+            await RecomputeReadinessAsync(companyId, ct);
+            return new OAuthCallbackResult(true);
+        }
+
+        var callback = $"{publicBase.TrimEnd('/')}/oauth/{marketplaceCode}/callback";
+        var exchanged = await ExchangeAuthorizationCodeAsync(marketplaceCode, companyId, oauthCode, callback, ct);
+        if (!exchanged.Ok)
+            return new OAuthCallbackResult(false, exchanged.Error);
+
+        cfg.IsEnabled = true;
+        cfg.LinkStatus = LinkStatuses.Linked;
+        await Upsert("AccessToken", exchanged.AccessToken!, true);
+        if (!string.IsNullOrWhiteSpace(exchanged.RefreshToken))
+            await Upsert("RefreshToken", exchanged.RefreshToken, true);
+        if (!string.IsNullOrWhiteSpace(exchanged.UserId))
+            await Upsert("UserId", exchanged.UserId, false);
         await db.SaveChangesAsync(ct);
         await RecomputeReadinessAsync(companyId, ct);
+        return new OAuthCallbackResult(true);
+    }
+
+    async Task<TokenExchange> ExchangeAuthorizationCodeAsync(
+        string marketplaceCode, Guid companyId, string oauthCode, string redirectUri, CancellationToken ct)
+    {
+        var tokenUrl = TokenEndpoint(marketplaceCode);
+        if (tokenUrl is null)
+            return TokenExchange.Fail($"OAuth exchange is not implemented for {marketplaceCode}.");
+
+        var clientId = await ReadParamAsync(companyId, marketplaceCode, "ClientId", ct);
+        var clientSecret = await ReadParamAsync(companyId, marketplaceCode, "ClientSecret", ct);
+        if (string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(clientSecret))
+            return TokenExchange.Fail("ClientId and ClientSecret must be saved before connecting.");
+
+        try
+        {
+            var client = httpFactory.CreateClient("marketplace");
+            using var req = new HttpRequestMessage(HttpMethod.Post, tokenUrl);
+            req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            req.Content = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["grant_type"] = "authorization_code",
+                ["client_id"] = clientId,
+                ["client_secret"] = clientSecret,
+                ["code"] = oauthCode,
+                ["redirect_uri"] = redirectUri
+            });
+            using var resp = await client.SendAsync(req, ct);
+            var body = await resp.Content.ReadAsStringAsync(ct);
+            using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(body) ? "{}" : body);
+            var root = doc.RootElement;
+            if (!resp.IsSuccessStatusCode)
+            {
+                var msg = ReadJsonString(root, "error_description")
+                    ?? ReadJsonString(root, "message")
+                    ?? ReadJsonString(root, "error")
+                    ?? $"HTTP {(int)resp.StatusCode}";
+                return TokenExchange.Fail(msg);
+            }
+            var access = ReadJsonString(root, "access_token");
+            if (string.IsNullOrWhiteSpace(access))
+                return TokenExchange.Fail("Marketplace token response had no access_token.");
+            return new TokenExchange(true, null, access, ReadJsonString(root, "refresh_token"), ReadJsonString(root, "user_id"));
+        }
+        catch (Exception ex)
+        {
+            return TokenExchange.Fail(ex.Message);
+        }
+    }
+
+    async Task<string?> ReadParamAsync(Guid companyId, string marketplaceCode, string key, CancellationToken ct)
+    {
+        var cfg = await db.CompanyMarketplaceConfigs.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.MarketplaceCode == marketplaceCode, ct);
+        if (cfg is null) return null;
+        var row = await db.CompanyMarketplaceParameters.AsNoTracking()
+            .FirstOrDefaultAsync(p => p.ConfigId == cfg.Id && p.ParameterKey == key, ct);
+        if (row is null || string.IsNullOrWhiteSpace(row.ParameterValue)) return null;
+        if (!row.IsSecret) return row.ParameterValue;
+        try { return protector.Unprotect(row.ParameterValue); }
+        catch { return row.ParameterValue; }
+    }
+
+    static string? AuthorizeUrl(string marketplaceCode, string? clientId, string callback, Guid companyId)
+    {
+        if (string.IsNullOrWhiteSpace(clientId)) return null;
+        var state = companyId.ToString("D");
+        return marketplaceCode switch
+        {
+            "MercadoLivre" =>
+                "https://auth.mercadolivre.com.br/authorization"
+                + "?response_type=code"
+                + "&client_id=" + Uri.EscapeDataString(clientId)
+                + "&redirect_uri=" + Uri.EscapeDataString(callback)
+                + "&state=" + Uri.EscapeDataString(state),
+            "Magalu" =>
+                "https://id.magalu.com/oauth/authorize"
+                + "?response_type=code"
+                + "&client_id=" + Uri.EscapeDataString(clientId)
+                + "&redirect_uri=" + Uri.EscapeDataString(callback)
+                + "&state=" + Uri.EscapeDataString(state),
+            _ => null
+        };
+    }
+
+    static string? TokenEndpoint(string marketplaceCode) => marketplaceCode switch
+    {
+        "MercadoLivre" => "https://api.mercadolibre.com/oauth/token",
+        "Magalu" => "https://id.magalu.com/oauth/token",
+        _ => null
+    };
+
+    static string? ReadJsonString(JsonElement root, string name)
+    {
+        if (!root.TryGetProperty(name, out var el)) return null;
+        return el.ValueKind switch
+        {
+            JsonValueKind.String => el.GetString(),
+            JsonValueKind.Number => el.ToString(),
+            _ => el.ToString()
+        };
+    }
+
+    sealed record TokenExchange(bool Ok, string? Error, string? AccessToken = null, string? RefreshToken = null, string? UserId = null)
+    {
+        public static TokenExchange Fail(string error) => new(false, error);
     }
 
     public async Task<object> HandleWebhookAsync(string code, JsonElement body, CancellationToken ct)
