@@ -41,4 +41,24 @@ public class MercadoLivrePicturesTests
         Assert.Empty(MercadoLivrePictures.Parse("foto local"));
         Assert.Empty(MercadoLivrePictures.Parse("mailto:a@b.c"));
     }
+
+    [Fact]
+    public void Detects_png_jpeg_and_rejects_text()
+    {
+        var png = Convert.FromBase64String(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==");
+        Assert.True(AdvertisementPictureStore.TryDetect(png, out var ext, out var mime));
+        Assert.Equal(".png", ext);
+        Assert.Equal("image/png", mime);
+
+        Assert.True(AdvertisementPictureStore.TryDetect(new byte[] { 0xFF, 0xD8, 0xFF, 0xE0 }, out ext, out mime));
+        Assert.Equal(".jpg", ext);
+        Assert.Equal("image/jpeg", mime);
+
+        Assert.False(AdvertisementPictureStore.TryDetect("hello"u8, out _, out _));
+        Assert.True(AdvertisementPictureStore.TryNormalizeName($"{Guid.NewGuid():N}.jpg", out var name, out var type));
+        Assert.EndsWith(".jpg", name);
+        Assert.Equal("image/jpeg", type);
+        Assert.False(AdvertisementPictureStore.TryNormalizeName("../secret.jpg", out _, out _));
+    }
 }

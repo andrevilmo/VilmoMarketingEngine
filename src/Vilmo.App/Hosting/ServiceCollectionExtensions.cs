@@ -43,6 +43,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ListingPublishLogService>();
         services.AddScoped<ListingPublishRunner>();
         services.AddScoped<AdvertisementService>();
+        services.AddSingleton<AdvertisementPictureStore>();
         services.AddScoped<MercadoLivreCategoryService>();
         services.AddMemoryCache();
         services.AddHttpClient("marketplace", c => c.Timeout = TimeSpan.FromSeconds(20));

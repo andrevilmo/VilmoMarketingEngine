@@ -691,6 +691,44 @@ public class AdvertisementApiTests : IClassFixture<ApiFactory>
         Assert.DoesNotContain(ml.GetProperty("publishLog").EnumerateArray(), x =>
             x.GetProperty("stepCode").GetString() == "callback");
     }
+
+    static byte[] TinyPng() => Convert.FromBase64String(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==");
+
+    [Fact]
+    public async Task MercadoLivre_picture_upload_is_public_and_rejects_non_image()
+    {
+        var (token, companyId) = await AdminAsync();
+        var png = TinyPng();
+        using var form = new MultipartFormDataContent();
+        var part = new ByteArrayContent(png);
+        part.Headers.ContentType = new MediaTypeHeaderValue("image/png");
+        form.Add(part, "file", "foto.png");
+        var req = Authed(HttpMethod.Post, "/advertisements/pictures", token, companyId: companyId);
+        req.Content = form;
+        req.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
+        var res = await _client.SendAsync(req);
+        res.EnsureSuccessStatusCode();
+        using var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync());
+        var url = doc.RootElement.GetProperty("url").GetString()!;
+        var fileName = doc.RootElement.GetProperty("fileName").GetString()!;
+        Assert.EndsWith(".png", fileName, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("/media/pictures/", url, StringComparison.Ordinal);
+
+        var anon = await _client.GetAsync($"/media/pictures/{fileName}");
+        anon.EnsureSuccessStatusCode();
+        Assert.Equal("image/png", anon.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(png, await anon.Content.ReadAsByteArrayAsync());
+
+        using var bad = new MultipartFormDataContent();
+        bad.Add(new StringContent("not-an-image"), "file", "x.txt");
+        var badReq = Authed(HttpMethod.Post, "/advertisements/pictures", token, companyId: companyId);
+        badReq.Content = bad;
+        badReq.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
+        var badRes = await _client.SendAsync(badReq);
+        Assert.Equal(HttpStatusCode.BadRequest, badRes.StatusCode);
+        Assert.Contains("InvalidPictureFile", await badRes.Content.ReadAsStringAsync());
+    }
 }
 
 public class KitInventoryTests

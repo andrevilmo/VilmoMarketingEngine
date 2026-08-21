@@ -196,8 +196,12 @@ const Vilmo = (() => {
       CategorySuggestFailed: "Não foi possível sugerir a categoria no Mercado Livre.",
       InvalidCategoryId: "Categoria ML deve ser o código da opção (ex.: MLB5672), não o nome.",
       InvalidListingTypeId: "Tipo de anúncio ML deve ser o código da opção (ex.: gold_special), não um nome livre.",
-      PicturesRequired: "O Mercado Livre exige ao menos uma foto pública (HTTPS) no campo Imagens ML.",
-      InvalidPictures: "Imagens ML devem ser URLs HTTP ou HTTPS públicas, uma por linha.",
+      PicturesRequired: "Envie ao menos uma foto no campo Imagens ML.",
+      InvalidPictures: "Imagens ML inválidas. Envie fotos JPG, PNG ou WEBP.",
+      InvalidPictureFile: "Envie uma foto JPG, PNG ou WEBP.",
+      PictureTooLarge: "Cada foto deve ter no máximo 8 MB.",
+      PictureEmpty: "A foto está vazia.",
+      PicturesLimit: "No máximo 12 fotos no Mercado Livre.",
       SizeChartNotFound: "Tabela de medidas do Mercado Livre não encontrada.",
       InvalidSizeChartId: "Informe o ID da guia de tamanhos do Mercado Livre.",
       InvalidSizeGridId: "Escolha a guia e a linha nas listas do Mercado Livre. SIZE_GRID_ROW_ID deve ser a linha (ex.: 26008:1), não o mesmo número da guia.",
@@ -607,11 +611,13 @@ const Vilmo = (() => {
         const mark = (d.required || d.Required) ? " *" : "";
         return `<div class="ml-pics col-span-2">
           <div class="font-medium text-sm mb-1">${esc(d.label)}${mark}</div>
-          <div class="ml-pics-rows"></div>
-          <button type="button" class="kt-btn kt-btn-outline kt-btn-sm ml-pic-add">Adicionar foto</button>
+          <div class="ml-pics-tiles"></div>
+          <label class="kt-btn kt-btn-outline kt-btn-sm ml-pic-upload">Enviar fotos
+            <input type="file" accept="image/jpeg,image/png,image/webp,image/*" multiple hidden>
+          </label>
           <textarea class="attr-field ml-pics-value" hidden data-mkt="${esc(m.code)}" data-key="${esc(key)}"></textarea>
-          <div class="ml-pics-thumbs"></div>
-          <p class="text-xs text-muted-foreground">Uma URL HTTPS pública por foto, ligada a este anúncio. O Mercado Livre baixa as imagens; sem foto o tipo Clássica recusa (item.listing_type_id.requiresPictures).</p>
+          <p class="ml-pics-msg text-xs" hidden></p>
+          <p class="text-xs text-muted-foreground">Envie as fotos do anúncio (JPG, PNG ou WEBP). Elas aparecem aqui e o Mercado Livre baixa as mesmas imagens.</p>
         </div>`;
       }
       return `<label>${esc(d.label)}<input class="kt-input attr-field" data-mkt="${esc(m.code)}" data-key="${esc(key)}"></label>`;
@@ -629,6 +635,11 @@ const Vilmo = (() => {
     window.__vilmoAds = Object.fromEntries((list || []).map(a => [String(a.id), a]));
     const cards = list.map(a => {
       const items = (a.items || []).map(i => `${i.quantity}× ${i.sku}`).join(", ");
+      const adPics = parseMlPictureUrls((a.attributes || []).find(x =>
+        x.marketplaceCode === "MercadoLivre" && x.fieldName === "pictures")?.fieldValue);
+      const picsHtml = adPics.length
+        ? `<div class="ad-ml-pics">${mlPicsThumbs(adPics)}</div>`
+        : "";
       const channels = (a.channels || []).map(c => {
         const remoteBits = [];
         if (c.remoteId) remoteBits.push(`id ${esc(c.remoteId)}`);
@@ -643,13 +654,7 @@ const Vilmo = (() => {
           ? `Atualizado ${esc(fmtWhen(c.lastSyncedAt))}`
           : "Sem dados online ainda";
         const steps = c.publishLog || [];
-        const mlPics = c.marketplaceCode === "MercadoLivre"
-          ? parseMlPictureUrls((a.attributes || []).find(x =>
-              x.marketplaceCode === "MercadoLivre" && x.fieldName === "pictures")?.fieldValue)
-          : [];
-        const picsHtml = mlPics.length
-          ? `<div class="ad-ml-pics">${mlPicsThumbs(mlPics)}</div>`
-          : "";
+        const chPics = c.marketplaceCode === "MercadoLivre" ? picsHtml : "";
         return `<div class="ad-channel" data-ad="${esc(a.id)}" data-code="${esc(c.marketplaceCode)}">
           <div class="ad-channel-head">
             <div>
@@ -662,7 +667,7 @@ const Vilmo = (() => {
             </div>
           </div>
           ${title}
-          ${picsHtml}
+          ${chPics}
           <div class="text-xs text-muted-foreground">${remoteBits.join(" · ") || synced}</div>
           <div class="text-xs text-muted-foreground">${esc(synced)}</div>
           ${link}
@@ -674,6 +679,7 @@ const Vilmo = (() => {
           <div>
             <h3 class="font-medium">${esc(a.title)}</h3>
             <div class="text-xs text-muted-foreground">${esc(a.sku)} · ${a.kind === "Kit" ? "conjunto" : "produto"} · ${esc(items)} · R$ ${esc(String(a.price))} · qtd ${esc(String(a.availableQuantity))}</div>
+            ${picsHtml}
           </div>
           <div class="ad-card-head-actions">
             <label class="ad-switch" title="Mostrar ou ocultar canais">
@@ -1529,38 +1535,60 @@ const Vilmo = (() => {
       const mlPics = {
         wrap() { return document.querySelector(".ml-pics"); },
         valueInp() { return document.querySelector(".ml-pics-value"); },
-        rows() { return this.wrap()?.querySelector(".ml-pics-rows"); },
-        thumbsEl() { return this.wrap()?.querySelector(".ml-pics-thumbs"); },
-        sync() {
-          const urls = [...(this.rows()?.querySelectorAll(".ml-pic-url") || [])]
-            .map(i => i.value.trim()).filter(Boolean);
+        tiles() { return this.wrap()?.querySelector(".ml-pics-tiles"); },
+        fileInp() { return this.wrap()?.querySelector("input[type=file]"); },
+        msgEl() { return this.wrap()?.querySelector(".ml-pics-msg"); },
+        urls() { return parseMlPictureUrls(this.valueInp()?.value); },
+        hint(text) {
+          const el = this.msgEl();
+          if (!el) return;
+          if (!text) { el.hidden = true; el.textContent = ""; return; }
+          el.hidden = false;
+          el.textContent = text;
+        },
+        sync(urls) {
+          const list = urls || this.urls();
           const inp = this.valueInp();
-          if (inp) inp.value = urls.join("\n");
-          const el = this.thumbsEl();
-          if (el) el.innerHTML = mlPicsThumbs(parseMlPictureUrls(urls.join("\n")));
-        },
-        addRow(url) {
-          const box = this.rows();
+          if (inp) inp.value = list.join("\n");
+          const box = this.tiles();
           if (!box) return;
-          const row = document.createElement("div");
-          row.className = "ml-pics-row";
-          row.innerHTML = `<input class="kt-input ml-pic-url" type="url" placeholder="https://" value="${esc(url || "")}">
-            <button type="button" class="kt-btn kt-btn-outline kt-btn-sm ml-pic-del">Remover</button>`;
-          row.querySelector(".ml-pic-url").oninput = () => this.sync();
-          row.querySelector(".ml-pic-del").onclick = () => { row.remove(); if (!box.querySelector(".ml-pics-row")) this.addRow(""); this.sync(); };
-          box.appendChild(row);
+          box.innerHTML = list.map(u => `<figure class="ml-pics-tile" data-url="${esc(u)}">
+            <img src="${esc(u)}" alt="">
+            <button type="button" class="ml-pic-del" aria-label="Remover">×</button>
+          </figure>`).join("");
+          box.querySelectorAll(".ml-pic-del").forEach(btn => {
+            btn.onclick = () => {
+              const url = btn.closest(".ml-pics-tile")?.dataset.url;
+              this.sync(this.urls().filter(u => u !== url));
+            };
+          });
         },
-        fill(raw) {
-          const box = this.rows();
-          if (!box) return;
-          box.innerHTML = "";
-          const urls = parseMlPictureUrls(raw);
-          (urls.length ? urls : [""]).forEach(u => this.addRow(u));
-          this.sync();
+        fill(raw) { this.sync(parseMlPictureUrls(raw)); },
+        async uploadFiles(files) {
+          const current = this.urls();
+          this.hint("");
+          for (const file of files) {
+            if (current.length >= 12) {
+              this.hint(adErr("PicturesLimit"));
+              break;
+            }
+            const fd = new FormData();
+            fd.append("file", file);
+            try {
+              const r = await api("/advertisements/pictures", { method: "POST", body: fd });
+              const url = r.url || r.Url;
+              if (url && !current.includes(url)) current.push(url);
+            } catch (ex) {
+              this.hint(adErr(ex.message));
+            }
+          }
+          this.sync(current);
+          const inp = this.fileInp();
+          if (inp) inp.value = "";
         },
         bind() {
-          const add = this.wrap()?.querySelector(".ml-pic-add");
-          if (add) add.onclick = () => { this.addRow(""); };
+          const inp = this.fileInp();
+          if (inp) inp.onchange = () => this.uploadFiles([...inp.files || []]);
           this.fill(this.valueInp()?.value || "");
         }
       };

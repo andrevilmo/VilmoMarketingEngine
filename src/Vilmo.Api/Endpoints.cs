@@ -16,6 +16,13 @@ public static class Endpoints
     {
         app.MapGet("/health", () => Results.Text("vilmo-api\n", "text/plain"));
 
+        app.MapGet("/media/pictures/{stem}.{ext}", (string stem, string ext, AdvertisementPictureStore pics) =>
+        {
+            if (!pics.TryResolve($"{stem}.{ext}", out var path, out var mime))
+                return Results.NotFound();
+            return Results.File(path, mime);
+        });
+
         app.MapPost("/auth/login", async (LoginBody body, AuthService auth, CancellationToken ct) =>
         {
             var (status, payload) = await auth.LoginAsync(body.Email ?? "", body.Password ?? "", ct);
@@ -453,6 +460,29 @@ public static class Endpoints
         }).RequireAuthorization();
 
         app.MapPost("/advertisements", Publish).RequireAuthorization();
+        app.MapPost("/advertisements/pictures", async (
+            HttpContext http, AppDbContext db, AdvertisementPictureStore pics, IConfiguration config, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            if (!http.Request.HasFormContentType)
+                return Results.BadRequest(new { error = "InvalidPictureFile" });
+            var form = await http.Request.ReadFormAsync(ct);
+            var file = form.Files["file"] ?? form.Files.FirstOrDefault();
+            if (file is null || file.Length == 0)
+                return Results.BadRequest(new { error = "PictureEmpty" });
+            try
+            {
+                await using var stream = file.OpenReadStream();
+                var saved = await pics.SaveAsync(stream, ct);
+                var url = AdvertisementPictureStore.PublicFileUrl(http, config, saved.FileName);
+                return Results.Ok(new { url, fileName = saved.FileName, contentType = saved.ContentType });
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+        }).RequireAuthorization();
         app.MapPost("/listings", Publish).RequireAuthorization();
         app.MapGet("/listings", async (HttpContext http, AppDbContext db, AdvertisementService ads, CancellationToken ct) =>
         {
