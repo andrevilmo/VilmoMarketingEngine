@@ -145,17 +145,29 @@ public sealed class AdvertisementService(AppDbContext db, ListingPublishLogServi
                 SortOrder = order++
             });
         }
+        var hasMlListingType = false;
         foreach (var attr in draft.Attributes)
         {
             if (string.IsNullOrWhiteSpace(attr.FieldName)) continue;
             var value = attr.FieldValue ?? "";
-            if (attr.MarketplaceCode.Equals("MercadoLivre", StringComparison.OrdinalIgnoreCase)
+            var isMl = attr.MarketplaceCode.Equals("MercadoLivre", StringComparison.OrdinalIgnoreCase);
+            if (isMl
                 && attr.FieldName.Equals("categoryId", StringComparison.OrdinalIgnoreCase)
                 && !string.IsNullOrWhiteSpace(value))
             {
                 if (!MercadoLivreCategoryId.TryNormalize(value, out var mlId))
                     throw new ArgumentException("InvalidCategoryId");
                 value = mlId;
+            }
+            if (isMl && attr.FieldName.Equals("listingTypeId", StringComparison.OrdinalIgnoreCase))
+            {
+                hasMlListingType = true;
+                if (string.IsNullOrWhiteSpace(value))
+                    value = MercadoLivreListingTypeId.Default;
+                else if (!MercadoLivreListingTypeId.TryNormalize(value, out var listingType))
+                    throw new ArgumentException("InvalidListingTypeId");
+                else
+                    value = listingType;
             }
             db.AdvertisementAttributes.Add(new AdvertisementAttribute
             {
@@ -164,6 +176,18 @@ public sealed class AdvertisementService(AppDbContext db, ListingPublishLogServi
                 MarketplaceCode = attr.MarketplaceCode,
                 FieldName = attr.FieldName.Trim(),
                 FieldValue = value
+            });
+        }
+        if (!hasMlListingType
+            && codes.Any(c => c.Equals("MercadoLivre", StringComparison.OrdinalIgnoreCase)))
+        {
+            db.AdvertisementAttributes.Add(new AdvertisementAttribute
+            {
+                Id = Guid.NewGuid(),
+                AdvertisementId = ad.Id,
+                MarketplaceCode = "MercadoLivre",
+                FieldName = "listingTypeId",
+                FieldValue = MercadoLivreListingTypeId.Default
             });
         }
 

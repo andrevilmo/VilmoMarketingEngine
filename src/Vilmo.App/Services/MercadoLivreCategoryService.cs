@@ -76,6 +76,65 @@ public sealed class MercadoLivreCategoryService(AppDbContext db, IHttpClientFact
         return result;
     }
 
+    /// <summary>Official MLB listing types. Used when GET /sites/MLB/listing_types is unavailable.</summary>
+    public static readonly IReadOnlyList<MlListingType> FallbackListingTypes =
+    [
+        new("gold_special", "Clássica"),
+        new("gold_pro", "Premium"),
+        new("free", "Gratuita"),
+        new("gold", "Ouro"),
+        new("silver", "Prata"),
+        new("bronze", "Bronze")
+    ];
+
+    public async Task<MlListingTypeList> ListListingTypesAsync(CancellationToken ct)
+    {
+        if (cache.TryGetValue("ml:listing-types", out MlListingTypeList? cached) && cached is not null)
+            return cached;
+        var live = await GetJsonAsync($"/sites/{Site}/listing_types", ct);
+        IReadOnlyList<MlListingType> items;
+        var source = "mercadolivre";
+        if (live is { ValueKind: JsonValueKind.Array } arr && arr.GetArrayLength() > 0)
+        {
+            items = arr.EnumerateArray()
+                .Select(ReadListingType)
+                .Where(x => x is not null)
+                .Cast<MlListingType>()
+                .GroupBy(x => x.Id, StringComparer.Ordinal)
+                .Select(g => g.First())
+                .OrderBy(RankListingType)
+                .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+        else
+        {
+            items = [];
+        }
+        if (items.Count == 0)
+        {
+            items = FallbackListingTypes;
+            source = "fallback";
+        }
+        var result = new MlListingTypeList(items, source);
+        cache.Set("ml:listing-types", result, CacheFor);
+        return result;
+    }
+
+    static MlListingType? ReadListingType(JsonElement x)
+    {
+        if (!MercadoLivreListingTypeId.TryNormalize(Str(x, "id"), out var id))
+            return null;
+        return new MlListingType(id, Str(x, "name") ?? id);
+    }
+
+    static int RankListingType(MlListingType t) => t.Id switch
+    {
+        "gold_special" => 0,
+        "gold_pro" => 1,
+        "free" => 2,
+        _ => 10
+    };
+
     public async Task<MlCategoryDetail?> GetAsync(string categoryId, CancellationToken ct)
     {
         var id = (categoryId ?? "").Trim();
@@ -356,6 +415,10 @@ public sealed record MlCategoryAttributeList(
     IReadOnlyList<MlCategoryAttribute> Items,
     IReadOnlyList<string> RecommendedIds,
     string Source);
+
+public sealed record MlListingType(string Id, string Name);
+
+public sealed record MlListingTypeList(IReadOnlyList<MlListingType> Items, string Source);
 
 public sealed record MlCategoryRef(string Id, string Name);
 

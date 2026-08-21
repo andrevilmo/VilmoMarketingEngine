@@ -195,6 +195,7 @@ const Vilmo = (() => {
       CategoryNotFound: "Categoria do Mercado Livre não encontrada.",
       CategorySuggestFailed: "Não foi possível sugerir a categoria no Mercado Livre.",
       InvalidCategoryId: "Categoria ML deve ser o código da opção (ex.: MLB5672), não o nome.",
+      InvalidListingTypeId: "Tipo de anúncio ML deve ser o código da opção (ex.: gold_special), não um nome livre.",
       CategoryAttributesFailed: "Não foi possível carregar os atributos obrigatórios da categoria ML.",
       MlAttributeRequired: "Preencha os atributos obrigatórios da categoria do Mercado Livre.",
       NoChannels: "Este anúncio não tem canais.",
@@ -202,6 +203,31 @@ const Vilmo = (() => {
       ListingNotFound: "Canal não encontrado neste anúncio."
     })[code] || code;
   }
+
+  const mlListingFallback = [
+    { id: "gold_special", name: "Clássica" },
+    { id: "gold_pro", name: "Premium" },
+    { id: "free", name: "Gratuita" },
+    { id: "gold", name: "Ouro" },
+    { id: "silver", name: "Prata" },
+    { id: "bronze", name: "Bronze" }
+  ];
+  const mlListingTypeCode = (raw) => {
+    const t = String(raw || "").trim();
+    const paren = t.match(/\(([a-z][a-z0-9]*(?:_[a-z0-9]+)*)\)\s*$/i);
+    const id = (paren ? paren[1] : t).toLowerCase();
+    if (!/^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/.test(id)) return "";
+    if (id.includes("_") || ["gold", "silver", "bronze", "free"].includes(id)) return id;
+    return "";
+  };
+  const mlListingTypeOptions = (items, selected) => {
+    const sel = mlListingTypeCode(selected) || "gold_special";
+    return (items || []).map(t => {
+      const id = t.id || t.Id;
+      const name = t.name || t.Name || id;
+      return `<option value="${esc(id)}"${id === sel ? " selected" : ""}>${esc(name)} (${esc(id)})</option>`;
+    }).join("");
+  };
 
   function stopIngestLogPoll() {
     if (ingestLogTimer) {
@@ -523,6 +549,13 @@ const Vilmo = (() => {
     const extraByMkt = fields.byMarketplace || {};
     const extraField = (m, d) => {
       const key = d.fieldKey || d.FieldKey;
+      if (m.code === "MercadoLivre" && key === "listingTypeId") {
+        const mark = (d.required || d.Required) ? " *" : "";
+        return `<label class="col-span-2">${esc(d.label)}${mark}
+          <select class="kt-select attr-field ml-listing-type" data-mkt="${esc(m.code)}" data-key="${esc(key)}">${mlListingTypeOptions(mlListingFallback, "gold_special")}</select>
+          <span class="text-xs text-muted-foreground">O Mercado Livre recebe o código da opção (gold_special), não um nome livre.</span>
+        </label>`;
+      }
       if (m.code === "MercadoLivre" && key === "categoryId") {
         return `<div class="ml-cat col-span-2">
           <div class="ml-cat-head">
@@ -1214,6 +1247,28 @@ const Vilmo = (() => {
           }
         }
       };
+      const mlListingType = {
+        sel() { return document.querySelector(".ml-listing-type"); },
+        fill(items, selected) {
+          const el = this.sel();
+          if (!el) return;
+          const list = (items && items.length) ? items : mlListingFallback;
+          const keep = mlListingTypeCode(selected != null ? selected : el.value) || "gold_special";
+          el.innerHTML = mlListingTypeOptions(list, keep);
+          el.value = keep;
+          if (el.value !== keep) el.value = "gold_special";
+        },
+        async load(selected) {
+          const el = this.sel();
+          if (!el) return;
+          try {
+            const r = await api("/marketplaces/MercadoLivre/listing-types");
+            this.fill(r.items || r.Items || [], selected);
+          } catch {
+            this.fill(mlListingFallback, selected);
+          }
+        }
+      };
       const syncExtras = () => {
         const selected = [...document.querySelectorAll(".mkt-code:checked")].map(c => c.value);
         document.querySelectorAll(".ad-extra").forEach(el => el.classList.toggle("on", selected.includes(el.dataset.extra)));
@@ -1222,6 +1277,7 @@ const Vilmo = (() => {
       document.querySelectorAll(".mkt-code").forEach(c => c.onchange = syncExtras);
       if ($(".ml-cat-predict")) $(".ml-cat-predict").onclick = () => mlCat.predict();
       syncExtras();
+      mlListingType.load();
       const fillFromAd = async (ad) => {
         const form = $("#ad-form");
         if (!form || !ad) return;
@@ -1254,6 +1310,9 @@ const Vilmo = (() => {
           const inp = document.querySelector(`.attr-field[data-mkt="${CSS.escape(x.marketplaceCode)}"][data-key="${CSS.escape(x.fieldName)}"]`);
           if (inp) inp.value = x.fieldValue || "";
         });
+        const savedListingType = (ad.attributes || []).find(x =>
+          x.marketplaceCode === "MercadoLivre" && x.fieldName === "listingTypeId")?.fieldValue;
+        await mlListingType.load(savedListingType);
         syncExtras();
         const mlSaved = {};
         (ad.attributes || []).forEach(x => {
@@ -1308,6 +1367,11 @@ const Vilmo = (() => {
           const cat = attributes.find(a => a.fieldName === "categoryId")?.fieldValue || "";
           if (cat && !/^MLB\d+$/i.test(cat)) {
             if (msg) msg.innerHTML = `<div class="kt-alert kt-alert-danger">${esc(adErr("InvalidCategoryId"))}</div>`;
+            return;
+          }
+          const listingType = attributes.find(a => a.fieldName === "listingTypeId")?.fieldValue || "";
+          if (!mlListingTypeCode(listingType)) {
+            if (msg) msg.innerHTML = `<div class="kt-alert kt-alert-danger">${esc(adErr("InvalidListingTypeId"))}</div>`;
             return;
           }
           if (mlCat.missingRequired()) {

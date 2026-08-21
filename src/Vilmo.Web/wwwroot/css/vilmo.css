@@ -76,6 +76,7 @@
 .ml-cat-hint { margin: 0; }
 .ml-cat-attrs { margin-top: .35rem; }
 .ml-cat-attrs:empty { display: none; }
+.ml-listing-type { width: 100%; }
 .ml-attr-req { color: #b45309; font-weight: 600; }
 .ad-kind { display: flex; gap: 1rem; }
 .ad-card-head, .ad-channel-head {

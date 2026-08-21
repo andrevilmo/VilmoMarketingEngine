@@ -101,7 +101,7 @@ public static class SeedData
         Field("*", "lengthCm", "Comprimento (cm)", "number", true, false, 12);
 
         Field("MercadoLivre", "categoryId", "Categoria ML", "string", false, true, 20);
-        Field("MercadoLivre", "listingTypeId", "Tipo de anúncio (gold_special, gold_pro)", "string", false, false, 21);
+        Field("MercadoLivre", "listingTypeId", "Tipo de anúncio ML", "string", false, true, 21);
         Field("MercadoLivre", "buyingMode", "Modo de compra (buy_it_now)", "string", false, false, 22);
         Field("MercadoLivre", "shippingMode", "Envio (me2 / not_specified)", "string", false, false, 23);
 

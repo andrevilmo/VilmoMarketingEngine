@@ -386,6 +386,13 @@ public static class Endpoints
             return Results.Ok(await cats.ListRootsAsync(ct));
         }).RequireAuthorization();
 
+        app.MapGet("/marketplaces/MercadoLivre/listing-types", async (HttpContext http, AppDbContext db, MercadoLivreCategoryService cats, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            return Results.Ok(await cats.ListListingTypesAsync(ct));
+        }).RequireAuthorization();
+
         app.MapGet("/marketplaces/MercadoLivre/categories/suggest", async (string? q, HttpContext http, AppDbContext db, MercadoLivreCategoryService cats, CancellationToken ct) =>
         {
             var ctxr = await Need(http, db, ct);

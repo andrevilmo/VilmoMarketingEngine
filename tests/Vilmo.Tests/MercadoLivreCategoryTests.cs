@@ -226,6 +226,63 @@ public class MercadoLivreCategoryTests : IClassFixture<ApiFactory>
         Assert.False(MercadoLivreCategoryId.TryNormalize("", out _));
     }
 
+    [Fact]
+    public async Task List_listing_types_returns_official_codes()
+    {
+        var (token, companyId) = await AdminAsync();
+        var res = await _client.SendAsync(Authed(HttpMethod.Get, "/marketplaces/MercadoLivre/listing-types", token, companyId));
+        res.EnsureSuccessStatusCode();
+        using var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync());
+        var items = doc.RootElement.GetProperty("items");
+        Assert.True(items.GetArrayLength() >= 3);
+        Assert.Contains(items.EnumerateArray(), x => x.GetProperty("id").GetString() == "gold_special");
+        Assert.Contains(items.EnumerateArray(), x => x.GetProperty("id").GetString() == "gold_pro");
+        Assert.Contains(items.EnumerateArray(), x => x.GetProperty("id").GetString() == "free");
+        Assert.DoesNotContain(items.EnumerateArray(), x => x.GetProperty("id").GetString()!.Contains(' '));
+    }
+
+    [Fact]
+    public async Task Service_uses_live_listing_types_when_http_ok_and_fallback_when_not()
+    {
+        var handler = new StubHandler();
+        handler.Impl = req =>
+        {
+            if (req.RequestUri!.AbsolutePath.EndsWith("/sites/MLB/listing_types", StringComparison.Ordinal))
+                return Json(200, """[{"site_id":"MLB","id":"gold_pro","name":"Premium"},{"site_id":"MLB","id":"gold_special","name":"Clássico"}]""");
+            return Json(404, "{}");
+        };
+        await using var db = Sqlite();
+        var svc = new MercadoLivreCategoryService(db, new StubFactory(handler), new MemoryCache(new MemoryCacheOptions()));
+        var live = await svc.ListListingTypesAsync(default);
+        Assert.Equal("mercadolivre", live.Source);
+        Assert.Equal("gold_special", live.Items[0].Id);
+        Assert.Contains(live.Items, x => x.Id == "gold_pro");
+
+        handler.Impl = _ => Json(403, """{"message":"blocked"}""");
+        var svc2 = new MercadoLivreCategoryService(db, new StubFactory(handler), new MemoryCache(new MemoryCacheOptions()));
+        var fb = await svc2.ListListingTypesAsync(default);
+        Assert.Equal("fallback", fb.Source);
+        Assert.Contains(fb.Items, x => x.Id == "gold_special");
+        Assert.Contains(fb.Items, x => x.Id == "free");
+    }
+
+    [Fact]
+    public void Normalize_listing_type_rejects_names()
+    {
+        Assert.True(MercadoLivreListingTypeId.TryNormalize("gold_special", out var a));
+        Assert.Equal("gold_special", a);
+        Assert.True(MercadoLivreListingTypeId.TryNormalize("GOLD_PRO", out var b));
+        Assert.Equal("gold_pro", b);
+        Assert.True(MercadoLivreListingTypeId.TryNormalize("Premium (gold_pro)", out var c));
+        Assert.Equal("gold_pro", c);
+        Assert.True(MercadoLivreListingTypeId.TryNormalize("free", out var d));
+        Assert.Equal("free", d);
+        Assert.False(MercadoLivreListingTypeId.TryNormalize("CAMISA TESTE", out _));
+        Assert.False(MercadoLivreListingTypeId.TryNormalize("Clássica", out _));
+        Assert.False(MercadoLivreListingTypeId.TryNormalize("camisa", out _));
+        Assert.False(MercadoLivreListingTypeId.TryNormalize("", out _));
+    }
+
     static AppDbContext Sqlite()
     {
         var opts = new DbContextOptionsBuilder<AppDbContext>()

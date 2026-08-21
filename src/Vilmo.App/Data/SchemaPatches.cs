@@ -126,6 +126,12 @@ public static class SchemaPatches
             );
             """, ct);
         await db.Database.ExecuteSqlRawAsync("""
+            UPDATE marketplace_listing_field_definition
+              SET required = true,
+                  label = 'Tipo de anúncio ML'
+              WHERE marketplace_code = 'MercadoLivre' AND field_key = 'listingTypeId';
+            """, ct);
+        await db.Database.ExecuteSqlRawAsync("""
             ALTER TABLE listing ADD COLUMN IF NOT EXISTS advertisement_id uuid NULL;
             """, ct);
         await db.Database.ExecuteSqlRawAsync("""
