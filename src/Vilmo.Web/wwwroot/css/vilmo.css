@@ -71,6 +71,9 @@
 .ad-item-row .qty { max-width: 110px; }
 .ad-extra { display: none; margin-top: .75rem; padding-top: .75rem; border-top: 1px dashed #e5e7eb; }
 .ad-extra.on { display: block; }
+.ml-cat { display: grid; gap: .45rem; }
+.ml-cat-head { display: flex; justify-content: space-between; gap: .5rem; align-items: center; flex-wrap: wrap; font-size: .875rem; font-weight: 500; }
+.ml-cat-hint { margin: 0; }
 .ad-kind { display: flex; gap: 1rem; }
 .ad-card-head, .ad-channel-head {
   display: flex; justify-content: space-between; gap: .75rem; align-items: flex-start; flex-wrap: wrap;

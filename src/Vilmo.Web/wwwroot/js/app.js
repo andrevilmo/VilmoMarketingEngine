@@ -191,6 +191,9 @@ const Vilmo = (() => {
       FamilyNameRequired: "Informe o nome da família do anúncio.",
       FamilyNameTooLong: "Nome da família deve ter no máximo 60 caracteres.",
       TitleRequired: "Informe o título do anúncio.",
+      QueryRequired: "Preencha o título ou o nome da família para sugerir a categoria.",
+      CategoryNotFound: "Categoria do Mercado Livre não encontrada.",
+      CategorySuggestFailed: "Não foi possível sugerir a categoria no Mercado Livre.",
       NoChannels: "Este anúncio não tem canais.",
       AdvertisementNotFound: "Anúncio não encontrado.",
       ListingNotFound: "Canal não encontrado neste anúncio."
@@ -515,10 +518,24 @@ const Vilmo = (() => {
     }
     const productOpts = (products || []).map(p => `<option value="${esc(p.sku)}">${esc(p.sku)} · ${esc(p.name)}</option>`).join("");
     const extraByMkt = fields.byMarketplace || {};
+    const extraField = (m, d) => {
+      if (m.code === "MercadoLivre" && d.fieldKey === "categoryId") {
+        return `<div class="ml-cat col-span-2">
+          <div class="ml-cat-head">
+            <span>${esc(d.label)}</span>
+            <button type="button" class="kt-btn kt-btn-outline kt-btn-sm ml-cat-predict">Sugerir pela descrição/título</button>
+          </div>
+          <div class="ml-cat-levels vilmo-grid cols-2"></div>
+          <input type="hidden" class="attr-field ml-cat-value" data-mkt="${esc(m.code)}" data-key="${esc(d.fieldKey)}">
+          <p class="ml-cat-hint text-xs text-muted-foreground"></p>
+        </div>`;
+      }
+      return `<label>${esc(d.label)}<input class="kt-input attr-field" data-mkt="${esc(m.code)}" data-key="${esc(d.fieldKey)}"></label>`;
+    };
     const extras = (markets || []).map(m => {
       const defs = extraByMkt[m.code] || extraByMkt[m.Code] || [];
       if (!defs.length) return "";
-      const inputs = defs.map(d => `<label>${esc(d.label)}<input class="kt-input attr-field" data-mkt="${esc(m.code)}" data-key="${esc(d.fieldKey)}"></label>`).join("");
+      const inputs = defs.map(d => extraField(m, d)).join("");
       return `<div class="ad-extra" data-extra="${esc(m.code)}"><h4 class="text-sm font-medium mb-2">${esc(m.displayName || m.code)}</h4><div class="vilmo-grid cols-2">${inputs}</div></div>`;
     }).join("");
     const checks = (markets || []).map(m => `<label class="text-sm"><input type="checkbox" class="mkt-code" value="${esc(m.code)}" checked> ${esc(m.displayName || m.code)}</label>`).join("");
@@ -589,6 +606,11 @@ const Vilmo = (() => {
           <label class="text-sm"><input type="radio" name="kind" value="Product" checked> Um produto</label>
           <label class="text-sm"><input type="radio" name="kind" value="Kit"> Conjunto / kit</label>
         </div>
+        <div class="col-span-2">
+          <div class="font-medium text-sm mb-2">Marketplaces</div>
+          <div class="flex flex-wrap gap-3">${checks}</div>
+          ${extras}
+        </div>
         ${vendorSel}
         <label>Título<input class="kt-input" name="title" required maxlength="180"></label>
         <label>Nome da família (Mercado Livre, obrigatório)<input class="kt-input" name="familyName" required maxlength="60" placeholder="Ex.: Calça jeans feminina"></label>
@@ -608,11 +630,6 @@ const Vilmo = (() => {
           <div id="ad-items" class="ad-items"></div>
           <template id="ad-item-options">${productOpts}</template>
           <button class="kt-btn kt-btn-outline kt-btn-sm" type="button" id="ad-add-item">Adicionar item</button>
-        </div>
-        <div class="col-span-2">
-          <div class="font-medium text-sm mb-2">Marketplaces</div>
-          <div class="flex flex-wrap gap-3">${checks}</div>
-          ${extras}
         </div>
         <div class="col-span-2"><button class="kt-btn kt-btn-primary" type="submit">Salvar anúncio</button></div>
         <div id="ad-msg" class="col-span-2"></div>
@@ -849,11 +866,142 @@ const Vilmo = (() => {
       };
       $("#ad-form").querySelectorAll("input[name=kind]").forEach(r => r.onchange = syncKind);
       syncKind();
+      const mlCat = {
+        roots: null,
+        async rootsList() {
+          if (this.roots) return this.roots;
+          const r = await api("/marketplaces/MercadoLivre/categories");
+          this.roots = r.items || [];
+          return this.roots;
+        },
+        wrap() { return document.querySelector(".ml-cat"); },
+        valueInp() { return document.querySelector(".ml-cat-value"); },
+        levels() { return document.querySelector(".ml-cat-levels"); },
+        hint(text) {
+          const el = document.querySelector(".ml-cat-hint");
+          if (el) el.textContent = text || "";
+        },
+        optionHtml(list, selected) {
+          const opts = [`<option value="">Selecionar…</option>`]
+            .concat((list || []).map(c => `<option value="${esc(c.id)}" ${c.id === selected ? "selected" : ""}>${esc(c.name)} (${esc(c.id)})</option>`));
+          if (selected && !(list || []).some(c => c.id === selected))
+            opts.push(`<option value="${esc(selected)}" selected>${esc(selected)}</option>`);
+          return opts.join("");
+        },
+        selectHtml(list, selected, depth) {
+          return `<label>Nível ${depth + 1}<select class="kt-select ml-cat-select" data-depth="${depth}">${this.optionHtml(list, selected)}</select></label>`;
+        },
+        async setValue(id, meta) {
+          const inp = this.valueInp();
+          if (inp) inp.value = id || "";
+          if (!id) {
+            this.hint("");
+            return;
+          }
+          const name = meta && meta.name ? meta.name : id;
+          const extra = meta && meta.leaf === false
+            ? " Há subcategorias — escolha uma mais específica para publicar."
+            : "";
+          this.hint(`${name} · ${id}${extra}`);
+        },
+        bindSelects() {
+          this.levels()?.querySelectorAll(".ml-cat-select").forEach(sel => {
+            sel.onchange = () => this.onChange(sel);
+          });
+        },
+        async onChange(sel) {
+          const depth = Number(sel.dataset.depth || 0);
+          const id = sel.value;
+          const box = this.levels();
+          if (box) [...box.querySelectorAll("label")].forEach((lab, i) => { if (i > depth) lab.remove(); });
+          if (!id) {
+            await this.setValue("");
+            return;
+          }
+          try {
+            const detail = await api(`/marketplaces/MercadoLivre/categories/${encodeURIComponent(id)}`);
+            await this.setValue(detail.id, detail);
+            if (detail.children && detail.children.length) {
+              box.insertAdjacentHTML("beforeend", this.selectHtml(detail.children, "", depth + 1));
+              this.bindSelects();
+            }
+          } catch {
+            await this.setValue(id, { name: id, leaf: true });
+          }
+        },
+        async showRoots(selected) {
+          const box = this.levels();
+          if (!box) return;
+          const roots = await this.rootsList();
+          box.innerHTML = this.selectHtml(roots, selected || "", 0);
+          this.bindSelects();
+          if (!selected) await this.setValue("");
+        },
+        async apply(id) {
+          const box = this.levels();
+          if (!box) return;
+          if (!id) {
+            await this.showRoots();
+            return;
+          }
+          try {
+            const detail = await api(`/marketplaces/MercadoLivre/categories/${encodeURIComponent(id)}`);
+            const path = (detail.pathFromRoot && detail.pathFromRoot.length) ? detail.pathFromRoot : [{ id: detail.id, name: detail.name }];
+            const roots = await this.rootsList();
+            let html = this.selectHtml(roots, path[0].id, 0);
+            for (let i = 0; i < path.length; i++) {
+              const node = i === path.length - 1 ? detail : await api(`/marketplaces/MercadoLivre/categories/${encodeURIComponent(path[i].id)}`);
+              const kids = node.children || [];
+              const nextId = path[i + 1] ? path[i + 1].id : "";
+              if (kids.length)
+                html += this.selectHtml(kids, nextId, i + 1);
+            }
+            box.innerHTML = html;
+            this.bindSelects();
+            await this.setValue(detail.id, detail);
+          } catch {
+            const roots = await this.rootsList();
+            box.innerHTML = this.selectHtml(roots, id, 0);
+            this.bindSelects();
+            await this.setValue(id, { name: id, leaf: true });
+          }
+        },
+        async ensure() {
+          const on = document.querySelector(".mkt-code[value='MercadoLivre']")?.checked;
+          const wrap = this.wrap();
+          if (!wrap || !on) return;
+          const box = this.levels();
+          if (box && !box.querySelector(".ml-cat-select")) await this.showRoots(this.valueInp()?.value);
+        },
+        async predict() {
+          const form = document.getElementById("ad-form");
+          const q = [form?.familyName?.value, form?.title?.value, form?.brand?.value, form?.description?.value]
+            .map(v => String(v || "").trim()).filter(Boolean).join(" ");
+          if (q.length < 2) {
+            this.hint(adErr("QueryRequired"));
+            return;
+          }
+          this.hint("Consultando Mercado Livre…");
+          try {
+            const r = await api(`/marketplaces/MercadoLivre/categories/suggest?q=${encodeURIComponent(q)}`);
+            const first = (r.items || [])[0];
+            if (!first || !first.categoryId) {
+              this.hint("Nenhuma categoria sugerida. Escolha na lista.");
+              return;
+            }
+            await this.apply(first.categoryId);
+          } catch (ex) {
+            this.hint(adErr(ex.message));
+          }
+        }
+      };
       const syncExtras = () => {
         const selected = [...document.querySelectorAll(".mkt-code:checked")].map(c => c.value);
         document.querySelectorAll(".ad-extra").forEach(el => el.classList.toggle("on", selected.includes(el.dataset.extra)));
+        if (selected.includes("MercadoLivre")) mlCat.ensure();
       };
       document.querySelectorAll(".mkt-code").forEach(c => c.onchange = syncExtras);
+      if ($(".ml-cat-predict")) $(".ml-cat-predict").onclick = () => mlCat.predict();
       syncExtras();
       const fillFromAd = (ad) => {
         const form = $("#ad-form");
@@ -888,6 +1036,9 @@ const Vilmo = (() => {
           if (inp) inp.value = x.fieldValue || "";
         });
         syncExtras();
+        const mlId = (ad.attributes || []).find(x => x.marketplaceCode === "MercadoLivre" && x.fieldName === "categoryId")?.fieldValue;
+        if (mlId) mlCat.apply(mlId);
+        else if (document.querySelector(".mkt-code[value='MercadoLivre']")?.checked) mlCat.showRoots();
         const msg = $("#ad-msg");
         if (msg) msg.innerHTML = `<div class="kt-alert kt-alert-success">Formulário preenchido a partir de ${esc(ad.sku)}. Confira o SKU novo e salve.</div>`;
         form.scrollIntoView({ behavior: "smooth", block: "start" });
