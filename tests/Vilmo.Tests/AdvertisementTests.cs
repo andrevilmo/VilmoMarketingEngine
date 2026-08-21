@@ -281,8 +281,10 @@ public class AdvertisementApiTests : IClassFixture<ApiFactory>
         Assert.Contains("callbackResponse", callbackTech);
         Assert.Contains("\"request\"", callbackTech);
         Assert.Contains("\"response\"", callbackTech);
-        Assert.Contains("family_name", callbackTech);
-        Assert.Contains("Camiseta canal teste", callbackTech);
+        using var techDoc = JsonDocument.Parse(callbackTech);
+        var reqBody = techDoc.RootElement.GetProperty("request").GetProperty("body");
+        Assert.Equal("Camiseta canal teste", reqBody.GetProperty("family_name").GetString());
+        Assert.False(reqBody.TryGetProperty("title", out _));
 
         var shopeeDraft = live.RootElement.GetProperty("advertisement").GetProperty("channels").EnumerateArray()
             .First(c => c.GetProperty("marketplaceCode").GetString() == "Shopee");
