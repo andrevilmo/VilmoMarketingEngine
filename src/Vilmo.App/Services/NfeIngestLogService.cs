@@ -14,6 +14,7 @@ public static class NfeIngestLogSteps
     public const string WorkerStarted = "worker_started";
     public const string XmlReceived = "xml_received";
     public const string InvalidXml = "invalid_xml";
+    public const string ThirdPartyXml = "third_party_xml";
     public const string XmlParsed = "xml_parsed";
     public const string StockApplied = "stock_applied";
     public const string WaitingDistDFe = "waiting_distdfe";

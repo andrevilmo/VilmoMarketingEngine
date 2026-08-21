@@ -60,6 +60,13 @@ public class DomainTests
         var m = CfopPolicy.Classify("5102", "68431371000161", "11222333000181", "68431371000161");
         Assert.Equal(CfopMovement.OutboundSaleAlreadyStockedAtPaid, m);
     }
+
+    [Fact]
+    public void Cfop_third_party_xml_loads_stock()
+    {
+        var m = CfopPolicy.Classify("5102", "11222333000181", "00000000000191", "68431371000161");
+        Assert.Equal(CfopMovement.InboundPurchaseOrReturn, m);
+    }
 }
 
 public class XmlParseTests
@@ -79,7 +86,7 @@ public class XmlParseTests
         Assert.Equal(2, parsed.Items[0].Qty);
     }
 
-    public static string SampleXml(string chave, string emit, string dest) =>
+    public static string SampleXml(string chave, string emit, string dest, string cfop = "1102", string cProd = "CAMISETA-XML") =>
         $"""
         <nfeProc xmlns="http://www.portalfiscal.inf.br/nfe">
           <NFe>
@@ -88,11 +95,11 @@ public class XmlParseTests
               <dest><CNPJ>{dest}</CNPJ></dest>
               <det nItem="1">
                 <prod>
-                  <cProd>CAMISETA-XML</cProd>
+                  <cProd>{cProd}</cProd>
                   <cEAN>SEM GTIN</cEAN>
                   <xProd>Camiseta XML</xProd>
                   <NCM>61091000</NCM>
-                  <CFOP>1102</CFOP>
+                  <CFOP>{cfop}</CFOP>
                   <qCom>2.0000</qCom>
                   <vUnCom>40.00</vUnCom>
                 </prod>
@@ -237,6 +244,78 @@ public class ApiTests : IClassFixture<ApiFactory>
         Assert.Contains("itemCount", first.GetProperty("technicalJson").GetString());
         var times = items.EnumerateArray().Select(x => x.GetProperty("createdAt").GetDateTimeOffset()).ToList();
         Assert.True(times.SequenceEqual(times.OrderByDescending(t => t)));
+    }
+
+    [Fact]
+    public async Task Ingest_xml_from_any_cnpj_increases_stock()
+    {
+        var token = await LoginAsync();
+        var me = await _client.SendAsync(Authed(HttpMethod.Get, "/me", token));
+        using var meDoc = JsonDocument.Parse(await me.Content.ReadAsStringAsync());
+        var companyId = meDoc.RootElement.GetProperty("memberships")[0].GetProperty("companyId").GetGuid();
+        var first43 = "4226081122233300018155500100000000312345678";
+        var chave = first43 + ChaveAcesso.Dv(first43);
+        var xml = XmlParseTests.SampleXml(chave, "11222333000181", "00000000000191", "5102", "CAMISETA-3P");
+        var req = Authed(HttpMethod.Post, "/nfe/xml", token);
+        req.Headers.Add("X-Company-Id", companyId.ToString());
+        req.Content = new StringContent(xml, Encoding.UTF8, "application/xml");
+        var res = await _client.SendAsync(req);
+        res.EnsureSuccessStatusCode();
+        var ingestBody = await res.Content.ReadAsStringAsync();
+        using var ingestXml = JsonDocument.Parse(ingestBody);
+        Assert.Equal("Applied", ingestXml.RootElement.GetProperty("status").GetString());
+        Assert.False(ingestXml.RootElement.TryGetProperty("error", out var err) && err.GetString() == "CnpjMismatch");
+        var xmlRunId = ingestXml.RootElement.GetProperty("runId").GetGuid();
+
+        var invReq = Authed(HttpMethod.Get, "/inventory", token);
+        invReq.Headers.Add("X-Company-Id", companyId.ToString());
+        var inv = await _client.SendAsync(invReq);
+        var body = await inv.Content.ReadAsStringAsync();
+        Assert.Contains("CAMISETA-3P", body);
+        Assert.Contains("\"onHand\":2", body.Replace(" ", ""));
+
+        var logsReq = Authed(HttpMethod.Get, $"/nfe/ingest-logs?runId={xmlRunId}", token);
+        logsReq.Headers.Add("X-Company-Id", companyId.ToString());
+        var logsRes = await _client.SendAsync(logsReq);
+        logsRes.EnsureSuccessStatusCode();
+        using var logsDoc = JsonDocument.Parse(await logsRes.Content.ReadAsStringAsync());
+        var items = logsDoc.RootElement.GetProperty("items");
+        var codes = items.EnumerateArray().Select(x => x.GetProperty("stepCode").GetString()).ToList();
+        Assert.Contains("stock_applied", codes);
+        Assert.Contains("third_party_xml", codes);
+        Assert.DoesNotContain("cnpj_mismatch", codes);
+        var applied = items.EnumerateArray().First(x => x.GetProperty("stepCode").GetString() == "stock_applied");
+        Assert.Contains("CAMISETA-3P", applied.GetProperty("technicalJson").GetString());
+        Assert.Contains("inboundCount", applied.GetProperty("technicalJson").GetString());
+    }
+
+    [Fact]
+    public async Task Ingest_xml_own_sale_does_not_increase_stock()
+    {
+        var token = await LoginAsync();
+        var me = await _client.SendAsync(Authed(HttpMethod.Get, "/me", token));
+        using var meDoc = JsonDocument.Parse(await me.Content.ReadAsStringAsync());
+        var companyId = meDoc.RootElement.GetProperty("memberships")[0].GetProperty("companyId").GetGuid();
+        var first43 = "4226086843137100016155500100000000412345678";
+        var chave = first43 + ChaveAcesso.Dv(first43);
+        var xml = XmlParseTests.SampleXml(chave, "68431371000161", "11222333000181", "5102", "CAMISETA-SALE");
+        var req = Authed(HttpMethod.Post, "/nfe/xml", token);
+        req.Headers.Add("X-Company-Id", companyId.ToString());
+        req.Content = new StringContent(xml, Encoding.UTF8, "application/xml");
+        var res = await _client.SendAsync(req);
+        res.EnsureSuccessStatusCode();
+        using var ingestXml = JsonDocument.Parse(await res.Content.ReadAsStringAsync());
+        Assert.Equal("Applied", ingestXml.RootElement.GetProperty("status").GetString());
+
+        var invReq = Authed(HttpMethod.Get, "/inventory", token);
+        invReq.Headers.Add("X-Company-Id", companyId.ToString());
+        var inv = await _client.SendAsync(invReq);
+        var body = await inv.Content.ReadAsStringAsync();
+        Assert.Contains("CAMISETA-SALE", body);
+        Assert.DoesNotContain("\"sku\":\"CAMISETA-SALE\",\"name\":\"Camiseta XML\",\"ean\":\"SEM GTIN\",\"ncm\":\"61091000\",\"salePrice\":40.00,\"onHand\":2", body.Replace(" ", ""));
+        using var invDoc = JsonDocument.Parse(body);
+        var saleRow = invDoc.RootElement.EnumerateArray().First(x => x.GetProperty("sku").GetString() == "CAMISETA-SALE");
+        Assert.Equal(0, saleRow.GetProperty("onHand").GetDecimal());
     }
 
     [Fact]

@@ -333,7 +333,7 @@ const Vilmo = (() => {
           <div id="nfe-msg"></div>
         </form>
         <form id="xml-form" class="vilmo-card flex flex-col gap-3">
-          <label>XML da NF-e (fallback)<input class="kt-input" type="file" name="file" accept=".xml"></label>
+          <label>XML da NF-e (qualquer CNPJ — carrega produtos no estoque)<input class="kt-input" type="file" name="file" accept=".xml"></label>
           <button class="kt-btn kt-btn-outline" type="submit">Enviar XML</button>
           <div id="xml-msg"></div>
         </form>
