@@ -126,9 +126,40 @@ public sealed class MercadoLivreCategoryService(AppDbContext db, IHttpClientFact
             Str(x, "category_id") ?? "",
             Str(x, "category_name") ?? "",
             Str(x, "domain_id"),
-            Str(x, "domain_name")
+            Str(x, "domain_name"),
+            ReadSuggestedAttributes(x)
         )).Where(x => !string.IsNullOrWhiteSpace(x.CategoryId)).ToList();
         return new MlCategorySuggest(items, query);
+    }
+
+    public async Task<MlCategoryAttributeList> ListAttributesAsync(string categoryId, CancellationToken ct)
+    {
+        if (!MercadoLivreCategoryId.TryNormalize(categoryId, out var id))
+            throw new ArgumentException("InvalidCategoryId");
+        var key = $"ml:cats:{id}:attrs";
+        if (cache.TryGetValue(key, out MlCategoryAttributeList? cached) && cached is not null)
+            return cached;
+        var json = await GetJsonAsync($"/categories/{Uri.EscapeDataString(id)}/attributes", ct);
+        if (json is null || json.Value.ValueKind != JsonValueKind.Array)
+            throw new InvalidOperationException("CategoryAttributesFailed");
+        var items = json.Value.EnumerateArray()
+            .Select(ReadAttribute)
+            .Where(x => x is not null)
+            .Cast<MlCategoryAttribute>()
+            .ToList();
+        var recommended = await ReadRecommendedIdsAsync(id, ct);
+        foreach (var rec in recommended)
+        {
+            var match = items.FirstOrDefault(x => x.Id.Equals(rec, StringComparison.OrdinalIgnoreCase));
+            if (match is not null && !match.Required)
+            {
+                var idx = items.IndexOf(match);
+                items[idx] = match with { Recommended = true };
+            }
+        }
+        var result = new MlCategoryAttributeList(id, items, recommended, "mercadolivre");
+        cache.Set(key, result, CacheFor);
+        return result;
     }
 
     async Task<string> BaseUrlAsync(CancellationToken ct)
@@ -176,13 +207,155 @@ public sealed class MercadoLivreCategoryService(AppDbContext db, IHttpClientFact
 
     static string? Str(JsonElement x, string name) =>
         x.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.String ? el.GetString() : null;
+
+    static MlCategoryAttribute? ReadAttribute(JsonElement x)
+    {
+        var id = Str(x, "id");
+        if (string.IsNullOrWhiteSpace(id)) return null;
+        var required = HasTag(x, "required") || HasTag(x, "new_required");
+        var hidden = HasTag(x, "hidden");
+        if (hidden && !required) return null;
+        var values = ReadAttributeValues(x);
+        return new MlCategoryAttribute(
+            id,
+            Str(x, "name") ?? id,
+            Str(x, "value_type") ?? "string",
+            Int(x, "value_max_length"),
+            required,
+            HasTag(x, "catalog_required"),
+            HasTag(x, "new_required"),
+            HasTag(x, "allow_variations"),
+            hidden,
+            Recommended: false,
+            values);
+    }
+
+    static List<MlAttributeValue> ReadAttributeValues(JsonElement x)
+    {
+        if (!x.TryGetProperty("values", out var arr) || arr.ValueKind != JsonValueKind.Array)
+            return [];
+        var list = new List<MlAttributeValue>();
+        foreach (var v in arr.EnumerateArray())
+        {
+            var vid = Str(v, "id");
+            var name = Str(v, "name") ?? vid ?? "";
+            if (MercadoLivreItemAttributes.IsNotApplicable(vid, name)) continue;
+            if (string.IsNullOrWhiteSpace(vid) && string.IsNullOrWhiteSpace(name)) continue;
+            list.Add(new MlAttributeValue(vid ?? "", name));
+            if (list.Count >= 120) break;
+        }
+        return list;
+    }
+
+    static List<MlSuggestedAttribute> ReadSuggestedAttributes(JsonElement x)
+    {
+        if (!x.TryGetProperty("attributes", out var arr) || arr.ValueKind != JsonValueKind.Array)
+            return [];
+        var list = new List<MlSuggestedAttribute>();
+        foreach (var v in arr.EnumerateArray())
+        {
+            var id = Str(v, "id");
+            if (string.IsNullOrWhiteSpace(id)) continue;
+            var valueId = Str(v, "value_id");
+            var valueName = Str(v, "value_name");
+            if (MercadoLivreItemAttributes.IsNotApplicable(valueId, valueName)) continue;
+            list.Add(new MlSuggestedAttribute(id, valueId, valueName));
+        }
+        return list;
+    }
+
+    async Task<IReadOnlyList<string>> ReadRecommendedIdsAsync(string categoryId, CancellationToken ct)
+    {
+        var json = await GetJsonAsync($"/categories/{Uri.EscapeDataString(categoryId)}/technical_specs/input", ct);
+        if (json is null) return [];
+        var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        CollectRecommendedIds(json.Value, ids);
+        return ids.ToList();
+    }
+
+    static void CollectRecommendedIds(JsonElement el, HashSet<string> ids)
+    {
+        if (el.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var child in el.EnumerateArray()) CollectRecommendedIds(child, ids);
+            return;
+        }
+        if (el.ValueKind != JsonValueKind.Object) return;
+        var id = Str(el, "id");
+        if (!string.IsNullOrWhiteSpace(id) && (HasTag(el, "required") || HasTag(el, "catalog_required")))
+            ids.Add(id);
+        foreach (var prop in el.EnumerateObject())
+        {
+            if (prop.Value.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
+                CollectRecommendedIds(prop.Value, ids);
+        }
+    }
+
+    static bool HasTag(JsonElement el, string name)
+    {
+        if (!el.TryGetProperty("tags", out var tags)) return false;
+        if (tags.ValueKind == JsonValueKind.Object)
+        {
+            if (!tags.TryGetProperty(name, out var v)) return false;
+            return v.ValueKind switch
+            {
+                JsonValueKind.True => true,
+                JsonValueKind.String => string.Equals(v.GetString(), "true", StringComparison.OrdinalIgnoreCase),
+                _ => false
+            };
+        }
+        if (tags.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var t in tags.EnumerateArray())
+            {
+                if (t.ValueKind == JsonValueKind.String && t.GetString()!.Equals(name, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    static int? Int(JsonElement x, string name)
+    {
+        if (!x.TryGetProperty(name, out var el)) return null;
+        if (el.ValueKind == JsonValueKind.Number && el.TryGetInt32(out var n)) return n;
+        return int.TryParse(el.GetString(), out var p) ? p : null;
+    }
 }
 
 public sealed record MlCategoryList(IReadOnlyList<MlCategoryRef> Items, string Source);
 
-public sealed record MlCategorySuggestion(string CategoryId, string CategoryName, string? DomainId, string? DomainName);
+public sealed record MlCategorySuggestion(
+    string CategoryId,
+    string CategoryName,
+    string? DomainId,
+    string? DomainName,
+    IReadOnlyList<MlSuggestedAttribute> Attributes);
+
+public sealed record MlSuggestedAttribute(string Id, string? ValueId, string? ValueName);
 
 public sealed record MlCategorySuggest(IReadOnlyList<MlCategorySuggestion> Items, string Query);
+
+public sealed record MlAttributeValue(string Id, string Name);
+
+public sealed record MlCategoryAttribute(
+    string Id,
+    string Name,
+    string ValueType,
+    int? ValueMaxLength,
+    bool Required,
+    bool CatalogRequired,
+    bool NewRequired,
+    bool AllowVariations,
+    bool Hidden,
+    bool Recommended,
+    IReadOnlyList<MlAttributeValue> Values);
+
+public sealed record MlCategoryAttributeList(
+    string CategoryId,
+    IReadOnlyList<MlCategoryAttribute> Items,
+    IReadOnlyList<string> RecommendedIds,
+    string Source);
 
 public sealed record MlCategoryRef(string Id, string Name);
 

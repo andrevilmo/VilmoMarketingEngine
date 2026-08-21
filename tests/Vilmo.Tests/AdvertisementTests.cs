@@ -413,6 +413,54 @@ public class AdvertisementApiTests : IClassFixture<ApiFactory>
         Assert.Equal("MLB5672", reqBody.GetProperty("category_id").GetString());
         Assert.NotEqual("Vestuário", reqBody.GetProperty("category_id").GetString());
     }
+
+    [Fact]
+    public async Task MercadoLivre_publish_sends_attributes_array()
+    {
+        var (token, companyId) = await AdminAsync();
+        var sku = $"AD-ATTR-{Guid.NewGuid():N}"[..16].ToUpperInvariant();
+        var pub = await _client.SendAsync(Authed(HttpMethod.Post, "/advertisements", token, new
+        {
+            kind = "Product",
+            sku,
+            title = "Atributos ML",
+            familyName = "Atributos ML",
+            brand = "Acme",
+            price = 29.90m,
+            availableQuantity = 2,
+            marketplaceCodes = new[] { "MercadoLivre" },
+            items = new[] { new { sku = "CAMISETA-001", quantity = 1m } },
+            attributes = new[]
+            {
+                new { marketplaceCode = "MercadoLivre", fieldName = "categoryId", fieldValue = "MLB188065" },
+                new { marketplaceCode = "MercadoLivre", fieldName = "ml:BRAND", fieldValue = """{"value_name":"Acme"}""" },
+                new { marketplaceCode = "MercadoLivre", fieldName = "ml:GENDER", fieldValue = """{"value_id":"339665","value_name":"Feminino"}""" },
+                new { marketplaceCode = "MercadoLivre", fieldName = "ml:COLOR", fieldValue = """{"value_id":"-1","value_name":"N/A"}""" }
+            }
+        }, companyId));
+        Assert.Equal(HttpStatusCode.Created, pub.StatusCode);
+        using var created = JsonDocument.Parse(await pub.Content.ReadAsStringAsync());
+        var id = created.RootElement.GetProperty("advertisement").GetProperty("id").GetGuid();
+
+        var proceed = await _client.SendAsync(Authed(HttpMethod.Post,
+            $"/advertisements/{id}/channels/MercadoLivre/publish", token, new { }, companyId));
+        proceed.EnsureSuccessStatusCode();
+        using var live = JsonDocument.Parse(await proceed.Content.ReadAsStringAsync());
+        var ml = live.RootElement.GetProperty("advertisement").GetProperty("channels").EnumerateArray()
+            .First(c => c.GetProperty("marketplaceCode").GetString() == "MercadoLivre");
+        var callback = ml.GetProperty("publishLog").EnumerateArray()
+            .First(x => x.GetProperty("stepCode").GetString() == "callback");
+        using var techDoc = JsonDocument.Parse(callback.GetProperty("technicalJson").GetString()!);
+        var reqBody = techDoc.RootElement.GetProperty("request").GetProperty("body");
+        Assert.Equal("MLB188065", reqBody.GetProperty("category_id").GetString());
+        var attrs = reqBody.GetProperty("attributes");
+        Assert.True(attrs.GetArrayLength() >= 2);
+        Assert.Contains(attrs.EnumerateArray(), x => x.GetProperty("id").GetString() == "BRAND"
+            && x.GetProperty("value_name").GetString() == "Acme");
+        Assert.Contains(attrs.EnumerateArray(), x => x.GetProperty("id").GetString() == "GENDER"
+            && x.GetProperty("value_id").GetString() == "339665");
+        Assert.DoesNotContain(attrs.EnumerateArray(), x => x.GetProperty("id").GetString() == "COLOR");
+    }
 }
 
 public class KitInventoryTests

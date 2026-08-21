@@ -134,7 +134,7 @@ public class MercadoLivreCategoryTests : IClassFixture<ApiFactory>
             }
             if (path.Contains("domain_discovery", StringComparison.Ordinal))
             {
-                return Json(200, """[{"domain_id":"MLB-PANTS","domain_name":"Calças","category_id":"MLB188064","category_name":"Calças"}]""");
+                return Json(200, """[{"domain_id":"MLB-PANTS","domain_name":"Calças","category_id":"MLB188064","category_name":"Calças","attributes":[{"id":"BRAND","value_id":"9344","value_name":"Apple"}]}]""");
             }
             return Json(404, "{}");
         };
@@ -149,6 +149,67 @@ public class MercadoLivreCategoryTests : IClassFixture<ApiFactory>
 
         var sug = await svc.SuggestAsync("calca", default);
         Assert.Equal("MLB188064", sug.Items[0].CategoryId);
+        Assert.Equal("9344", sug.Items[0].Attributes[0].ValueId);
+    }
+
+    [Fact]
+    public async Task Attributes_skip_na_and_keep_required()
+    {
+        var handler = new StubHandler();
+        handler.Impl = req =>
+        {
+            var path = req.RequestUri!.PathAndQuery;
+            if (path.Contains("/categories/MLB188065/attributes", StringComparison.Ordinal))
+            {
+                return Json(200, """
+                    [
+                      {"id":"BRAND","name":"Marca","value_type":"string","tags":{"required":true},"values":[{"id":"1","name":"Acme"}]},
+                      {"id":"COLOR","name":"Cor","value_type":"list","tags":{"required":true},"values":[{"id":"52049","name":"Preto"},{"id":"-1","name":"N/A"}]},
+                      {"id":"NOTES","name":"Notas","value_type":"string","tags":{"hidden":true},"values":[]},
+                      {"id":"MODEL","name":"Modelo","value_type":"string","tags":{"required":true},"values":[]}
+                    ]
+                    """);
+            }
+            if (path.Contains("technical_specs", StringComparison.Ordinal))
+                return Json(403, """{"message":"forbidden"}""");
+            return Json(404, "{}");
+        };
+        await using var db = Sqlite();
+        var svc = new MercadoLivreCategoryService(db, new StubFactory(handler), new MemoryCache(new MemoryCacheOptions()));
+        var list = await svc.ListAttributesAsync("MLB188065", default);
+        Assert.Equal("MLB188065", list.CategoryId);
+        Assert.Contains(list.Items, x => x.Id == "BRAND" && x.Required);
+        Assert.Contains(list.Items, x => x.Id == "MODEL" && x.Required);
+        var color = Assert.Single(list.Items, x => x.Id == "COLOR");
+        Assert.DoesNotContain(color.Values, v => v.Id == "-1" || v.Name == "N/A");
+        Assert.DoesNotContain(list.Items, x => x.Id == "NOTES");
+    }
+
+    [Fact]
+    public async Task Attributes_endpoint_rejects_category_name()
+    {
+        var (token, companyId) = await AdminAsync();
+        var res = await _client.SendAsync(Authed(HttpMethod.Get, "/marketplaces/MercadoLivre/categories/Vestuário/attributes", token, companyId));
+        Assert.Equal(HttpStatusCode.BadRequest, res.StatusCode);
+        Assert.Contains("InvalidCategoryId", await res.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public void Item_attributes_omit_na_and_map_prefix()
+    {
+        Assert.True(MercadoLivreItemAttributes.IsNotApplicable("-1", "N/A"));
+        Assert.False(MercadoLivreItemAttributes.IsNotApplicable("52049", "Preto"));
+        var rows = MercadoLivreItemAttributes.Build(new Dictionary<string, string>
+        {
+            ["categoryId"] = "MLB188065",
+            ["ml:BRAND"] = """{"value_name":"Acme"}""",
+            ["ml:COLOR"] = """{"value_id":"-1","value_name":"N/A"}""",
+            ["ml:GENDER"] = """{"value_id":"339665","value_name":"Feminino"}"""
+        }, "IgnoredBrand", null);
+        Assert.Contains(rows, r => (string)r["id"]! == "BRAND" && (string)r["value_name"]! == "Acme");
+        Assert.Contains(rows, r => (string)r["id"]! == "GENDER" && (string)r["value_id"]! == "339665");
+        Assert.DoesNotContain(rows, r => (string)r["id"]! == "COLOR");
+        Assert.DoesNotContain(rows, r => (string)r["id"]! == "categoryId");
     }
 
     [Fact]

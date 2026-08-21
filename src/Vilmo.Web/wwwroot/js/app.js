@@ -195,6 +195,8 @@ const Vilmo = (() => {
       CategoryNotFound: "Categoria do Mercado Livre não encontrada.",
       CategorySuggestFailed: "Não foi possível sugerir a categoria no Mercado Livre.",
       InvalidCategoryId: "Categoria ML deve ser o código da opção (ex.: MLB5672), não o nome.",
+      CategoryAttributesFailed: "Não foi possível carregar os atributos obrigatórios da categoria ML.",
+      MlAttributeRequired: "Preencha os atributos obrigatórios da categoria do Mercado Livre.",
       NoChannels: "Este anúncio não tem canais.",
       AdvertisementNotFound: "Anúncio não encontrado.",
       ListingNotFound: "Canal não encontrado neste anúncio."
@@ -529,7 +531,8 @@ const Vilmo = (() => {
           </div>
           <div class="ml-cat-levels vilmo-grid cols-2"></div>
           <input type="hidden" class="attr-field ml-cat-value" data-mkt="${esc(m.code)}" data-key="${esc(key)}" value="">
-          <p class="ml-cat-hint text-xs text-muted-foreground">O Mercado Livre recebe o código da opção (MLB…), não o nome.</p>
+          <div class="ml-cat-attrs vilmo-grid cols-2"></div>
+          <p class="ml-cat-hint text-xs text-muted-foreground">O Mercado Livre recebe o código da opção (MLB…), não o nome. Atributos com * são obrigatórios nessa categoria.</p>
         </div>`;
       }
       return `<label>${esc(d.label)}<input class="kt-input attr-field" data-mkt="${esc(m.code)}" data-key="${esc(key)}"></label>`;
@@ -903,6 +906,7 @@ const Vilmo = (() => {
         wrap() { return document.querySelector(".ml-cat"); },
         valueInp() { return document.querySelector(".ml-cat-value"); },
         levels() { return document.querySelector(".ml-cat-levels"); },
+        attrsBox() { return document.querySelector(".ml-cat-attrs"); },
         hint(text) {
           const el = document.querySelector(".ml-cat-hint");
           if (el) el.textContent = text || "O Mercado Livre recebe o código da opção (MLB…), não o nome.";
@@ -940,6 +944,7 @@ const Vilmo = (() => {
           if (inp) inp.value = code;
           if (!code) {
             this.hint(id ? adErr("InvalidCategoryId") : "");
+            await this.loadAttrs("");
             return;
           }
           const name = this.catName(meta) || (meta && meta.name) || code;
@@ -947,6 +952,153 @@ const Vilmo = (() => {
             ? " Há subcategorias — escolha uma mais específica para publicar."
             : "";
           this.hint(`${name} · ${code}${extra}`);
+          await this.loadAttrs(code);
+        },
+        isNaName(name) {
+          const n = String(name || "").trim().toUpperCase();
+          return n === "N/A" || n === "NA" || n === "N.A." || n === "NÃO APLICÁVEL" || n === "NAO APLICAVEL" || n === "NÃO SE APLICA";
+        },
+        savedFromDom() {
+          const map = {};
+          this.attrsBox()?.querySelectorAll(".ml-attr-field").forEach(el => {
+            const p = this.attrPayload(el);
+            if (p) map[el.dataset.key] = JSON.stringify(p);
+          });
+          return map;
+        },
+        parseSaved(raw) {
+          if (!raw) return null;
+          try {
+            const o = JSON.parse(raw);
+            if (o && typeof o === "object")
+              return { value_id: o.value_id || o.valueId || "", value_name: o.value_name || o.valueName || "" };
+          } catch { /* plain */ }
+          if (String(raw).includes("|")) {
+            const [value_id, value_name] = String(raw).split("|", 2);
+            return { value_id, value_name };
+          }
+          return { value_id: "", value_name: String(raw) };
+        },
+        attrPayload(el) {
+          if (!el) return null;
+          if (el.tagName === "SELECT") {
+            const opt = el.selectedIndex >= 0 ? el.options[el.selectedIndex] : null;
+            if (!opt || !opt.value) return null;
+            const value_id = opt.getAttribute("data-ml-value-id") || opt.value;
+            const value_name = opt.getAttribute("data-ml-value-name") || (opt.textContent || "").trim();
+            if (this.isNaName(value_name) || value_id === "-1") return null;
+            const row = { value_name };
+            if (value_id) row.value_id = value_id;
+            return row;
+          }
+          const value_name = String(el.value || "").trim();
+          if (!value_name || this.isNaName(value_name)) return null;
+          const row = { value_name };
+          const list = el.list;
+          if (list) {
+            const hit = [...list.options].find(o => (o.value || o.textContent) === value_name);
+            const vid = hit && (hit.getAttribute("data-ml-value-id") || hit.value);
+            if (vid && vid !== value_name) row.value_id = vid;
+          }
+          return row;
+        },
+        attrFieldHtml(a, savedMap, form) {
+          const id = a.id || a.Id;
+          const key = `ml:${id}`;
+          const name = a.name || a.Name || id;
+          const values = a.values || a.Values || [];
+          const required = !!(a.required || a.Required || a.newRequired || a.NewRequired);
+          const recommended = !!(a.recommended || a.Recommended);
+          const max = a.valueMaxLength || a.ValueMaxLength;
+          const type = String(a.valueType || a.ValueType || "string").toLowerCase();
+          const saved = this.parseSaved(savedMap[key]);
+          let seedName = saved && saved.value_name || "";
+          let seedId = saved && saved.value_id || "";
+          if (!seedName && id === "BRAND" && form && form.brand && form.brand.value)
+            seedName = form.brand.value.trim();
+          if (!seedName && id === "GTIN" && form && form.gtin && form.gtin.value)
+            seedName = form.gtin.value.trim();
+          const mark = required
+            ? ` <span class="ml-attr-req">*</span>`
+            : (recommended ? ` <span class="text-xs text-muted-foreground">recomendado</span>` : "");
+          const reqAttr = required ? `data-required="1"` : "";
+          const useSelect = type === "list" || type === "boolean"
+            || (values.length >= 1 && values.length <= 120);
+          if (useSelect) {
+            const opts = [`<option value="">Selecionar…</option>`].concat(values.map(v => {
+              const vid = v.id || v.Id || "";
+              const vname = v.name || v.Name || vid;
+              if (this.isNaName(vname) || vid === "-1") return "";
+              const sel = (seedId && vid === seedId) || (!seedId && seedName && vname === seedName) ? " selected" : "";
+              return `<option value="${esc(vid || vname)}" data-ml-value-id="${esc(vid)}" data-ml-value-name="${esc(vname)}"${sel}>${esc(vname)}</option>`;
+            }).filter(Boolean));
+            if (seedName && !values.some(v => (v.id || v.Id) === seedId || (v.name || v.Name) === seedName))
+              opts.push(`<option value="${esc(seedId || seedName)}" data-ml-value-id="${esc(seedId)}" data-ml-value-name="${esc(seedName)}" selected>${esc(seedName)}</option>`);
+            return `<label>${esc(name)}${mark}<select class="kt-select ml-attr-field" data-mkt="MercadoLivre" data-key="${esc(key)}" ${reqAttr}>${opts.join("")}</select></label>`;
+          }
+          const listId = `ml-attr-${esc(id)}`;
+          const dl = values.length
+            ? `<datalist id="${listId}">${values.map(v => {
+                const vid = v.id || v.Id || "";
+                const vname = v.name || v.Name || vid;
+                if (this.isNaName(vname)) return "";
+                return `<option value="${esc(vname)}" data-ml-value-id="${esc(vid)}"></option>`;
+              }).join("")}</datalist>`
+            : "";
+          const inputType = type === "number" || type === "number_unit" ? "number" : "text";
+          const maxAttr = max ? ` maxlength="${Number(max)}"` : "";
+          const listAttr = values.length ? ` list="${listId}"` : "";
+          return `<label>${esc(name)}${mark}<input class="kt-input ml-attr-field" data-mkt="MercadoLivre" data-key="${esc(key)}" ${reqAttr} type="${inputType}" value="${esc(seedName)}"${maxAttr}${listAttr}>${dl}</label>`;
+        },
+        async loadAttrs(code, extraSaved) {
+          const box = this.attrsBox();
+          if (!box) return;
+          if (!code) {
+            box.innerHTML = "";
+            return;
+          }
+          const prev = Object.assign({}, this.savedFromDom(), extraSaved || {});
+          this.attrSeq = (this.attrSeq || 0) + 1;
+          const seq = this.attrSeq;
+          box.innerHTML = `<p class="text-xs text-muted-foreground">Carregando atributos obrigatórios da categoria…</p>`;
+          try {
+            const r = await api(`/marketplaces/MercadoLivre/categories/${encodeURIComponent(code)}/attributes`);
+            if (seq !== this.attrSeq) return;
+            const items = (r.items || r.Items || []).filter(a => a.required || a.Required || a.newRequired || a.NewRequired || a.recommended || a.Recommended);
+            items.sort((a, b) => (b.required || b.Required ? 1 : 0) - (a.required || a.Required ? 1 : 0));
+            if (!items.length) {
+              box.innerHTML = `<p class="text-xs text-muted-foreground">Esta categoria não listou atributos obrigatórios.</p>`;
+              return;
+            }
+            const form = document.getElementById("ad-form");
+            box.innerHTML = items.map(a => this.attrFieldHtml(a, prev, form)).join("");
+          } catch (ex) {
+            if (seq !== this.attrSeq) return;
+            box.innerHTML = `<p class="text-xs" style="color:#991b1b">${esc(adErr(ex.message))}</p>`;
+          }
+        },
+        fillSuggested(list) {
+          (list || []).forEach(s => {
+            const id = s.id || s.Id;
+            if (!id) return;
+            const el = document.querySelector(`.ml-attr-field[data-key="ml:${id}"]`);
+            if (!el) return;
+            const vid = s.valueId || s.ValueId || s.value_id || "";
+            const vname = s.valueName || s.ValueName || s.value_name || "";
+            if (this.isNaName(vname)) return;
+            if (el.tagName === "SELECT") {
+              const hit = [...el.options].find(o =>
+                (vid && (o.getAttribute("data-ml-value-id") === vid || o.value === vid))
+                || (vname && o.getAttribute("data-ml-value-name") === vname));
+              if (hit) el.value = hit.value;
+            } else if (!el.value) {
+              el.value = vname || vid;
+            }
+          });
+        },
+        missingRequired() {
+          return [...(this.attrsBox()?.querySelectorAll(".ml-attr-field[data-required='1']") || [])]
+            .some(el => !this.attrPayload(el));
         },
         bindSelects() {
           this.levels()?.querySelectorAll(".ml-cat-select").forEach(sel => {
@@ -1056,6 +1208,7 @@ const Vilmo = (() => {
               return;
             }
             await this.apply(sug);
+            this.fillSuggested(first.attributes || first.Attributes || []);
           } catch (ex) {
             this.hint(adErr(ex.message));
           }
@@ -1069,7 +1222,7 @@ const Vilmo = (() => {
       document.querySelectorAll(".mkt-code").forEach(c => c.onchange = syncExtras);
       if ($(".ml-cat-predict")) $(".ml-cat-predict").onclick = () => mlCat.predict();
       syncExtras();
-      const fillFromAd = (ad) => {
+      const fillFromAd = async (ad) => {
         const form = $("#ad-form");
         if (!form || !ad) return;
         const kind = ad.kind === "Kit" ? "Kit" : "Product";
@@ -1102,9 +1255,18 @@ const Vilmo = (() => {
           if (inp) inp.value = x.fieldValue || "";
         });
         syncExtras();
+        const mlSaved = {};
+        (ad.attributes || []).forEach(x => {
+          if (x.marketplaceCode === "MercadoLivre" && String(x.fieldName || "").startsWith("ml:"))
+            mlSaved[x.fieldName] = x.fieldValue || "";
+        });
         const mlId = (ad.attributes || []).find(x => x.marketplaceCode === "MercadoLivre" && x.fieldName === "categoryId")?.fieldValue;
-        if (mlCat.catCode(mlId)) mlCat.apply(mlId);
-        else if (document.querySelector(".mkt-code[value='MercadoLivre']")?.checked) mlCat.showRoots();
+        if (mlCat.catCode(mlId)) {
+          await mlCat.apply(mlId);
+          await mlCat.loadAttrs(mlCat.catCode(mlId), mlSaved);
+        } else if (document.querySelector(".mkt-code[value='MercadoLivre']")?.checked) {
+          await mlCat.showRoots();
+        }
         const msg = $("#ad-msg");
         if (msg) msg.innerHTML = `<div class="kt-alert kt-alert-success">Formulário preenchido a partir de ${esc(ad.sku)}. Confira o SKU novo e salve.</div>`;
         form.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -1135,11 +1297,21 @@ const Vilmo = (() => {
         const attributes = [...document.querySelectorAll(".attr-field")]
           .filter(inp => marketplaceCodes.includes(inp.dataset.mkt) && inp.value)
           .map(inp => ({ marketplaceCode: inp.dataset.mkt, fieldName: inp.dataset.key, fieldValue: inp.value }));
+        document.querySelectorAll(".ml-attr-field").forEach(el => {
+          if (!marketplaceCodes.includes("MercadoLivre")) return;
+          const p = mlCat.attrPayload(el);
+          if (!p) return;
+          attributes.push({ marketplaceCode: "MercadoLivre", fieldName: el.dataset.key, fieldValue: JSON.stringify(p) });
+        });
         const msg = $("#ad-msg");
         if (marketplaceCodes.includes("MercadoLivre")) {
           const cat = attributes.find(a => a.fieldName === "categoryId")?.fieldValue || "";
           if (cat && !/^MLB\d+$/i.test(cat)) {
             if (msg) msg.innerHTML = `<div class="kt-alert kt-alert-danger">${esc(adErr("InvalidCategoryId"))}</div>`;
+            return;
+          }
+          if (mlCat.missingRequired()) {
+            if (msg) msg.innerHTML = `<div class="kt-alert kt-alert-danger">${esc(adErr("MlAttributeRequired"))}</div>`;
             return;
           }
         }
