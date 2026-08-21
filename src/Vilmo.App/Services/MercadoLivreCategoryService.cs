@@ -127,6 +127,15 @@ public sealed class MercadoLivreCategoryService(
         return result;
     }
 
+    public async Task<object> SellerStatusAsync(Guid companyId, CancellationToken ct)
+    {
+        var seller = await ReadSellerAsync(companyId, ct);
+        if (seller is null)
+            return MercadoLivreSellerListing.PublicStatus(null, false);
+        var me = await SendJsonAsync(HttpMethod.Get, "/users/me", ct, seller.Value.Token, seller.Value.SellerId);
+        return MercadoLivreSellerListing.PublicStatus(me, true);
+    }
+
     static MlListingType? ReadListingType(JsonElement x)
     {
         if (!MercadoLivreListingTypeId.TryNormalize(Str(x, "id"), out var id))

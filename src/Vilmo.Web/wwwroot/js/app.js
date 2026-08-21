@@ -543,6 +543,8 @@ const Vilmo = (() => {
       api("/marketplaces/listing-fields"),
       api("/marketplaces")
     ]);
+    let mlSeller = null;
+    try { mlSeller = await api("/marketplaces/MercadoLivre/seller-status"); } catch { mlSeller = null; }
     let vendors = [];
     if (store.me.level !== "Vendor") {
       try { vendors = await api(`/companies/${store.companyId}/vendors`); } catch { vendors = []; }
@@ -638,7 +640,15 @@ const Vilmo = (() => {
         </div>
       </article>`;
     }).join("") || `<p class="text-sm text-muted-foreground">Nenhum anúncio ainda.</p>`;
+    const sellerBanner = mlSeller && mlSeller.connected && mlSeller.canList === false
+      ? `<div class="vilmo-card mb-4" style="border-color: var(--kt-danger, #dc2626)">
+          <p class="font-medium">Mercado Livre ainda não libera anúncios nesta conta</p>
+          <p class="text-sm text-muted-foreground mt-1">${esc(mlSeller.message || "")}</p>
+          ${mlSeller.fixUrl ? `<p class="mt-2"><a class="kt-btn kt-btn-outline kt-btn-sm" href="${esc(mlSeller.fixUrl)}" target="_blank" rel="noopener">Abrir endereços no Mercado Livre</a></p>` : ""}
+        </div>`
+      : "";
     return page("Anúncios", "", `
+      ${sellerBanner}
       <form id="ad-form" class="vilmo-card vilmo-grid cols-2 mb-4">
         <h3 class="col-span-2 font-medium">Salvar anúncio</h3>
         <p class="col-span-2 text-sm text-muted-foreground">Escolha os marketplaces e salve o rascunho. Depois use <b>Publicar neste canal</b> ou <b>Cancelar</b> em cada marketplace, e <b>Atualizar dados online</b> para puxar o anúncio publicado.</p>

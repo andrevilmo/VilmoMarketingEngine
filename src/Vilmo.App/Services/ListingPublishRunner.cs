@@ -97,7 +97,7 @@ public sealed class ListingPublishRunner(
                 listing.LastSyncJson = call.TechnicalJson;
                 await logs.WriteAsync(ad.CompanyId, runId, ad.Id, listing.Id, listing.MarketplaceCode, action,
                     ListingPublishLogSteps.Failed, "error",
-                    $"O marketplace recusou ou falhou a publicação (HTTP {call.StatusCode}). Veja o retorno técnico.",
+                    call.UserMessage ?? MercadoLivreSellerListing.UserMessageFromHttp(call.StatusCode, call.Body),
                     TryParseJson(call.TechnicalJson), ct);
             }
             return;
@@ -223,6 +223,10 @@ public sealed class ListingPublishRunner(
             }, JsonOpts));
         }
 
+        var blocked = await EnsureMercadoLivreCanListAsync(ad, listing, baseUrl, token, action, runId, ct);
+        if (blocked is not null)
+            return blocked;
+
         var (method, url, payload) = BuildRequest(ad, listing, baseUrl, action);
         await logs.WriteAsync(ad.CompanyId, runId, ad.Id, listing.Id, listing.MarketplaceCode, action,
             ListingPublishLogSteps.Calling, "info",
@@ -250,7 +254,10 @@ public sealed class ListingPublishRunner(
                 response = new { httpStatus = (int)resp.StatusCode, body = TryParseJson(body) },
                 callbackResponse = TryParseJson(body)
             }, JsonOpts);
-            return new MarketplaceCall(resp.IsSuccessStatusCode, (int)resp.StatusCode, url, body, tech);
+            var userMessage = resp.IsSuccessStatusCode
+                ? null
+                : MercadoLivreSellerListing.UserMessageFromHttp((int)resp.StatusCode, body);
+            return new MarketplaceCall(resp.IsSuccessStatusCode, (int)resp.StatusCode, url, body, tech, userMessage);
         }
         catch (Exception ex)
         {
@@ -455,5 +462,103 @@ public sealed class ListingPublishRunner(
         return null;
     }
 
-    sealed record MarketplaceCall(bool Ok, int StatusCode, string Url, string Body, string TechnicalJson);
+    async Task<MarketplaceCall?> EnsureMercadoLivreCanListAsync(
+        Advertisement ad, Listing listing, string baseUrl, string token, string action, Guid runId, CancellationToken ct)
+    {
+        if (action != "publish") return null;
+        if (!listing.MarketplaceCode.Equals("MercadoLivre", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        var me = await SendMlAsync(HttpMethod.Get, $"{baseUrl}/users/me", token, null, ct);
+        if (me.Json is null)
+            return null;
+
+        var user = me.Json.Value;
+        if (MercadoLivreSellerListing.CanList(user))
+            return null;
+
+        var codes = MercadoLivreSellerListing.ListCodes(user);
+        var company = await db.Companies.AsNoTracking().FirstAsync(c => c.Id == ad.CompanyId, ct);
+        var userId = ReadUserId(user);
+        var putBody = MercadoLivreSellerListing.UserUpdateBody(company);
+        var putUrl = userId is > 0 ? $"{baseUrl}/users/{userId}" : $"{baseUrl}/users/me";
+        await logs.WriteAsync(ad.CompanyId, runId, ad.Id, listing.Id, listing.MarketplaceCode, action,
+            ListingPublishLogSteps.Calling, "info",
+            "Conta Mercado Livre sem endereço completo. Enviando o endereço da empresa para liberar a publicação.",
+            new { codes, request = new { method = "PUT", url = putUrl, body = putBody } }, ct);
+        var put = await SendMlAsync(HttpMethod.Put, putUrl, token, putBody, ct);
+
+        if (userId is > 0 && MercadoLivreSellerListing.NeedsAddress(codes))
+        {
+            var addrUrl = $"{baseUrl}/users/{userId}/addresses";
+            var addrBody = MercadoLivreSellerListing.AddressCreateBody(company);
+            await SendMlAsync(HttpMethod.Post, addrUrl, token, addrBody, ct);
+        }
+
+        var again = await SendMlAsync(HttpMethod.Get, $"{baseUrl}/users/me", token, null, ct);
+        if (again.Json is not null && MercadoLivreSellerListing.CanList(again.Json.Value))
+        {
+            await logs.WriteAsync(ad.CompanyId, runId, ad.Id, listing.Id, listing.MarketplaceCode, action,
+                ListingPublishLogSteps.Calling, "info",
+                "Endereço enviado. Seguimos com a publicação no Mercado Livre.",
+                new { putHttpStatus = put.Status, codesAfter = MercadoLivreSellerListing.ListCodes(again.Json.Value) }, ct);
+            return null;
+        }
+
+        var still = again.Json is not null ? MercadoLivreSellerListing.ListCodes(again.Json.Value) : codes;
+        var message = MercadoLivreSellerListing.UserMessage(still);
+        var tech = JsonSerializer.Serialize(new
+        {
+            source = "marketplace",
+            method = "PUT",
+            url = putUrl,
+            httpStatus = put.Status == 0 ? 403 : put.Status,
+            request = new { method = "PUT", url = putUrl, body = putBody },
+            response = new { httpStatus = put.Status, body = TryParseJson(put.Raw) },
+            callbackResponse = TryParseJson(put.Raw),
+            seller = MercadoLivreSellerListing.PublicStatus(again.Json ?? me.Json, true),
+            listCodes = still
+        }, JsonOpts);
+        return new MarketplaceCall(false, 403, putUrl, put.Raw, tech, message);
+    }
+
+    async Task<MlRaw> SendMlAsync(HttpMethod method, string url, string token, object? payload, CancellationToken ct)
+    {
+        try
+        {
+            var client = httpFactory.CreateClient("marketplace");
+            using var req = new HttpRequestMessage(method, url);
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            if (payload is not null)
+                req.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+            using var resp = await client.SendAsync(req, ct);
+            var raw = await resp.Content.ReadAsStringAsync(ct);
+            JsonElement? json = null;
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(raw))
+                {
+                    using var doc = JsonDocument.Parse(raw);
+                    json = doc.RootElement.Clone();
+                }
+            }
+            catch (JsonException) { /* keep raw */ }
+            return new(json, (int)resp.StatusCode, raw);
+        }
+        catch (Exception ex)
+        {
+            return new(null, 0, ex.Message);
+        }
+    }
+
+    static long? ReadUserId(JsonElement user)
+    {
+        if (!user.TryGetProperty("id", out var id)) return null;
+        if (id.ValueKind == JsonValueKind.Number && id.TryGetInt64(out var n)) return n;
+        return long.TryParse(id.GetString(), out var s) ? s : null;
+    }
+
+    sealed record MarketplaceCall(bool Ok, int StatusCode, string Url, string Body, string TechnicalJson, string? UserMessage = null);
+    sealed record MlRaw(JsonElement? Json, int Status, string Raw);
 }
