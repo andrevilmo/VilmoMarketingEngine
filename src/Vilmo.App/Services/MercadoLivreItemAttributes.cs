@@ -11,7 +11,7 @@ public static class MercadoLivreItemAttributes
     public const string FieldPrefix = "ml:";
     static readonly HashSet<string> Reserved = new(StringComparer.OrdinalIgnoreCase)
     {
-        "categoryId", "listingTypeId", "buyingMode", "shippingMode", "familyName"
+        "categoryId", "listingTypeId", "buyingMode", "shippingMode", "familyName", "pictures"
     };
 
     public static bool IsNotApplicable(string? valueId, string? valueName)

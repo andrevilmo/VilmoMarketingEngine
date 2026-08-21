@@ -21,6 +21,10 @@ public class AdvertisementApiTests : IClassFixture<ApiFactory>
         _client = factory.CreateClient();
     }
 
+    const string MlPhotoUrl = "https://example.com/foto.jpg";
+    static object MlPictures(string url = MlPhotoUrl) =>
+        new { marketplaceCode = "MercadoLivre", fieldName = "pictures", fieldValue = url };
+
     async Task<string> LoginAsync(string email = "admin@vilmomkt.com")
     {
         var res = await _client.PostAsJsonAsync("/auth/login", new { email, password = "VilmoAdmin!2026" });
@@ -69,6 +73,10 @@ public class AdvertisementApiTests : IClassFixture<ApiFactory>
         var listingType = Assert.Single(ml.EnumerateArray(), x => x.GetProperty("fieldKey").GetString() == "listingTypeId");
         Assert.True(listingType.GetProperty("required").GetBoolean());
         Assert.Equal("Tipo de anúncio ML", listingType.GetProperty("label").GetString());
+        var pictures = Assert.Single(ml.EnumerateArray(), x => x.GetProperty("fieldKey").GetString() == "pictures");
+        Assert.True(pictures.GetProperty("required").GetBoolean());
+        Assert.Equal("Imagens ML", pictures.GetProperty("label").GetString());
+        Assert.Equal("url", pictures.GetProperty("valueKind").GetString());
     }
 
     [Fact]
@@ -108,7 +116,8 @@ public class AdvertisementApiTests : IClassFixture<ApiFactory>
             },
             attributes = new[]
             {
-                new { marketplaceCode = "MercadoLivre", fieldName = "categoryId", fieldValue = "MLB123" }
+                new { marketplaceCode = "MercadoLivre", fieldName = "categoryId", fieldValue = "MLB123" },
+                new { marketplaceCode = "MercadoLivre", fieldName = "pictures", fieldValue = MlPhotoUrl }
             }
         }, companyId));
         Assert.Equal(HttpStatusCode.Created, pub.StatusCode);
@@ -198,7 +207,11 @@ public class AdvertisementApiTests : IClassFixture<ApiFactory>
             price = 10m,
             availableQuantity = 1,
             marketplaceCodes = new[] { "MercadoLivre" },
-            items = new[] { new { sku = "OUTRA-SKU", quantity = 1m } }
+            items = new[] { new { sku = "OUTRA-SKU", quantity = 1m } },
+            attributes = new[]
+            {
+                new { marketplaceCode = "MercadoLivre", fieldName = "pictures", fieldValue = MlPhotoUrl }
+            }
         }, companyB));
         Assert.Equal(HttpStatusCode.Created, pub.StatusCode);
 
@@ -252,7 +265,11 @@ public class AdvertisementApiTests : IClassFixture<ApiFactory>
             price = 89.90m,
             availableQuantity = 4,
             marketplaceCodes = new[] { "MercadoLivre", "Shopee" },
-            items = new[] { new { sku = "CAMISETA-001", quantity = 1m } }
+            items = new[] { new { sku = "CAMISETA-001", quantity = 1m } },
+            attributes = new[]
+            {
+                new { marketplaceCode = "MercadoLivre", fieldName = "pictures", fieldValue = MlPhotoUrl }
+            }
         }, companyId));
         Assert.Equal(HttpStatusCode.Created, pub.StatusCode);
         using var created = JsonDocument.Parse(await pub.Content.ReadAsStringAsync());
@@ -288,6 +305,9 @@ public class AdvertisementApiTests : IClassFixture<ApiFactory>
         var reqBody = techDoc.RootElement.GetProperty("request").GetProperty("body");
         Assert.Equal("Camiseta canal teste", reqBody.GetProperty("family_name").GetString());
         Assert.False(reqBody.TryGetProperty("title", out _));
+        var channelPics = reqBody.GetProperty("pictures");
+        Assert.Equal(1, channelPics.GetArrayLength());
+        Assert.Equal(MlPhotoUrl, channelPics[0].GetProperty("source").GetString());
 
         var shopeeDraft = live.RootElement.GetProperty("advertisement").GetProperty("channels").EnumerateArray()
             .First(c => c.GetProperty("marketplaceCode").GetString() == "Shopee");
@@ -337,7 +357,11 @@ public class AdvertisementApiTests : IClassFixture<ApiFactory>
             price = 10m,
             availableQuantity = 1,
             marketplaceCodes = new[] { "MercadoLivre" },
-            items = new[] { new { sku = "CAMISETA-001", quantity = 1m } }
+            items = new[] { new { sku = "CAMISETA-001", quantity = 1m } },
+            attributes = new[]
+            {
+                new { marketplaceCode = "MercadoLivre", fieldName = "pictures", fieldValue = MlPhotoUrl }
+            }
         }, companyId));
         Assert.Equal(HttpStatusCode.Created, pub.StatusCode);
         using var created = JsonDocument.Parse(await pub.Content.ReadAsStringAsync());
@@ -392,7 +416,8 @@ public class AdvertisementApiTests : IClassFixture<ApiFactory>
             items = new[] { new { sku = "CAMISETA-001", quantity = 1m } },
             attributes = new[]
             {
-                new { marketplaceCode = "MercadoLivre", fieldName = "categoryId", fieldValue = "Vestuário (MLB5672)" }
+                new { marketplaceCode = "MercadoLivre", fieldName = "categoryId", fieldValue = "Vestuário (MLB5672)" },
+                new { marketplaceCode = "MercadoLivre", fieldName = "pictures", fieldValue = MlPhotoUrl }
             }
         }, companyId));
         Assert.Equal(HttpStatusCode.Created, pub.StatusCode);
@@ -452,7 +477,8 @@ public class AdvertisementApiTests : IClassFixture<ApiFactory>
             items = new[] { new { sku = "CAMISETA-001", quantity = 1m } },
             attributes = new[]
             {
-                new { marketplaceCode = "MercadoLivre", fieldName = "listingTypeId", fieldValue = "Premium (gold_pro)" }
+                new { marketplaceCode = "MercadoLivre", fieldName = "listingTypeId", fieldValue = "Premium (gold_pro)" },
+                new { marketplaceCode = "MercadoLivre", fieldName = "pictures", fieldValue = MlPhotoUrl }
             }
         }, companyId));
         Assert.Equal(HttpStatusCode.Created, pub.StatusCode);
@@ -492,7 +518,11 @@ public class AdvertisementApiTests : IClassFixture<ApiFactory>
             price = 19.90m,
             availableQuantity = 1,
             marketplaceCodes = new[] { "MercadoLivre" },
-            items = new[] { new { sku = "CAMISETA-001", quantity = 1m } }
+            items = new[] { new { sku = "CAMISETA-001", quantity = 1m } },
+            attributes = new[]
+            {
+                new { marketplaceCode = "MercadoLivre", fieldName = "pictures", fieldValue = MlPhotoUrl }
+            }
         }, companyId));
         Assert.Equal(HttpStatusCode.Created, pub.StatusCode);
         using var created = JsonDocument.Parse(await pub.Content.ReadAsStringAsync());
@@ -548,7 +578,8 @@ public class AdvertisementApiTests : IClassFixture<ApiFactory>
                 new { marketplaceCode = "MercadoLivre", fieldName = "ml:GENDER", fieldValue = """{"value_id":"339665","value_name":"Feminino"}""" },
                 new { marketplaceCode = "MercadoLivre", fieldName = "ml:SIZE_GRID_ID", fieldValue = """{"value_id":"26008","value_name":"26008"}""" },
                 new { marketplaceCode = "MercadoLivre", fieldName = "ml:SIZE_GRID_ROW_ID", fieldValue = """{"value_name":"26008:1"}""" },
-                new { marketplaceCode = "MercadoLivre", fieldName = "ml:COLOR", fieldValue = """{"value_id":"-1","value_name":"N/A"}""" }
+                new { marketplaceCode = "MercadoLivre", fieldName = "ml:COLOR", fieldValue = """{"value_id":"-1","value_name":"N/A"}""" },
+                new { marketplaceCode = "MercadoLivre", fieldName = "pictures", fieldValue = MlPhotoUrl }
             }
         }, companyId));
         Assert.Equal(HttpStatusCode.Created, pub.StatusCode);
@@ -578,6 +609,87 @@ public class AdvertisementApiTests : IClassFixture<ApiFactory>
         Assert.Contains(attrs.EnumerateArray(), x => x.GetProperty("id").GetString() == "SIZE_GRID_ROW_ID"
             && x.GetProperty("value_name").GetString() == "26008:1");
         Assert.DoesNotContain(attrs.EnumerateArray(), x => x.GetProperty("id").GetString() == "COLOR");
+        var pics = reqBody.GetProperty("pictures");
+        Assert.Equal(1, pics.GetArrayLength());
+        Assert.Equal(MlPhotoUrl, pics[0].GetProperty("source").GetString());
+    }
+
+    [Fact]
+    public async Task MercadoLivre_pictures_required_and_invalid_rejected()
+    {
+        var (token, companyId) = await AdminAsync();
+        var missing = await _client.SendAsync(Authed(HttpMethod.Post, "/advertisements", token, new
+        {
+            kind = "Product",
+            sku = $"AD-PIC-{Guid.NewGuid():N}"[..16].ToUpperInvariant(),
+            title = "Sem foto",
+            familyName = "Sem foto",
+            price = 10m,
+            availableQuantity = 1,
+            marketplaceCodes = new[] { "MercadoLivre" },
+            items = new[] { new { sku = "CAMISETA-001", quantity = 1m } }
+        }, companyId));
+        Assert.Equal(HttpStatusCode.BadRequest, missing.StatusCode);
+        Assert.Contains("PicturesRequired", await missing.Content.ReadAsStringAsync());
+
+        var bad = await _client.SendAsync(Authed(HttpMethod.Post, "/advertisements", token, new
+        {
+            kind = "Product",
+            sku = $"AD-PIC-{Guid.NewGuid():N}"[..16].ToUpperInvariant(),
+            title = "Foto invalida",
+            familyName = "Foto invalida",
+            price = 10m,
+            availableQuantity = 1,
+            marketplaceCodes = new[] { "MercadoLivre" },
+            items = new[] { new { sku = "CAMISETA-001", quantity = 1m } },
+            attributes = new[] { MlPictures("foto-local.png") }
+        }, companyId));
+        Assert.Equal(HttpStatusCode.BadRequest, bad.StatusCode);
+        Assert.Contains("InvalidPictures", await bad.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task MercadoLivre_publish_blocks_when_pictures_cleared()
+    {
+        var (token, companyId) = await AdminAsync();
+        var sku = $"AD-PIC-{Guid.NewGuid():N}"[..16].ToUpperInvariant();
+        var pub = await _client.SendAsync(Authed(HttpMethod.Post, "/advertisements", token, new
+        {
+            kind = "Product",
+            sku,
+            title = "Foto depois apagada",
+            familyName = "Foto depois apagada",
+            price = 19.90m,
+            availableQuantity = 1,
+            marketplaceCodes = new[] { "MercadoLivre" },
+            items = new[] { new { sku = "CAMISETA-001", quantity = 1m } },
+            attributes = new[] { MlPictures() }
+        }, companyId));
+        Assert.Equal(HttpStatusCode.Created, pub.StatusCode);
+        using var created = JsonDocument.Parse(await pub.Content.ReadAsStringAsync());
+        var id = created.RootElement.GetProperty("advertisement").GetProperty("id").GetGuid();
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var row = await db.AdvertisementAttributes.FirstAsync(a =>
+                a.AdvertisementId == id && a.FieldName == "pictures");
+            row.FieldValue = "nao-e-url";
+            await db.SaveChangesAsync();
+        }
+
+        var proceed = await _client.SendAsync(Authed(HttpMethod.Post,
+            $"/advertisements/{id}/channels/MercadoLivre/publish", token, new { }, companyId));
+        proceed.EnsureSuccessStatusCode();
+        using var live = JsonDocument.Parse(await proceed.Content.ReadAsStringAsync());
+        var ml = live.RootElement.GetProperty("advertisement").GetProperty("channels").EnumerateArray()
+            .First(c => c.GetProperty("marketplaceCode").GetString() == "MercadoLivre");
+        Assert.Equal(ListingStatuses.Error, ml.GetProperty("status").GetString());
+        Assert.Contains(ml.GetProperty("publishLog").EnumerateArray(), x =>
+            x.GetProperty("stepCode").GetString() == "failed"
+            && x.GetProperty("userMessage").GetString()!.Contains("Imagens ML", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(ml.GetProperty("publishLog").EnumerateArray(), x =>
+            x.GetProperty("stepCode").GetString() == "callback");
     }
 }
 

@@ -104,6 +104,7 @@ public static class SeedData
         Field("MercadoLivre", "listingTypeId", "Tipo de anúncio ML", "string", false, true, 21);
         Field("MercadoLivre", "buyingMode", "Modo de compra (buy_it_now)", "string", false, false, 22);
         Field("MercadoLivre", "shippingMode", "Envio (me2 / not_specified)", "string", false, false, 23);
+        Field("MercadoLivre", "pictures", "Imagens ML", "url", false, true, 24);
 
         Field("Shopee", "categoryId", "Categoria Shopee", "string", false, true, 20);
         Field("Shopee", "daysToShip", "Dias para envio", "number", false, false, 21);

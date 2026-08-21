@@ -282,6 +282,14 @@ public class MercadoLivrePublishAddressGateTests
             AvailableQuantity = 1,
             Condition = "new"
         };
+        ad.Attributes.Add(new AdvertisementAttribute
+        {
+            Id = Guid.NewGuid(),
+            AdvertisementId = ad.Id,
+            MarketplaceCode = "MercadoLivre",
+            FieldName = "pictures",
+            FieldValue = "https://example.com/foto.jpg"
+        });
         db.Advertisements.Add(ad);
         var listing = new Listing
         {

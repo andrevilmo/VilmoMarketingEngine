@@ -132,6 +132,23 @@ public static class SchemaPatches
               WHERE marketplace_code = 'MercadoLivre' AND field_key = 'listingTypeId';
             """, ct);
         await db.Database.ExecuteSqlRawAsync("""
+            INSERT INTO marketplace_listing_field_definition
+              (id, marketplace_code, field_key, label, value_kind, is_common, required, sort_order)
+            SELECT gen_random_uuid(), 'MercadoLivre', 'pictures', 'Imagens ML', 'url', false, true, 24
+            WHERE NOT EXISTS (
+              SELECT 1 FROM marketplace_listing_field_definition
+              WHERE marketplace_code = 'MercadoLivre' AND field_key = 'pictures'
+            );
+            """, ct);
+        await db.Database.ExecuteSqlRawAsync("""
+            UPDATE marketplace_listing_field_definition
+              SET required = true,
+                  label = 'Imagens ML',
+                  value_kind = 'url',
+                  sort_order = 24
+              WHERE marketplace_code = 'MercadoLivre' AND field_key = 'pictures';
+            """, ct);
+        await db.Database.ExecuteSqlRawAsync("""
             ALTER TABLE listing ADD COLUMN IF NOT EXISTS advertisement_id uuid NULL;
             """, ct);
         await db.Database.ExecuteSqlRawAsync("""

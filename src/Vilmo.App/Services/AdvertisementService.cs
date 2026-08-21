@@ -146,6 +146,7 @@ public sealed class AdvertisementService(AppDbContext db, ListingPublishLogServi
             });
         }
         var hasMlListingType = false;
+        var hasMlPictures = false;
         foreach (var attr in draft.Attributes)
         {
             if (string.IsNullOrWhiteSpace(attr.FieldName)) continue;
@@ -169,6 +170,14 @@ public sealed class AdvertisementService(AppDbContext db, ListingPublishLogServi
                 else
                     value = listingType;
             }
+            if (isMl && attr.FieldName.Equals(MercadoLivrePictures.FieldName, StringComparison.OrdinalIgnoreCase))
+            {
+                hasMlPictures = true;
+                var urls = MercadoLivrePictures.Parse(value);
+                if (urls.Count == 0)
+                    throw new ArgumentException("InvalidPictures");
+                value = MercadoLivrePictures.Serialize(urls);
+            }
             db.AdvertisementAttributes.Add(new AdvertisementAttribute
             {
                 Id = Guid.NewGuid(),
@@ -178,8 +187,8 @@ public sealed class AdvertisementService(AppDbContext db, ListingPublishLogServi
                 FieldValue = value
             });
         }
-        if (!hasMlListingType
-            && codes.Any(c => c.Equals("MercadoLivre", StringComparison.OrdinalIgnoreCase)))
+        var mlSelected = codes.Any(c => c.Equals("MercadoLivre", StringComparison.OrdinalIgnoreCase));
+        if (!hasMlListingType && mlSelected)
         {
             db.AdvertisementAttributes.Add(new AdvertisementAttribute
             {
@@ -190,6 +199,8 @@ public sealed class AdvertisementService(AppDbContext db, ListingPublishLogServi
                 FieldValue = MercadoLivreListingTypeId.Default
             });
         }
+        if (mlSelected && !hasMlPictures)
+            throw new ArgumentException("PicturesRequired");
 
         var createdListings = new List<object>();
         foreach (var code in codes)

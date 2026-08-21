@@ -196,6 +196,8 @@ const Vilmo = (() => {
       CategorySuggestFailed: "Não foi possível sugerir a categoria no Mercado Livre.",
       InvalidCategoryId: "Categoria ML deve ser o código da opção (ex.: MLB5672), não o nome.",
       InvalidListingTypeId: "Tipo de anúncio ML deve ser o código da opção (ex.: gold_special), não um nome livre.",
+      PicturesRequired: "O Mercado Livre exige ao menos uma foto pública (HTTPS) no campo Imagens ML.",
+      InvalidPictures: "Imagens ML devem ser URLs HTTP ou HTTPS públicas, uma por linha.",
       SizeChartNotFound: "Tabela de medidas do Mercado Livre não encontrada.",
       InvalidSizeChartId: "Informe o ID da guia de tamanhos do Mercado Livre.",
       InvalidSizeGridId: "Escolha a guia e a linha nas listas do Mercado Livre. SIZE_GRID_ROW_ID deve ser a linha (ex.: 26008:1), não o mesmo número da guia.",
@@ -222,6 +224,35 @@ const Vilmo = (() => {
     if (id.includes("_") || ["gold", "silver", "bronze", "free"].includes(id)) return id;
     return "";
   };
+  const parseMlPictureUrls = (raw) => {
+    const t = String(raw || "").trim();
+    if (!t) return [];
+    let parts = [];
+    if (t.startsWith("[")) {
+      try {
+        const arr = JSON.parse(t);
+        if (Array.isArray(arr))
+          parts = arr.map(x => typeof x === "string" ? x : (x && (x.source || x.url)) || "");
+      } catch { parts = t.split(/[\r\n,;]+/); }
+    } else {
+      parts = t.split(/[\r\n,;]+/);
+    }
+    const seen = new Set();
+    const urls = [];
+    for (const p of parts) {
+      const u = String(p || "").trim();
+      if (!/^https?:\/\//i.test(u)) continue;
+      try { new URL(u); } catch { continue; }
+      const key = u.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      urls.push(u);
+      if (urls.length >= 12) break;
+    }
+    return urls;
+  };
+  const mlPicsThumbs = (urls) => (urls || []).map(u =>
+    `<a href="${esc(u)}" target="_blank" rel="noopener"><img src="${esc(u)}" alt=""></a>`).join("");
   const mlListingTypeOptions = (items, selected) => {
     const sel = mlListingTypeCode(selected) || "gold_special";
     return (items || []).map(t => {
@@ -572,6 +603,17 @@ const Vilmo = (() => {
           <p class="ml-cat-hint text-xs text-muted-foreground">O Mercado Livre recebe o código da opção (MLB…), não o nome. Ao mudar a categoria, todos os atributos dela aparecem abaixo — os com * são obrigatórios para publicar.</p>
         </div>`;
       }
+      if (m.code === "MercadoLivre" && key === "pictures") {
+        const mark = (d.required || d.Required) ? " *" : "";
+        return `<div class="ml-pics col-span-2">
+          <div class="font-medium text-sm mb-1">${esc(d.label)}${mark}</div>
+          <div class="ml-pics-rows"></div>
+          <button type="button" class="kt-btn kt-btn-outline kt-btn-sm ml-pic-add">Adicionar foto</button>
+          <textarea class="attr-field ml-pics-value" hidden data-mkt="${esc(m.code)}" data-key="${esc(key)}"></textarea>
+          <div class="ml-pics-thumbs"></div>
+          <p class="text-xs text-muted-foreground">Uma URL HTTPS pública por foto, ligada a este anúncio. O Mercado Livre baixa as imagens; sem foto o tipo Clássica recusa (item.listing_type_id.requiresPictures).</p>
+        </div>`;
+      }
       return `<label>${esc(d.label)}<input class="kt-input attr-field" data-mkt="${esc(m.code)}" data-key="${esc(key)}"></label>`;
     };
     const extras = (markets || []).map(m => {
@@ -601,6 +643,13 @@ const Vilmo = (() => {
           ? `Atualizado ${esc(fmtWhen(c.lastSyncedAt))}`
           : "Sem dados online ainda";
         const steps = c.publishLog || [];
+        const mlPics = c.marketplaceCode === "MercadoLivre"
+          ? parseMlPictureUrls((a.attributes || []).find(x =>
+              x.marketplaceCode === "MercadoLivre" && x.fieldName === "pictures")?.fieldValue)
+          : [];
+        const picsHtml = mlPics.length
+          ? `<div class="ad-ml-pics">${mlPicsThumbs(mlPics)}</div>`
+          : "";
         return `<div class="ad-channel" data-ad="${esc(a.id)}" data-code="${esc(c.marketplaceCode)}">
           <div class="ad-channel-head">
             <div>
@@ -613,6 +662,7 @@ const Vilmo = (() => {
             </div>
           </div>
           ${title}
+          ${picsHtml}
           <div class="text-xs text-muted-foreground">${remoteBits.join(" · ") || synced}</div>
           <div class="text-xs text-muted-foreground">${esc(synced)}</div>
           ${link}
@@ -1476,6 +1526,44 @@ const Vilmo = (() => {
           }
         }
       };
+      const mlPics = {
+        wrap() { return document.querySelector(".ml-pics"); },
+        valueInp() { return document.querySelector(".ml-pics-value"); },
+        rows() { return this.wrap()?.querySelector(".ml-pics-rows"); },
+        thumbsEl() { return this.wrap()?.querySelector(".ml-pics-thumbs"); },
+        sync() {
+          const urls = [...(this.rows()?.querySelectorAll(".ml-pic-url") || [])]
+            .map(i => i.value.trim()).filter(Boolean);
+          const inp = this.valueInp();
+          if (inp) inp.value = urls.join("\n");
+          const el = this.thumbsEl();
+          if (el) el.innerHTML = mlPicsThumbs(parseMlPictureUrls(urls.join("\n")));
+        },
+        addRow(url) {
+          const box = this.rows();
+          if (!box) return;
+          const row = document.createElement("div");
+          row.className = "ml-pics-row";
+          row.innerHTML = `<input class="kt-input ml-pic-url" type="url" placeholder="https://" value="${esc(url || "")}">
+            <button type="button" class="kt-btn kt-btn-outline kt-btn-sm ml-pic-del">Remover</button>`;
+          row.querySelector(".ml-pic-url").oninput = () => this.sync();
+          row.querySelector(".ml-pic-del").onclick = () => { row.remove(); if (!box.querySelector(".ml-pics-row")) this.addRow(""); this.sync(); };
+          box.appendChild(row);
+        },
+        fill(raw) {
+          const box = this.rows();
+          if (!box) return;
+          box.innerHTML = "";
+          const urls = parseMlPictureUrls(raw);
+          (urls.length ? urls : [""]).forEach(u => this.addRow(u));
+          this.sync();
+        },
+        bind() {
+          const add = this.wrap()?.querySelector(".ml-pic-add");
+          if (add) add.onclick = () => { this.addRow(""); };
+          this.fill(this.valueInp()?.value || "");
+        }
+      };
       const syncExtras = (opts) => {
         const selected = [...document.querySelectorAll(".mkt-code:checked")].map(c => c.value);
         document.querySelectorAll(".ad-extra").forEach(el => el.classList.toggle("on", selected.includes(el.dataset.extra)));
@@ -1486,6 +1574,7 @@ const Vilmo = (() => {
       if ($(".ml-cat-predict")) $(".ml-cat-predict").onclick = () => mlCat.predict();
       syncExtras();
       mlListingType.load();
+      mlPics.bind();
       const fillFromAd = async (ad) => {
         const form = $("#ad-form");
         if (!form || !ad) return;
@@ -1518,6 +1607,9 @@ const Vilmo = (() => {
           const inp = document.querySelector(`.attr-field[data-mkt="${CSS.escape(x.marketplaceCode)}"][data-key="${CSS.escape(x.fieldName)}"]`);
           if (inp) inp.value = x.fieldValue || "";
         });
+        const savedPics = (ad.attributes || []).find(x =>
+          x.marketplaceCode === "MercadoLivre" && x.fieldName === "pictures")?.fieldValue;
+        mlPics.fill(savedPics || "");
         const savedListingType = (ad.attributes || []).find(x =>
           x.marketplaceCode === "MercadoLivre" && x.fieldName === "listingTypeId")?.fieldValue;
         await mlListingType.load(savedListingType);
@@ -1560,6 +1652,7 @@ const Vilmo = (() => {
         })).filter(i => i.sku && i.quantity > 0);
         const marketplaceCodes = [...document.querySelectorAll(".mkt-code:checked")].map(c => c.value);
         mlCat.syncValue();
+        mlPics.sync();
         const attributes = [...document.querySelectorAll(".attr-field")]
           .filter(inp => marketplaceCodes.includes(inp.dataset.mkt) && inp.value)
           .map(inp => ({ marketplaceCode: inp.dataset.mkt, fieldName: inp.dataset.key, fieldValue: inp.value }));
@@ -1587,6 +1680,11 @@ const Vilmo = (() => {
           }
           if (mlCat.missingSizeGrid()) {
             if (msg) msg.innerHTML = `<div class="kt-alert kt-alert-danger">${esc(adErr("InvalidSizeGridId"))}</div>`;
+            return;
+          }
+          const pics = parseMlPictureUrls(attributes.find(a => a.fieldName === "pictures")?.fieldValue);
+          if (!pics.length) {
+            if (msg) msg.innerHTML = `<div class="kt-alert kt-alert-danger">${esc(adErr("PicturesRequired"))}</div>`;
             return;
           }
         }
