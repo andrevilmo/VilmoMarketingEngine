@@ -26,7 +26,7 @@ public sealed class ListingPublishRunner(
         await logs.WriteAsync(ad.CompanyId, runId, ad.Id, listing.Id, listing.MarketplaceCode, action,
             ListingPublishLogSteps.Received, "info",
             "Pedido de publicação recebido para este marketplace.",
-            new { listing.Id, listing.Sku, listing.MarketplaceCode, ad.Title, ad.Price, ad.AvailableQuantity }, ct);
+            new { listing.Id, listing.Sku, listing.MarketplaceCode, ad.Title, ad.FamilyName, ad.Price, ad.AvailableQuantity }, ct);
 
         var marketplace = await db.Marketplaces.AsNoTracking()
             .FirstOrDefaultAsync(m => m.Code == listing.MarketplaceCode, ct);
@@ -258,6 +258,7 @@ public sealed class ListingPublishRunner(
         return ("POST", $"{baseUrl}/items", new Dictionary<string, object?>
         {
             ["title"] = ad.Title,
+            ["family_name"] = Attr(attrs, "familyName") ?? ad.FamilyName,
             ["category_id"] = Attr(attrs, "categoryId"),
             ["price"] = ad.Price,
             ["currency_id"] = string.IsNullOrWhiteSpace(ad.Currency) ? "BRL" : ad.Currency,
@@ -315,10 +316,17 @@ public sealed class ListingPublishRunner(
     static MarketplaceCall DemoCallback(Listing listing, Advertisement ad, string action, string note)
     {
         var remoteId = listing.RemoteId ?? $"demo-{listing.Id:N}"[..12];
+        var (method, url, payload) = action switch
+        {
+            "cancel" => ("PUT", $"demo://{listing.MarketplaceCode}/items/{remoteId}", (object?)new { status = "paused" }),
+            "refresh" => ("GET", $"demo://{listing.MarketplaceCode}/items/{remoteId}", null),
+            _ => BuildRequest(ad, listing, $"demo://{listing.MarketplaceCode}", "publish")
+        };
         var callback = new
         {
             id = remoteId,
             title = ad.Title,
+            family_name = ad.FamilyName,
             price = ad.Price,
             available_quantity = ad.AvailableQuantity,
             status = action == "cancel" ? "paused" : (listing.Status == ListingStatuses.Cancelled ? "paused" : "active"),
@@ -327,15 +335,15 @@ public sealed class ListingPublishRunner(
         var tech = JsonSerializer.Serialize(new
         {
             source = "demo",
-            method = action == "refresh" ? "GET" : "POST",
-            url = $"demo://{listing.MarketplaceCode}/items",
+            method,
+            url,
             httpStatus = 201,
             warning = note,
-            request = new { method = action == "refresh" ? "GET" : "POST", url = $"demo://{listing.MarketplaceCode}/items", body = new { ad.Sku, ad.Title, ad.Price } },
+            request = new { method, url, body = payload },
             response = new { httpStatus = 201, body = callback },
             callbackResponse = callback
         }, JsonOpts);
-        return new MarketplaceCall(true, 201, $"demo://{listing.MarketplaceCode}/items", JsonSerializer.Serialize(callback, JsonOpts), tech);
+        return new MarketplaceCall(true, 201, url, JsonSerializer.Serialize(callback, JsonOpts), tech);
     }
 
     static object TryParseJson(string raw)

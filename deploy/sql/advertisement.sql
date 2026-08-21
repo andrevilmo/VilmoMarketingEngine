@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS advertisement (
   kind varchar(16) NOT NULL,
   sku varchar(64) NOT NULL,
   title text NOT NULL,
+  family_name varchar(60) NOT NULL DEFAULT '',
   description text NULL,
   price numeric NOT NULL,
   currency varchar(8) NOT NULL,
@@ -21,6 +22,10 @@ CREATE TABLE IF NOT EXISTS advertisement (
   length_cm numeric NULL,
   created_at timestamptz NOT NULL
 );
+
+ALTER TABLE advertisement ADD COLUMN IF NOT EXISTS family_name varchar(60) NOT NULL DEFAULT '';
+UPDATE advertisement SET family_name = LEFT(title, 60)
+  WHERE TRIM(COALESCE(family_name, '')) = '';
 
 CREATE UNIQUE INDEX IF NOT EXISTS ix_advertisement_company_vendor_sku
   ON advertisement (company_id, vendor_user_id, sku);
@@ -60,6 +65,14 @@ CREATE TABLE IF NOT EXISTS marketplace_listing_field_definition (
 
 CREATE UNIQUE INDEX IF NOT EXISTS ix_mkt_listing_field_code_key
   ON marketplace_listing_field_definition (marketplace_code, field_key);
+
+INSERT INTO marketplace_listing_field_definition
+  (id, marketplace_code, field_key, label, value_kind, is_common, required, sort_order)
+SELECT gen_random_uuid(), '*', 'familyName', 'Nome da família', 'string', true, true, 2
+WHERE NOT EXISTS (
+  SELECT 1 FROM marketplace_listing_field_definition
+  WHERE marketplace_code = '*' AND field_key = 'familyName'
+);
 
 ALTER TABLE listing ADD COLUMN IF NOT EXISTS advertisement_id uuid NULL;
 

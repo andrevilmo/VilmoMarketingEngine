@@ -124,6 +124,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         b.Entity<Advertisement>(e =>
         {
             e.ToTable("advertisement");
+            e.Property(x => x.FamilyName).HasMaxLength(60).IsRequired();
             e.HasIndex(x => new { x.CompanyId, x.VendorUserId, x.Sku }).IsUnique();
             e.HasMany(x => x.Items).WithOne().HasForeignKey(i => i.AdvertisementId);
             e.HasMany(x => x.Attributes).WithOne().HasForeignKey(a => a.AdvertisementId);

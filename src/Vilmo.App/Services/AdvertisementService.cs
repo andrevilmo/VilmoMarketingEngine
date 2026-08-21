@@ -84,6 +84,11 @@ public sealed class AdvertisementService(AppDbContext db, ListingPublishLogServi
         var price = draft.Price ?? primary.SalePrice;
         if (string.IsNullOrWhiteSpace(title))
             throw new ArgumentException("TitleRequired");
+        var familyName = string.IsNullOrWhiteSpace(draft.FamilyName) ? title : draft.FamilyName.Trim();
+        if (string.IsNullOrWhiteSpace(familyName))
+            throw new ArgumentException("FamilyNameRequired");
+        if (familyName.Length > 60)
+            throw new ArgumentException("FamilyNameTooLong");
         if (price < 0)
             throw new ArgumentException("InvalidPrice");
         var available = draft.AvailableQuantity ?? 1;
@@ -116,6 +121,7 @@ public sealed class AdvertisementService(AppDbContext db, ListingPublishLogServi
 
         ad.Kind = kind;
         ad.Title = title;
+        ad.FamilyName = familyName;
         ad.Description = draft.Description;
         ad.Price = price;
         ad.Currency = string.IsNullOrWhiteSpace(draft.Currency) ? "BRL" : draft.Currency;
@@ -371,6 +377,7 @@ public sealed class AdvertisementService(AppDbContext db, ListingPublishLogServi
         a.Kind,
         a.Sku,
         a.Title,
+        a.FamilyName,
         a.Description,
         a.Price,
         a.Currency,
@@ -460,6 +467,7 @@ public sealed class AdvertisementService(AppDbContext db, ListingPublishLogServi
             body.TryGetProperty("sku", out var skuEl) ? skuEl.GetString() : null,
             body.TryGetProperty("kind", out var kindEl) ? kindEl.GetString() ?? "" : "",
             body.TryGetProperty("title", out var titleEl) ? titleEl.GetString() ?? "" : "",
+            body.TryGetProperty("familyName", out var famEl) ? famEl.GetString() : null,
             body.TryGetProperty("description", out var descEl) ? descEl.GetString() : null,
             Num(body, "price"),
             body.TryGetProperty("currency", out var curEl) ? curEl.GetString() : "BRL",
@@ -488,7 +496,7 @@ public sealed class AdvertisementService(AppDbContext db, ListingPublishLogServi
     }
 
     sealed record AdvertisementParse(
-        string? Sku, string Kind, string Title, string? Description, decimal? Price, string? Currency,
+        string? Sku, string Kind, string Title, string? FamilyName, string? Description, decimal? Price, string? Currency,
         decimal? AvailableQuantity, string? Condition, string? Brand, string? Gtin,
         decimal? WeightGrams, decimal? HeightCm, decimal? WidthCm, decimal? LengthCm,
         Guid? VendorUserId, List<string>? MarketplaceCodes, bool EnqueuePublish,

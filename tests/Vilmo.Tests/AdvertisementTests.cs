@@ -61,6 +61,7 @@ public class AdvertisementApiTests : IClassFixture<ApiFactory>
         using var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync());
         var keys = doc.RootElement.GetProperty("common").EnumerateArray().Select(x => x.GetProperty("fieldKey").GetString()).ToList();
         Assert.Contains("title", keys);
+        Assert.Contains("familyName", keys);
         Assert.Contains("price", keys);
         Assert.Contains("availableQuantity", keys);
         Assert.True(doc.RootElement.GetProperty("byMarketplace").TryGetProperty("MercadoLivre", out var ml));
@@ -90,6 +91,7 @@ public class AdvertisementApiTests : IClassFixture<ApiFactory>
             kind = "Kit",
             sku,
             title = "Kit camiseta e calça",
+            familyName = "Kit camiseta e calça",
             description = "Conjunto",
             price = 199.90m,
             availableQuantity = 3,
@@ -111,6 +113,7 @@ public class AdvertisementApiTests : IClassFixture<ApiFactory>
         var ad = created.RootElement.GetProperty("advertisement");
         Assert.Equal("Kit", ad.GetProperty("kind").GetString());
         Assert.Equal(sku, ad.GetProperty("sku").GetString());
+        Assert.Equal("Kit camiseta e calça", ad.GetProperty("familyName").GetString());
         Assert.Equal(2, ad.GetProperty("items").GetArrayLength());
         Assert.Contains(ad.GetProperty("channels").EnumerateArray(), c => c.GetProperty("marketplaceCode").GetString() == "MercadoLivre");
         Assert.Contains(ad.GetProperty("channels").EnumerateArray(), c => c.GetProperty("status").GetString() == ListingStatuses.Draft);
@@ -188,6 +191,7 @@ public class AdvertisementApiTests : IClassFixture<ApiFactory>
             kind = "Product",
             sku,
             title = "Só na empresa B",
+            familyName = "Produto B",
             price = 10m,
             availableQuantity = 1,
             marketplaceCodes = new[] { "MercadoLivre" },
@@ -241,6 +245,7 @@ public class AdvertisementApiTests : IClassFixture<ApiFactory>
             kind = "Product",
             sku,
             title = "Camiseta canais",
+            familyName = "Camiseta canal teste",
             price = 89.90m,
             availableQuantity = 4,
             marketplaceCodes = new[] { "MercadoLivre", "Shopee" },
@@ -276,6 +281,8 @@ public class AdvertisementApiTests : IClassFixture<ApiFactory>
         Assert.Contains("callbackResponse", callbackTech);
         Assert.Contains("\"request\"", callbackTech);
         Assert.Contains("\"response\"", callbackTech);
+        Assert.Contains("family_name", callbackTech);
+        Assert.Contains("Camiseta canal teste", callbackTech);
 
         var shopeeDraft = live.RootElement.GetProperty("advertisement").GetProperty("channels").EnumerateArray()
             .First(c => c.GetProperty("marketplaceCode").GetString() == "Shopee");
@@ -310,6 +317,39 @@ public class AdvertisementApiTests : IClassFixture<ApiFactory>
         var get = await _client.SendAsync(Authed(HttpMethod.Get, $"/advertisements/{id}", token, companyId: companyId));
         get.EnsureSuccessStatusCode();
         Assert.Contains(sku, await get.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task Family_name_falls_back_to_title_and_rejects_too_long()
+    {
+        var (token, companyId) = await AdminAsync();
+        var sku = $"AD-FAM-{Guid.NewGuid():N}"[..16].ToUpperInvariant();
+        var pub = await _client.SendAsync(Authed(HttpMethod.Post, "/advertisements", token, new
+        {
+            kind = "Product",
+            sku,
+            title = "Título vira família",
+            price = 10m,
+            availableQuantity = 1,
+            marketplaceCodes = new[] { "MercadoLivre" },
+            items = new[] { new { sku = "CAMISETA-001", quantity = 1m } }
+        }, companyId));
+        Assert.Equal(HttpStatusCode.Created, pub.StatusCode);
+        using var created = JsonDocument.Parse(await pub.Content.ReadAsStringAsync());
+        Assert.Equal("Título vira família", created.RootElement.GetProperty("advertisement").GetProperty("familyName").GetString());
+
+        var tooLong = await _client.SendAsync(Authed(HttpMethod.Post, "/advertisements", token, new
+        {
+            kind = "Product",
+            sku = $"{sku}-L",
+            title = "Ok",
+            familyName = new string('A', 61),
+            price = 10m,
+            items = new[] { new { sku = "CAMISETA-001", quantity = 1m } },
+            marketplaceCodes = new[] { "MercadoLivre" }
+        }, companyId));
+        Assert.Equal(HttpStatusCode.BadRequest, tooLong.StatusCode);
+        Assert.Contains("FamilyNameTooLong", await tooLong.Content.ReadAsStringAsync());
     }
 }
 

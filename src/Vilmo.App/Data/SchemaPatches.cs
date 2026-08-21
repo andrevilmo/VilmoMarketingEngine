@@ -48,6 +48,7 @@ public static class SchemaPatches
               kind varchar(16) NOT NULL,
               sku varchar(64) NOT NULL,
               title text NOT NULL,
+              family_name varchar(60) NOT NULL DEFAULT '',
               description text NULL,
               price numeric NOT NULL,
               currency varchar(8) NOT NULL,
@@ -61,6 +62,13 @@ public static class SchemaPatches
               length_cm numeric NULL,
               created_at timestamptz NOT NULL
             );
+            """, ct);
+        await db.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE advertisement ADD COLUMN IF NOT EXISTS family_name varchar(60) NOT NULL DEFAULT '';
+            """, ct);
+        await db.Database.ExecuteSqlRawAsync("""
+            UPDATE advertisement SET family_name = LEFT(title, 60)
+              WHERE TRIM(COALESCE(family_name, '')) = '';
             """, ct);
         await db.Database.ExecuteSqlRawAsync("""
             CREATE UNIQUE INDEX IF NOT EXISTS ix_advertisement_company_vendor_sku
@@ -107,6 +115,15 @@ public static class SchemaPatches
         await db.Database.ExecuteSqlRawAsync("""
             CREATE UNIQUE INDEX IF NOT EXISTS ix_mkt_listing_field_code_key
               ON marketplace_listing_field_definition (marketplace_code, field_key);
+            """, ct);
+        await db.Database.ExecuteSqlRawAsync("""
+            INSERT INTO marketplace_listing_field_definition
+              (id, marketplace_code, field_key, label, value_kind, is_common, required, sort_order)
+            SELECT gen_random_uuid(), '*', 'familyName', 'Nome da família', 'string', true, true, 2
+            WHERE NOT EXISTS (
+              SELECT 1 FROM marketplace_listing_field_definition
+              WHERE marketplace_code = '*' AND field_key = 'familyName'
+            );
             """, ct);
         await db.Database.ExecuteSqlRawAsync("""
             ALTER TABLE listing ADD COLUMN IF NOT EXISTS advertisement_id uuid NULL;

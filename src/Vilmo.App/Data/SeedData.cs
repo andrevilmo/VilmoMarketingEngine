@@ -88,16 +88,17 @@ public static class SeedData
             });
 
         Field("*", "title", "Título", "string", true, true, 1);
-        Field("*", "description", "Descrição", "text", true, false, 2);
-        Field("*", "price", "Preço (BRL)", "money", true, true, 3);
-        Field("*", "availableQuantity", "Quantidade do anúncio", "number", true, true, 4);
-        Field("*", "condition", "Condição (new/used)", "string", true, true, 5);
-        Field("*", "brand", "Marca", "string", true, false, 6);
-        Field("*", "gtin", "EAN / GTIN", "string", true, false, 7);
-        Field("*", "weightGrams", "Peso (g)", "number", true, false, 8);
-        Field("*", "heightCm", "Altura (cm)", "number", true, false, 9);
-        Field("*", "widthCm", "Largura (cm)", "number", true, false, 10);
-        Field("*", "lengthCm", "Comprimento (cm)", "number", true, false, 11);
+        Field("*", "familyName", "Nome da família", "string", true, true, 2);
+        Field("*", "description", "Descrição", "text", true, false, 3);
+        Field("*", "price", "Preço (BRL)", "money", true, true, 4);
+        Field("*", "availableQuantity", "Quantidade do anúncio", "number", true, true, 5);
+        Field("*", "condition", "Condição (new/used)", "string", true, true, 6);
+        Field("*", "brand", "Marca", "string", true, false, 7);
+        Field("*", "gtin", "EAN / GTIN", "string", true, false, 8);
+        Field("*", "weightGrams", "Peso (g)", "number", true, false, 9);
+        Field("*", "heightCm", "Altura (cm)", "number", true, false, 10);
+        Field("*", "widthCm", "Largura (cm)", "number", true, false, 11);
+        Field("*", "lengthCm", "Comprimento (cm)", "number", true, false, 12);
 
         Field("MercadoLivre", "categoryId", "Categoria ML", "string", false, true, 20);
         Field("MercadoLivre", "listingTypeId", "Tipo de anúncio (gold_special, gold_pro)", "string", false, false, 21);
