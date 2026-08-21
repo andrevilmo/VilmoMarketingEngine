@@ -19,6 +19,12 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<InventoryBalance> InventoryBalances => Set<InventoryBalance>();
     public DbSet<InventoryMovement> InventoryMovements => Set<InventoryMovement>();
     public DbSet<Listing> Listings => Set<Listing>();
+    public DbSet<ListingPublishLog> ListingPublishLogs => Set<ListingPublishLog>();
+    public DbSet<MarketplaceConnectLog> MarketplaceConnectLogs => Set<MarketplaceConnectLog>();
+    public DbSet<Advertisement> Advertisements => Set<Advertisement>();
+    public DbSet<AdvertisementItem> AdvertisementItems => Set<AdvertisementItem>();
+    public DbSet<AdvertisementAttribute> AdvertisementAttributes => Set<AdvertisementAttribute>();
+    public DbSet<MarketplaceListingFieldDefinition> MarketplaceListingFieldDefinitions => Set<MarketplaceListingFieldDefinition>();
     public DbSet<Sale> Sales => Set<Sale>();
     public DbSet<SaleItem> SaleItems => Set<SaleItem>();
     public DbSet<SaleMarketplaceAttribute> SaleMarketplaceAttributes => Set<SaleMarketplaceAttribute>();
@@ -102,6 +108,41 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         {
             e.ToTable("listing");
             e.HasIndex(x => new { x.CompanyId, x.VendorUserId, x.Sku, x.MarketplaceCode }).IsUnique();
+        });
+        b.Entity<ListingPublishLog>(e =>
+        {
+            e.ToTable("listing_publish_log");
+            e.HasIndex(x => new { x.CompanyId, x.ListingId, x.CreatedAt });
+            e.HasIndex(x => x.RunId);
+        });
+        b.Entity<MarketplaceConnectLog>(e =>
+        {
+            e.ToTable("marketplace_connect_log");
+            e.HasIndex(x => new { x.CompanyId, x.MarketplaceCode, x.CreatedAt });
+            e.HasIndex(x => x.RunId);
+        });
+        b.Entity<Advertisement>(e =>
+        {
+            e.ToTable("advertisement");
+            e.Property(x => x.FamilyName).HasMaxLength(60).IsRequired();
+            e.HasIndex(x => new { x.CompanyId, x.VendorUserId, x.Sku }).IsUnique();
+            e.HasMany(x => x.Items).WithOne().HasForeignKey(i => i.AdvertisementId);
+            e.HasMany(x => x.Attributes).WithOne().HasForeignKey(a => a.AdvertisementId);
+        });
+        b.Entity<AdvertisementItem>(e =>
+        {
+            e.ToTable("advertisement_item");
+            e.HasIndex(x => new { x.AdvertisementId, x.Sku }).IsUnique();
+        });
+        b.Entity<AdvertisementAttribute>(e =>
+        {
+            e.ToTable("advertisement_attribute");
+            e.HasIndex(x => new { x.AdvertisementId, x.MarketplaceCode, x.FieldName }).IsUnique();
+        });
+        b.Entity<MarketplaceListingFieldDefinition>(e =>
+        {
+            e.ToTable("marketplace_listing_field_definition");
+            e.HasIndex(x => new { x.MarketplaceCode, x.FieldKey }).IsUnique();
         });
         b.Entity<Sale>(e =>
         {

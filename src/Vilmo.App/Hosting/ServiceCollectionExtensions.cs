@@ -37,8 +37,16 @@ public static class ServiceCollectionExtensions
         services.AddScoped<SalesService>();
         services.AddScoped<LabelService>();
         services.AddScoped<MarketplaceService>();
+        services.AddScoped<MarketplaceConnectLogService>();
         services.AddScoped<ProvisioningService>();
         services.AddScoped<ProductService>();
+        services.AddScoped<ListingPublishLogService>();
+        services.AddScoped<ListingPublishRunner>();
+        services.AddScoped<AdvertisementService>();
+        services.AddSingleton<AdvertisementPictureStore>();
+        services.AddScoped<MercadoLivreCategoryService>();
+        services.AddMemoryCache();
+        services.AddHttpClient("marketplace", c => c.Timeout = TimeSpan.FromSeconds(20));
         services.AddScoped<WorkProcessor>();
         services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             .AddJwtBearer(o =>
