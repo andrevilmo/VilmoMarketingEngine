@@ -148,13 +148,22 @@ public sealed class AdvertisementService(AppDbContext db, ListingPublishLogServi
         foreach (var attr in draft.Attributes)
         {
             if (string.IsNullOrWhiteSpace(attr.FieldName)) continue;
+            var value = attr.FieldValue ?? "";
+            if (attr.MarketplaceCode.Equals("MercadoLivre", StringComparison.OrdinalIgnoreCase)
+                && attr.FieldName.Equals("categoryId", StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrWhiteSpace(value))
+            {
+                if (!MercadoLivreCategoryId.TryNormalize(value, out var mlId))
+                    throw new ArgumentException("InvalidCategoryId");
+                value = mlId;
+            }
             db.AdvertisementAttributes.Add(new AdvertisementAttribute
             {
                 Id = Guid.NewGuid(),
                 AdvertisementId = ad.Id,
                 MarketplaceCode = attr.MarketplaceCode,
                 FieldName = attr.FieldName.Trim(),
-                FieldValue = attr.FieldValue ?? ""
+                FieldValue = value
             });
         }
 

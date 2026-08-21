@@ -151,6 +151,20 @@ public class MercadoLivreCategoryTests : IClassFixture<ApiFactory>
         Assert.Equal("MLB188064", sug.Items[0].CategoryId);
     }
 
+    [Fact]
+    public void Normalize_extracts_mlb_code_and_rejects_names()
+    {
+        Assert.True(MercadoLivreCategoryId.TryNormalize("MLB5672", out var a));
+        Assert.Equal("MLB5672", a);
+        Assert.True(MercadoLivreCategoryId.TryNormalize("mlb1430", out var b));
+        Assert.Equal("MLB1430", b);
+        Assert.True(MercadoLivreCategoryId.TryNormalize("Vestuário (MLB5672)", out var c));
+        Assert.Equal("MLB5672", c);
+        Assert.False(MercadoLivreCategoryId.TryNormalize("Vestuário", out _));
+        Assert.False(MercadoLivreCategoryId.TryNormalize("TESTE", out _));
+        Assert.False(MercadoLivreCategoryId.TryNormalize("", out _));
+    }
+
     static AppDbContext Sqlite()
     {
         var opts = new DbContextOptionsBuilder<AppDbContext>()

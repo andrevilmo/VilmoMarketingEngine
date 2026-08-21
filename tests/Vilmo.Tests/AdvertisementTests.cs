@@ -353,6 +353,66 @@ public class AdvertisementApiTests : IClassFixture<ApiFactory>
         Assert.Equal(HttpStatusCode.BadRequest, tooLong.StatusCode);
         Assert.Contains("FamilyNameTooLong", await tooLong.Content.ReadAsStringAsync());
     }
+
+    [Fact]
+    public async Task MercadoLivre_category_name_is_rejected_and_code_is_published()
+    {
+        var (token, companyId) = await AdminAsync();
+        var bad = await _client.SendAsync(Authed(HttpMethod.Post, "/advertisements", token, new
+        {
+            kind = "Product",
+            sku = $"AD-CAT-{Guid.NewGuid():N}"[..16].ToUpperInvariant(),
+            title = "Categoria nome",
+            familyName = "Categoria nome",
+            price = 10m,
+            availableQuantity = 1,
+            marketplaceCodes = new[] { "MercadoLivre" },
+            items = new[] { new { sku = "CAMISETA-001", quantity = 1m } },
+            attributes = new[]
+            {
+                new { marketplaceCode = "MercadoLivre", fieldName = "categoryId", fieldValue = "Vestuário" }
+            }
+        }, companyId));
+        Assert.Equal(HttpStatusCode.BadRequest, bad.StatusCode);
+        Assert.Contains("InvalidCategoryId", await bad.Content.ReadAsStringAsync());
+
+        var sku = $"AD-CAT-{Guid.NewGuid():N}"[..16].ToUpperInvariant();
+        var pub = await _client.SendAsync(Authed(HttpMethod.Post, "/advertisements", token, new
+        {
+            kind = "Product",
+            sku,
+            title = "Categoria codigo",
+            familyName = "Categoria codigo",
+            price = 29.90m,
+            availableQuantity = 2,
+            marketplaceCodes = new[] { "MercadoLivre" },
+            items = new[] { new { sku = "CAMISETA-001", quantity = 1m } },
+            attributes = new[]
+            {
+                new { marketplaceCode = "MercadoLivre", fieldName = "categoryId", fieldValue = "Vestuário (MLB5672)" }
+            }
+        }, companyId));
+        Assert.Equal(HttpStatusCode.Created, pub.StatusCode);
+        using var created = JsonDocument.Parse(await pub.Content.ReadAsStringAsync());
+        var ad = created.RootElement.GetProperty("advertisement");
+        var id = ad.GetProperty("id").GetGuid();
+        Assert.Contains(ad.GetProperty("attributes").EnumerateArray(), x =>
+            x.GetProperty("fieldName").GetString() == "categoryId"
+            && x.GetProperty("fieldValue").GetString() == "MLB5672");
+
+        var proceed = await _client.SendAsync(Authed(HttpMethod.Post,
+            $"/advertisements/{id}/channels/MercadoLivre/publish", token, new { }, companyId));
+        proceed.EnsureSuccessStatusCode();
+        using var live = JsonDocument.Parse(await proceed.Content.ReadAsStringAsync());
+        var ml = live.RootElement.GetProperty("advertisement").GetProperty("channels").EnumerateArray()
+            .First(c => c.GetProperty("marketplaceCode").GetString() == "MercadoLivre");
+        var callback = ml.GetProperty("publishLog").EnumerateArray()
+            .First(x => x.GetProperty("stepCode").GetString() == "callback");
+        using var techDoc = JsonDocument.Parse(callback.GetProperty("technicalJson").GetString()!);
+        var reqBody = techDoc.RootElement.GetProperty("request").GetProperty("body");
+        Assert.Equal("MLB5672", reqBody.GetProperty("category_id").GetString());
+        Assert.NotEqual("Vestuário", reqBody.GetProperty("category_id").GetString());
+    }
 }
 
 public class KitInventoryTests

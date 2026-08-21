@@ -55,6 +55,17 @@ public sealed class ListingPublishRunner(
 
         if (linked)
         {
+            if (IsInvalidMercadoLivreCategory(ad, listing, out var rawCategory))
+            {
+                listing.Status = ListingStatuses.Error;
+                listing.RemoteStatus = "error";
+                listing.LastSyncedAt = DateTimeOffset.UtcNow;
+                await logs.WriteAsync(ad.CompanyId, runId, ad.Id, listing.Id, listing.MarketplaceCode, action,
+                    ListingPublishLogSteps.Failed, "error",
+                    "Categoria ML deve ser o código da opção selecionada (ex.: MLB5672), não o nome.",
+                    new { categoryId = rawCategory }, ct);
+                return;
+            }
             listing.Status = ListingStatuses.Queued;
             var call = await CallMarketplaceAsync(ad, listing, marketplace, token!, "publish", runId, ct);
             await WriteCallbackAsync(ad, listing, runId, action, call, ct);
@@ -259,7 +270,7 @@ public sealed class ListingPublishRunner(
         var payload = new Dictionary<string, object?>
         {
             ["family_name"] = familyName,
-            ["category_id"] = Attr(attrs, "categoryId"),
+            ["category_id"] = ResolveCategoryId(listing.MarketplaceCode, attrs),
             ["price"] = ad.Price,
             ["currency_id"] = string.IsNullOrWhiteSpace(ad.Currency) ? "BRL" : ad.Currency,
             ["available_quantity"] = ad.AvailableQuantity,
@@ -278,6 +289,28 @@ public sealed class ListingPublishRunner(
 
     static string? Attr(IReadOnlyDictionary<string, string> attrs, string key) =>
         attrs.TryGetValue(key, out var v) && !string.IsNullOrWhiteSpace(v) ? v : null;
+
+    static string? ResolveCategoryId(string marketplaceCode, IReadOnlyDictionary<string, string> attrs)
+    {
+        var raw = Attr(attrs, "categoryId");
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        if (!marketplaceCode.Equals("MercadoLivre", StringComparison.OrdinalIgnoreCase))
+            return raw;
+        return MercadoLivreCategoryId.TryNormalize(raw, out var id) ? id : null;
+    }
+
+    static bool IsInvalidMercadoLivreCategory(Advertisement ad, Listing listing, out string? raw)
+    {
+        raw = ad.Attributes
+            .FirstOrDefault(a =>
+                a.MarketplaceCode.Equals(listing.MarketplaceCode, StringComparison.OrdinalIgnoreCase)
+                && a.FieldName.Equals("categoryId", StringComparison.OrdinalIgnoreCase))
+            ?.FieldValue;
+        if (!listing.MarketplaceCode.Equals("MercadoLivre", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (string.IsNullOrWhiteSpace(raw)) return false;
+        return !MercadoLivreCategoryId.TryNormalize(raw, out _);
+    }
 
     async Task<string?> ReadTokenAsync(Guid configId, CancellationToken ct)
     {

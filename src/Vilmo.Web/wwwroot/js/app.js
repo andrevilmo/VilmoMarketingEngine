@@ -194,6 +194,7 @@ const Vilmo = (() => {
       QueryRequired: "Preencha o título ou o nome da família para sugerir a categoria.",
       CategoryNotFound: "Categoria do Mercado Livre não encontrada.",
       CategorySuggestFailed: "Não foi possível sugerir a categoria no Mercado Livre.",
+      InvalidCategoryId: "Categoria ML deve ser o código da opção (ex.: MLB5672), não o nome.",
       NoChannels: "Este anúncio não tem canais.",
       AdvertisementNotFound: "Anúncio não encontrado.",
       ListingNotFound: "Canal não encontrado neste anúncio."
@@ -519,18 +520,19 @@ const Vilmo = (() => {
     const productOpts = (products || []).map(p => `<option value="${esc(p.sku)}">${esc(p.sku)} · ${esc(p.name)}</option>`).join("");
     const extraByMkt = fields.byMarketplace || {};
     const extraField = (m, d) => {
-      if (m.code === "MercadoLivre" && d.fieldKey === "categoryId") {
+      const key = d.fieldKey || d.FieldKey;
+      if (m.code === "MercadoLivre" && key === "categoryId") {
         return `<div class="ml-cat col-span-2">
           <div class="ml-cat-head">
             <span>${esc(d.label)}</span>
             <button type="button" class="kt-btn kt-btn-outline kt-btn-sm ml-cat-predict">Sugerir pela descrição/título</button>
           </div>
           <div class="ml-cat-levels vilmo-grid cols-2"></div>
-          <input type="hidden" class="attr-field ml-cat-value" data-mkt="${esc(m.code)}" data-key="${esc(d.fieldKey)}">
-          <p class="ml-cat-hint text-xs text-muted-foreground"></p>
+          <input type="hidden" class="attr-field ml-cat-value" data-mkt="${esc(m.code)}" data-key="${esc(key)}" value="">
+          <p class="ml-cat-hint text-xs text-muted-foreground">O Mercado Livre recebe o código da opção (MLB…), não o nome.</p>
         </div>`;
       }
-      return `<label>${esc(d.label)}<input class="kt-input attr-field" data-mkt="${esc(m.code)}" data-key="${esc(d.fieldKey)}"></label>`;
+      return `<label>${esc(d.label)}<input class="kt-input attr-field" data-mkt="${esc(m.code)}" data-key="${esc(key)}"></label>`;
     };
     const extras = (markets || []).map(m => {
       const defs = extraByMkt[m.code] || extraByMkt[m.Code] || [];
@@ -868,10 +870,34 @@ const Vilmo = (() => {
       syncKind();
       const mlCat = {
         roots: null,
+        catCode(c) {
+          const raw = typeof c === "string" || typeof c === "number"
+            ? c
+            : (c && (c.id || c.Id || c.categoryId || c.category_id)) || "";
+          const m = String(raw).match(/MLB\d+/i);
+          return m ? m[0].toUpperCase() : "";
+        },
+        catName(c) {
+          if (!c || typeof c === "string" || typeof c === "number") return "";
+          return c.name || c.Name || c.categoryName || c.category_name || "";
+        },
+        selectedId(sel) {
+          const opt = sel && sel.selectedIndex >= 0 ? sel.options[sel.selectedIndex] : null;
+          if (!opt) return "";
+          const attr = opt.getAttribute("data-ml-id") || opt.getAttribute("value") || "";
+          const fromText = String(opt.textContent || "").match(/MLB\d+/i);
+          return this.catCode(attr || (fromText ? fromText[0] : ""));
+        },
+        optionFrom(o) {
+          const id = this.catCode(o.getAttribute("data-ml-id") || o.getAttribute("value") || "");
+          if (!id) return null;
+          const name = (o.textContent || "").replace(/\s*\(MLB\d+\)\s*$/i, "").trim();
+          return { id, name: name || id };
+        },
         async rootsList() {
           if (this.roots) return this.roots;
           const r = await api("/marketplaces/MercadoLivre/categories");
-          this.roots = r.items || [];
+          this.roots = r.items || r.Items || [];
           return this.roots;
         },
         wrap() { return document.querySelector(".ml-cat"); },
@@ -879,30 +905,48 @@ const Vilmo = (() => {
         levels() { return document.querySelector(".ml-cat-levels"); },
         hint(text) {
           const el = document.querySelector(".ml-cat-hint");
-          if (el) el.textContent = text || "";
+          if (el) el.textContent = text || "O Mercado Livre recebe o código da opção (MLB…), não o nome.";
         },
         optionHtml(list, selected) {
-          const opts = [`<option value="">Selecionar…</option>`]
-            .concat((list || []).map(c => `<option value="${esc(c.id)}" ${c.id === selected ? "selected" : ""}>${esc(c.name)} (${esc(c.id)})</option>`));
-          if (selected && !(list || []).some(c => c.id === selected))
-            opts.push(`<option value="${esc(selected)}" selected>${esc(selected)}</option>`);
+          const sel = this.catCode(selected);
+          const opts = [`<option value="">Selecionar…</option>`];
+          (list || []).forEach(c => {
+            const id = this.catCode(c);
+            if (!id) return;
+            const name = this.catName(c) || id;
+            opts.push(`<option value="${esc(id)}" data-ml-id="${esc(id)}" ${id === sel ? "selected" : ""}>${esc(name)} (${esc(id)})</option>`);
+          });
+          if (sel && !(list || []).some(c => this.catCode(c) === sel))
+            opts.push(`<option value="${esc(sel)}" data-ml-id="${esc(sel)}" selected>${esc(sel)}</option>`);
           return opts.join("");
         },
         selectHtml(list, selected, depth) {
-          return `<label>Nível ${depth + 1}<select class="kt-input ml-cat-select" data-depth="${depth}">${this.optionHtml(list, selected)}</select></label>`;
+          return `<label>Nível ${depth + 1}<select class="kt-select ml-cat-select" data-depth="${depth}">${this.optionHtml(list, selected)}</select></label>`;
+        },
+        syncValue() {
+          const inp = this.valueInp();
+          if (!inp) return "";
+          let id = "";
+          this.wrap()?.querySelectorAll(".ml-cat-select").forEach(sel => {
+            const v = this.selectedId(sel);
+            if (v) id = v;
+          });
+          inp.value = id;
+          return id;
         },
         async setValue(id, meta) {
+          const code = this.catCode(id);
           const inp = this.valueInp();
-          if (inp) inp.value = id || "";
-          if (!id) {
-            this.hint("");
+          if (inp) inp.value = code;
+          if (!code) {
+            this.hint(id ? adErr("InvalidCategoryId") : "");
             return;
           }
-          const name = meta && meta.name ? meta.name : id;
+          const name = this.catName(meta) || (meta && meta.name) || code;
           const extra = meta && meta.leaf === false
             ? " Há subcategorias — escolha uma mais específica para publicar."
             : "";
-          this.hint(`${name} · ${id}${extra}`);
+          this.hint(`${name} · ${code}${extra}`);
         },
         bindSelects() {
           this.levels()?.querySelectorAll(".ml-cat-select").forEach(sel => {
@@ -911,15 +955,12 @@ const Vilmo = (() => {
         },
         async onChange(sel) {
           const depth = Number(sel.dataset.depth || 0);
-          const id = sel.value;
+          const id = this.selectedId(sel);
           const box = this.levels();
           if (!box) return;
           const snapshot = [...box.querySelectorAll(".ml-cat-select")].slice(0, depth + 1).map(s => ({
-            selected: s === sel ? id : s.value,
-            options: [...s.options].filter(o => o.value).map(o => {
-              const label = (o.textContent || "").replace(/\s*\([^)]+\)\s*$/, "");
-              return { id: o.value, name: label || o.value };
-            })
+            selected: s === sel ? id : this.selectedId(s),
+            options: [...s.options].map(o => this.optionFrom(o)).filter(Boolean)
           }));
           this.seq = (this.seq || 0) + 1;
           const seq = this.seq;
@@ -936,10 +977,11 @@ const Vilmo = (() => {
             const detail = await api(`/marketplaces/MercadoLivre/categories/${encodeURIComponent(id)}`);
             if (seq !== this.seq) return;
             const levels = snapshot.slice();
-            if (detail.children && detail.children.length)
-              levels.push({ options: detail.children, selected: "" });
+            const children = detail.children || detail.Children || [];
+            if (children.length)
+              levels.push({ options: children, selected: "" });
             paint(levels);
-            await this.setValue(detail.id, detail);
+            await this.setValue(detail.id || detail.Id || id, detail);
           } catch {
             if (seq !== this.seq) return;
             paint(snapshot);
@@ -950,37 +992,43 @@ const Vilmo = (() => {
           const box = this.levels();
           if (!box) return;
           const roots = await this.rootsList();
-          box.innerHTML = this.selectHtml(roots, selected || "", 0);
+          const code = this.catCode(selected);
+          box.innerHTML = this.selectHtml(roots, code, 0);
           this.bindSelects();
-          if (!selected) await this.setValue("");
+          if (!code) await this.setValue("");
+          else await this.setValue(code);
         },
         async apply(id) {
           const box = this.levels();
           if (!box) return;
-          if (!id) {
+          const code = this.catCode(id);
+          if (!code) {
             await this.showRoots();
+            if (id) this.hint(adErr("InvalidCategoryId"));
             return;
           }
           try {
-            const detail = await api(`/marketplaces/MercadoLivre/categories/${encodeURIComponent(id)}`);
-            const path = (detail.pathFromRoot && detail.pathFromRoot.length) ? detail.pathFromRoot : [{ id: detail.id, name: detail.name }];
+            const detail = await api(`/marketplaces/MercadoLivre/categories/${encodeURIComponent(code)}`);
+            const path = (detail.pathFromRoot && detail.pathFromRoot.length)
+              ? detail.pathFromRoot
+              : (detail.PathFromRoot && detail.PathFromRoot.length)
+                ? detail.PathFromRoot
+                : [{ id: detail.id || detail.Id || code, name: this.catName(detail) }];
             const roots = await this.rootsList();
-            let html = this.selectHtml(roots, path[0].id, 0);
+            let html = this.selectHtml(roots, this.catCode(path[0]), 0);
             for (let i = 0; i < path.length; i++) {
-              const node = i === path.length - 1 ? detail : await api(`/marketplaces/MercadoLivre/categories/${encodeURIComponent(path[i].id)}`);
-              const kids = node.children || [];
-              const nextId = path[i + 1] ? path[i + 1].id : "";
+              const nodeId = this.catCode(path[i]);
+              const node = i === path.length - 1 ? detail : await api(`/marketplaces/MercadoLivre/categories/${encodeURIComponent(nodeId)}`);
+              const kids = node.children || node.Children || [];
+              const nextId = path[i + 1] ? this.catCode(path[i + 1]) : "";
               if (kids.length)
                 html += this.selectHtml(kids, nextId, i + 1);
             }
             box.innerHTML = html;
             this.bindSelects();
-            await this.setValue(detail.id, detail);
+            await this.setValue(detail.id || detail.Id || code, detail);
           } catch {
-            const roots = await this.rootsList();
-            box.innerHTML = this.selectHtml(roots, id, 0);
-            this.bindSelects();
-            await this.setValue(id, { name: id, leaf: true });
+            await this.showRoots(code);
           }
         },
         async ensure() {
@@ -988,7 +1036,7 @@ const Vilmo = (() => {
           const wrap = this.wrap();
           if (!wrap || !on) return;
           const box = this.levels();
-          if (box && !box.querySelector(".ml-cat-select")) await this.showRoots(this.valueInp()?.value);
+          if (box && !box.querySelector(".ml-cat-select")) await this.showRoots(this.catCode(this.valueInp()?.value));
         },
         async predict() {
           const form = document.getElementById("ad-form");
@@ -1001,12 +1049,13 @@ const Vilmo = (() => {
           this.hint("Consultando Mercado Livre…");
           try {
             const r = await api(`/marketplaces/MercadoLivre/categories/suggest?q=${encodeURIComponent(q)}`);
-            const first = (r.items || [])[0];
-            if (!first || !first.categoryId) {
+            const first = (r.items || r.Items || [])[0];
+            const sug = first && this.catCode(first.categoryId || first.CategoryId || first);
+            if (!sug) {
               this.hint("Nenhuma categoria sugerida. Escolha na lista.");
               return;
             }
-            await this.apply(first.categoryId);
+            await this.apply(sug);
           } catch (ex) {
             this.hint(adErr(ex.message));
           }
@@ -1054,7 +1103,7 @@ const Vilmo = (() => {
         });
         syncExtras();
         const mlId = (ad.attributes || []).find(x => x.marketplaceCode === "MercadoLivre" && x.fieldName === "categoryId")?.fieldValue;
-        if (mlId) mlCat.apply(mlId);
+        if (mlCat.catCode(mlId)) mlCat.apply(mlId);
         else if (document.querySelector(".mkt-code[value='MercadoLivre']")?.checked) mlCat.showRoots();
         const msg = $("#ad-msg");
         if (msg) msg.innerHTML = `<div class="kt-alert kt-alert-success">Formulário preenchido a partir de ${esc(ad.sku)}. Confira o SKU novo e salve.</div>`;
@@ -1082,9 +1131,18 @@ const Vilmo = (() => {
           quantity: Number(row.querySelector(".item-qty").value || 1)
         })).filter(i => i.sku && i.quantity > 0);
         const marketplaceCodes = [...document.querySelectorAll(".mkt-code:checked")].map(c => c.value);
+        mlCat.syncValue();
         const attributes = [...document.querySelectorAll(".attr-field")]
           .filter(inp => marketplaceCodes.includes(inp.dataset.mkt) && inp.value)
           .map(inp => ({ marketplaceCode: inp.dataset.mkt, fieldName: inp.dataset.key, fieldValue: inp.value }));
+        const msg = $("#ad-msg");
+        if (marketplaceCodes.includes("MercadoLivre")) {
+          const cat = attributes.find(a => a.fieldName === "categoryId")?.fieldValue || "";
+          if (cat && !/^MLB\d+$/i.test(cat)) {
+            if (msg) msg.innerHTML = `<div class="kt-alert kt-alert-danger">${esc(adErr("InvalidCategoryId"))}</div>`;
+            return;
+          }
+        }
         const num = (k) => { const v = fd.get(k); return v === "" || v == null ? null : Number(v); };
         const body = {
           kind: fd.get("kind"),
@@ -1107,7 +1165,6 @@ const Vilmo = (() => {
           items,
           attributes
         };
-        const msg = $("#ad-msg");
         if (!marketplaceCodes.length) {
           if (msg) msg.innerHTML = `<div class="kt-alert kt-alert-danger">${esc(adErr("MarketplaceRequired"))}</div>`;
           return;
