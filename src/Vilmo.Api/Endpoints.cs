@@ -379,6 +379,30 @@ public static class Endpoints
             return Results.Ok(await ads.ListingFieldsAsync(ct));
         }).RequireAuthorization();
 
+        app.MapGet("/marketplaces/MercadoLivre/categories", async (HttpContext http, AppDbContext db, MercadoLivreCategoryService cats, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            return Results.Ok(await cats.ListRootsAsync(ct));
+        }).RequireAuthorization();
+
+        app.MapGet("/marketplaces/MercadoLivre/categories/suggest", async (string? q, HttpContext http, AppDbContext db, MercadoLivreCategoryService cats, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            try { return Results.Ok(await cats.SuggestAsync(q, ct)); }
+            catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+            catch (InvalidOperationException ex) { return Results.BadRequest(new { error = ex.Message }); }
+        }).RequireAuthorization();
+
+        app.MapGet("/marketplaces/MercadoLivre/categories/{categoryId}", async (string categoryId, HttpContext http, AppDbContext db, MercadoLivreCategoryService cats, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            var detail = await cats.GetAsync(categoryId, ct);
+            return detail is null ? Results.NotFound(new { error = "CategoryNotFound" }) : Results.Ok(detail);
+        }).RequireAuthorization();
+
         app.MapPost("/advertisements", Publish).RequireAuthorization();
         app.MapPost("/listings", Publish).RequireAuthorization();
         app.MapGet("/listings", async (HttpContext http, AppDbContext db, AdvertisementService ads, CancellationToken ct) =>

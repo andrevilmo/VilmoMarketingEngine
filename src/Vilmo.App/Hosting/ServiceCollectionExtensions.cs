@@ -43,6 +43,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ListingPublishLogService>();
         services.AddScoped<ListingPublishRunner>();
         services.AddScoped<AdvertisementService>();
+        services.AddScoped<MercadoLivreCategoryService>();
+        services.AddMemoryCache();
         services.AddHttpClient("marketplace", c => c.Timeout = TimeSpan.FromSeconds(20));
         services.AddScoped<WorkProcessor>();
         services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
