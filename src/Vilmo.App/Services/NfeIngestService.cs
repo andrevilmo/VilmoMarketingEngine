@@ -103,13 +103,13 @@ public sealed class NfeIngestService(AppDbContext db, InventoryService inventory
             return new { error = "InvalidXml", message = "XML NF-e não reconhecido.", runId = id };
         }
         var company = await db.Companies.FirstAsync(c => c.Id == companyId, ct);
-        if (parsed.EmitCnpj != company.Cnpj && parsed.DestCnpj != company.Cnpj)
+        var belongsToCompany = parsed.EmitCnpj == company.Cnpj || parsed.DestCnpj == company.Cnpj;
+        if (!belongsToCompany)
         {
-            await logs.WriteAsync(companyId, id, NfeIngestLogSteps.CnpjMismatch, "error",
-                "Este XML não pertence ao CNPJ da empresa selecionada.",
-                new { error = "CnpjMismatch", emitCnpj = parsed.EmitCnpj, destCnpj = parsed.DestCnpj, companyCnpj = company.Cnpj, chave = parsed.Chave },
+            await logs.WriteAsync(companyId, id, NfeIngestLogSteps.ThirdPartyXml, "info",
+                "XML de outro CNPJ. Produtos e estoque serão carregados mesmo assim.",
+                new { emitCnpj = parsed.EmitCnpj, destCnpj = parsed.DestCnpj, companyCnpj = company.Cnpj, chave = parsed.Chave },
                 null, parsed.Chave, ct);
-            return new { error = "CnpjMismatch", message = "XML não pertence ao CNPJ da empresa.", runId = id };
         }
 
         var doc = await db.NfeDocuments.FirstOrDefaultAsync(d => d.CompanyId == companyId && d.ChaveAcesso == parsed.Chave, ct);
@@ -141,14 +141,22 @@ public sealed class NfeIngestService(AppDbContext db, InventoryService inventory
             },
             doc.Id, parsed.Chave, ct);
 
-        await ApplyItemsAsync(company, parsed, ct);
+        var applied = await ApplyItemsAsync(company, parsed, ct);
         doc.Status = "Applied";
         await db.SaveChangesAsync(ct);
         await logs.WriteAsync(companyId, id, NfeIngestLogSteps.StockApplied, "info",
             "Estoque atualizado com os itens de entrada desta nota.",
-            new { nfeDocumentId = doc.Id, chave = parsed.Chave, status = doc.Status, itemCount = parsed.Items.Count },
+            new
+            {
+                nfeDocumentId = doc.Id,
+                chave = parsed.Chave,
+                status = doc.Status,
+                itemCount = parsed.Items.Count,
+                inboundCount = applied.Count,
+                links = applied
+            },
             doc.Id, parsed.Chave, ct);
-        return new { doc.Id, chave = parsed.Chave, status = doc.Status, items = parsed.Items.Count, runId = id };
+        return new { doc.Id, chave = parsed.Chave, status = doc.Status, items = parsed.Items.Count, inbound = applied.Count, runId = id };
     }
 
     public async Task ProcessQueuedAsync(WorkItem work, CancellationToken ct)
@@ -223,15 +231,28 @@ public sealed class NfeIngestService(AppDbContext db, InventoryService inventory
             docId, Extract(work.PayloadJson, "chave"), ct);
     }
 
-    async Task ApplyItemsAsync(Company company, ParsedNfe parsed, CancellationToken ct)
+    async Task<List<object>> ApplyItemsAsync(Company company, ParsedNfe parsed, CancellationToken ct)
     {
+        var links = new List<object>();
         foreach (var item in parsed.Items)
         {
             var move = CfopPolicy.Classify(item.Cfop, parsed.EmitCnpj, parsed.DestCnpj, company.Cnpj);
             var sku = await MatchOrCreateProductAsync(company.Id, parsed.EmitCnpj, item, ct);
-            if (move == CfopMovement.InboundPurchaseOrReturn)
+            var inbound = move == CfopMovement.InboundPurchaseOrReturn && item.Qty > 0;
+            if (inbound)
                 await inventory.ApplyInboundAsync(company.Id, sku, item.Qty, parsed.Chave, item.NItem, ct);
+            links.Add(new
+            {
+                nItem = item.NItem,
+                sku,
+                cProd = item.CProd,
+                cfop = item.Cfop,
+                qty = item.Qty,
+                movement = move.ToString(),
+                inbound
+            });
         }
+        return links;
     }
 
     async Task<string> MatchOrCreateProductAsync(Guid companyId, string emitCnpj, ParsedItem item, CancellationToken ct)
@@ -240,7 +261,15 @@ public sealed class NfeIngestService(AppDbContext db, InventoryService inventory
         if (!string.IsNullOrWhiteSpace(item.Ean) && item.Ean != "SEM GTIN")
             p = await db.Products.FirstOrDefaultAsync(x => x.CompanyId == companyId && x.Ean == item.Ean, ct);
         p ??= await db.Products.FirstOrDefaultAsync(x => x.CompanyId == companyId && x.Sku == item.CProd, ct);
-        if (p is not null) return p.Sku;
+        if (p is not null)
+        {
+            if (!string.IsNullOrWhiteSpace(item.XProd)) p.Name = item.XProd;
+            if (!string.IsNullOrWhiteSpace(item.Ncm)) p.Ncm = item.Ncm;
+            if (!string.IsNullOrWhiteSpace(item.Cfop)) p.Cfop = item.Cfop;
+            if (!string.IsNullOrWhiteSpace(item.Ean) && item.Ean != "SEM GTIN") p.Ean = item.Ean;
+            await db.SaveChangesAsync(ct);
+            return p.Sku;
+        }
         var sku = string.IsNullOrWhiteSpace(item.CProd) ? $"SKU-{item.NItem}" : item.CProd;
         db.Products.Add(new Product
         {
