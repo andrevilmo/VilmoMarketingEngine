@@ -499,6 +499,7 @@ public class MercadoLivreCategoryTests : IClassFixture<ApiFactory>
                 Assert.Contains("SHIRTS", body, StringComparison.Ordinal);
                 Assert.Contains("SIZE", body, StringComparison.Ordinal);
                 Assert.Contains("BODY_MEASURE", body, StringComparison.Ordinal);
+                Assert.Contains("FILTRABLE_SIZE", body, StringComparison.Ordinal);
                 Assert.Contains("CHEST_CIRCUMFERENCE_FROM", body, StringComparison.Ordinal);
                 Assert.DoesNotContain("MLB-SHIRTS", body, StringComparison.Ordinal);
                 return Json(201, """{"id":"998877","names":{"MLB":"Guia de tamanhos camisas Feminino"}}""");
@@ -577,11 +578,65 @@ public class MercadoLivreCategoryTests : IClassFixture<ApiFactory>
         });
         await db.SaveChangesAsync();
         var svc = new MercadoLivreCategoryService(db, new StubFactory(handler), new MemoryCache(new MemoryCacheOptions()));
-        var list = await svc.ListSizeChartsAsync(company, "MLB107292", "19159491", "Sem gênero infantil", "VilmoTeste", default);
+        var list = await svc.ListSizeChartsAsync(company, "MLB107292", "339665", "Feminino", "VilmoTeste", default);
         Assert.Equal("112233", Assert.Single(list.Items).Id);
         Assert.Contains("BODY_MEASURE", createdBody, StringComparison.Ordinal);
+        Assert.Contains("FILTRABLE_SIZE", createdBody, StringComparison.Ordinal);
         Assert.Contains("CHEST_CIRCUMFERENCE_FROM", createdBody, StringComparison.Ordinal);
         Assert.Contains("PP", createdBody, StringComparison.Ordinal);
+        Assert.Contains("13853812", createdBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Size_charts_create_child_gender_uses_g_sizes()
+    {
+        var company = Guid.NewGuid();
+        string? createdBody = null;
+        var handler = new StubHandler();
+        handler.Impl = req =>
+        {
+            var path = req.RequestUri!.AbsolutePath;
+            if (req.Method == HttpMethod.Get && path.Contains("/categories/MLB107292", StringComparison.Ordinal))
+                return Json(200, """{"id":"MLB107292","name":"Camisas","children_categories":[],"path_from_root":[],"settings":{"catalog_domain":"MLB-SHIRTS","listing_allowed":true}}""");
+            if (req.Method == HttpMethod.Post && path.EndsWith("/catalog/charts/search", StringComparison.Ordinal))
+                return Json(200, """{"charts":[]}""");
+            if (req.Method == HttpMethod.Post && path.Contains("/technical_specs", StringComparison.Ordinal))
+                return Json(200, "{}");
+            if (req.Method == HttpMethod.Post && path.EndsWith("/catalog/charts", StringComparison.Ordinal))
+            {
+                createdBody = req.Content?.ReadAsStringAsync().GetAwaiter().GetResult() ?? "";
+                return Json(201, """{"id":"445566","names":{"MLB":"Guia"}}""");
+            }
+            return Json(404, "{}");
+        };
+        await using var db = Sqlite();
+        var cfg = new CompanyMarketplaceConfig
+        {
+            Id = Guid.NewGuid(),
+            CompanyId = company,
+            MarketplaceCode = "MercadoLivre",
+            IsEnabled = true,
+            LinkStatus = "Linked"
+        };
+        db.CompanyMarketplaceConfigs.Add(cfg);
+        db.CompanyMarketplaceParameters.Add(new CompanyMarketplaceParameter
+        {
+            Id = Guid.NewGuid(), ConfigId = cfg.Id, ParameterKey = "AccessToken",
+            ParameterValue = "APP_USR-test", IsSecret = false
+        });
+        db.CompanyMarketplaceParameters.Add(new CompanyMarketplaceParameter
+        {
+            Id = Guid.NewGuid(), ConfigId = cfg.Id, ParameterKey = "UserId",
+            ParameterValue = "123456", IsSecret = false
+        });
+        await db.SaveChangesAsync();
+        var svc = new MercadoLivreCategoryService(db, new StubFactory(handler), new MemoryCache(new MemoryCacheOptions()));
+        var list = await svc.ListSizeChartsAsync(company, "MLB107292", "19159491", "Sem gênero infantil", "VilmoTeste", default);
+        Assert.Equal("445566", Assert.Single(list.Items).Id);
+        Assert.Contains("\"1\"", createdBody, StringComparison.Ordinal);
+        Assert.Contains("1 ano", createdBody, StringComparison.Ordinal);
+        Assert.Contains("12189459", createdBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"PP\"", createdBody, StringComparison.Ordinal);
     }
 
     [Fact]

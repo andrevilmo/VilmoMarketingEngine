@@ -380,9 +380,11 @@ public sealed class MercadoLivreCategoryService(
             var parts = new List<string>();
             var msg = Str(el, "message") ?? Str(el, "error");
             if (!string.IsNullOrWhiteSpace(msg)) parts.Add(msg);
-            if (el.TryGetProperty("cause", out var cause) && cause.ValueKind == JsonValueKind.Array)
+            foreach (var key in new[] { "cause", "errors" })
             {
-                foreach (var c in cause.EnumerateArray())
+                if (!el.TryGetProperty(key, out var arr) || arr.ValueKind != JsonValueKind.Array)
+                    continue;
+                foreach (var c in arr.EnumerateArray())
                 {
                     var m = Str(c, "message") ?? Str(c, "code");
                     if (c.TryGetProperty("cell", out var cell) && cell.ValueKind == JsonValueKind.Object)
@@ -496,7 +498,7 @@ public sealed class MercadoLivreCategoryService(
             if (value is null) continue;
             attrs.Add(new { id = field.Id, values = new[] { value } });
         }
-        var sizes = RowSizeNames(spec, mainId);
+        var sizes = RowSizeNames(spec, mainId, genderId, genderName);
         var rows = sizes.Select((size, i) => new
         {
             attributes = RowAttributes(spec, mainId, size, i)
@@ -528,32 +530,50 @@ public sealed class MercadoLivreCategoryService(
         string domainId, string? genderId, string? genderName, string? brand,
         (string Token, long SellerId) creds, CancellationToken ct)
     {
-        var filter = new List<object>();
         var genderVal = new Dictionary<string, string>();
         if (!string.IsNullOrWhiteSpace(genderId)) genderVal["id"] = genderId.Trim();
         if (!string.IsNullOrWhiteSpace(genderName)) genderVal["name"] = genderName.Trim();
+        var filter = new List<object>();
         if (genderVal.Count > 0)
-            filter.Add(new { id = "GENDER", values = new[] { genderVal } });
+        {
+            var gender = new Dictionary<string, object?> { ["id"] = "GENDER", ["values"] = new[] { genderVal } };
+            if (genderVal.TryGetValue("id", out var gid)) gender["value_id"] = gid;
+            if (genderVal.TryGetValue("name", out var gname)) gender["value_name"] = gname;
+            filter.Add(gender);
+        }
         if (!string.IsNullOrWhiteSpace(brand))
-            filter.Add(new { id = "BRAND", values = new[] { new { name = brand.Trim() } } });
+            filter.Add(new Dictionary<string, object?>
+            {
+                ["id"] = "BRAND",
+                ["value_name"] = brand.Trim(),
+                ["values"] = new[] { new { name = brand.Trim() } }
+            });
         string? lastError = null;
         foreach (var d in PrefixedDomainIds(domainId))
         {
-            var call = await CallAsync(
+            var post = await CallAsync(
                 HttpMethod.Post,
                 $"/domains/{Uri.EscapeDataString(d)}/technical_specs?section=grids",
                 ct, creds.Token, creds.SellerId,
                 new { attributes = filter });
-            if (call.Json is not null)
-            {
-                var parsed = ParseGridSpec(call.Json);
-                if (parsed.RowFields.Count > 0 || parsed.MainId is not null)
-                    return parsed;
-            }
-            lastError = call.Error ?? lastError;
+            if (HasGridInput(post.Json))
+                return ParseGridSpec(post.Json);
+            lastError = post.Error ?? lastError;
+            var get = await CallAsync(
+                HttpMethod.Get,
+                $"/domains/{Uri.EscapeDataString(d)}/technical_specs?section=grids",
+                ct, creds.Token, creds.SellerId);
+            if (HasGridInput(get.Json))
+                return ParseGridSpec(get.Json);
+            lastError = get.Error ?? lastError;
         }
         return GridSpec.Fallback(lastError);
     }
+
+    static bool HasGridInput(JsonElement? json) =>
+        json is { ValueKind: JsonValueKind.Object } obj
+        && obj.TryGetProperty("input", out var input)
+        && input.ValueKind == JsonValueKind.Object;
 
     static IReadOnlyList<string> PrefixedDomainIds(string domainId)
     {
@@ -604,6 +624,8 @@ public sealed class MercadoLivreCategoryService(
             measureType ??= "BODY_MEASURE";
             rows.AddRange(GridSpec.Fallback(null).RowFields.Where(x => x.Body || x.Clothing));
         }
+        if (!rows.Any(x => x.Id.Equals("FILTRABLE_SIZE", StringComparison.OrdinalIgnoreCase)))
+            rows.AddRange(GridSpec.Fallback(null).RowFields.Where(x => x.Id.Equals("FILTRABLE_SIZE", StringComparison.OrdinalIgnoreCase)));
         return new GridSpec(main, measureType, chart, rows, null);
     }
 
@@ -679,9 +701,23 @@ public sealed class MercadoLivreCategoryService(
         return null;
     }
 
-    static IReadOnlyList<string> RowSizeNames(GridSpec spec, string mainId)
+    static bool IsChildGender(string? genderId, string? genderName)
     {
-        var preferred = new[] { "PP", "P", "M", "G", "GG" };
+        var id = (genderId ?? "").Trim();
+        var name = (genderName ?? "").Trim();
+        if (id is "19159491" or "339667" or "339668" or "371795") return true;
+        return name.Contains("infantil", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("Meninos", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("Meninas", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("Bebês", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("Bebes", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static IReadOnlyList<string> RowSizeNames(GridSpec spec, string mainId, string? genderId = null, string? genderName = null)
+    {
+        var preferred = IsChildGender(genderId, genderName)
+            ? new[] { "1", "2", "3", "4", "6" }
+            : new[] { "PP", "P", "M", "G", "GG" };
         var main = spec.RowFields.FirstOrDefault(x => x.Id.Equals(mainId, StringComparison.OrdinalIgnoreCase))
             ?? spec.RowFields.FirstOrDefault(x => x.MainCandidate);
         var names = main?.Values.Select(v => v.Name).Where(n => !string.IsNullOrWhiteSpace(n)).ToList() ?? [];
@@ -718,7 +754,11 @@ public sealed class MercadoLivreCategoryService(
             || field.Id.Equals("FILTRABLE_SIZE", StringComparison.OrdinalIgnoreCase)
             || field.Id.EndsWith("_SIZE", StringComparison.OrdinalIgnoreCase))
         {
-            var hit = field.Values.FirstOrDefault(v => v.Name.Equals(size, StringComparison.OrdinalIgnoreCase));
+            var hit = field.Values.FirstOrDefault(v => v.Name.Equals(size, StringComparison.OrdinalIgnoreCase))
+                ?? field.Values.FirstOrDefault(v => v.Name.StartsWith(size + " ", StringComparison.OrdinalIgnoreCase))
+                ?? field.Values.FirstOrDefault(v =>
+                    v.Name.StartsWith(size, StringComparison.OrdinalIgnoreCase)
+                    && (v.Name.Contains("ano", StringComparison.OrdinalIgnoreCase) || char.IsDigit(v.Name[0])));
             var val = new Dictionary<string, string> { ["name"] = hit?.Name ?? size };
             if (!string.IsNullOrWhiteSpace(hit?.Id)) val["id"] = hit!.Id;
             return val;
@@ -1054,6 +1094,24 @@ sealed record GridSpec(
         [],
         [
             new("SIZE", "Tamanho", "string", true, true, false, false, null, [], "ITEM"),
+            new("FILTRABLE_SIZE", "Tamanho filtrável", "list", true, false, false, false, null,
+            [
+                new("13853812", "PP"),
+                new("13853813", "P"),
+                new("12917795", "M"),
+                new("13853814", "G"),
+                new("13853815", "GG"),
+                new("12917804", "G1"),
+                new("12917798", "G2"),
+                new("12917801", "G3"),
+                new("12917807", "G4"),
+                new("12917765", "G5"),
+                new("12189459", "1 ano"),
+                new("12189461", "2 anos"),
+                new("12189463", "3 anos"),
+                new("12189465", "4 anos"),
+                new("12189469", "6 anos")
+            ], "ITEM"),
             new("CHEST_CIRCUMFERENCE_FROM", "Circunferência do peito desde", "number_unit", true, false, false, true, "cm", [], "CHILD_DEPENDENT"),
             new("CHEST_CIRCUMFERENCE_TO", "Circunferência do peito até", "number_unit", true, false, false, true, "cm", [], "CHILD_DEPENDENT")
         ],
