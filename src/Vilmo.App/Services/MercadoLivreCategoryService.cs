@@ -265,7 +265,7 @@ public sealed class MercadoLivreCategoryService(
             return new MlSizeChartList(id, domain, [], "needs_token", "Conecte o Mercado Livre para listar as guias de tamanho.");
         IReadOnlyList<MlSizeChartRef> charts = [];
         string? lastError = null;
-        var usedDomain = domain;
+        var usedDomain = DomainIds(domain)[0];
         foreach (var domainId in DomainIds(domain))
         {
             foreach (var filters in SizeChartFilterSets(genderId, genderName, brand))
@@ -275,6 +275,8 @@ public sealed class MercadoLivreCategoryService(
                     ["domain_id"] = domainId,
                     ["site_id"] = Site,
                     ["seller_id"] = creds.Value.SellerId,
+                    ["offset"] = 0,
+                    ["limit"] = 50,
                     ["attributes"] = filters
                 };
                 var call = await CallAsync(HttpMethod.Post, "/catalog/charts/search", ct, creds.Value.Token, creds.Value.SellerId, body);
@@ -290,6 +292,17 @@ public sealed class MercadoLivreCategoryService(
                 break;
             }
             if (charts.Count > 0) break;
+        }
+        if (charts.Count == 0)
+        {
+            var created = await TryCreateSizeChartAsync(creds.Value, usedDomain, genderId, genderName, brand, ct);
+            if (created.Chart is not null)
+            {
+                charts = [created.Chart];
+                lastError = null;
+            }
+            else if (!string.IsNullOrWhiteSpace(created.Error))
+                lastError = created.Error;
         }
         var source = charts.Count > 0 ? "mercadolivre" : lastError is null ? "empty" : "error";
         var message = charts.Count > 0
@@ -409,8 +422,8 @@ public sealed class MercadoLivreCategoryService(
     {
         var d = domain.Trim();
         if (d.StartsWith($"{Site}-", StringComparison.OrdinalIgnoreCase))
-            return [d[(Site.Length + 1)..], d];
-        return [d, $"{Site}-{d}"];
+            return [d[(Site.Length + 1)..]];
+        return [d];
     }
 
     static IEnumerable<List<object>> SizeChartFilterSets(string? genderId, string? genderName, string? brand)
@@ -440,6 +453,94 @@ public sealed class MercadoLivreCategoryService(
         foreach (var c in extra)
             map.TryAdd(c.Id, c);
         return map.Values.ToList();
+    }
+
+    async Task<(MlSizeChartRef? Chart, string? Error)> TryCreateSizeChartAsync(
+        (string Token, long SellerId) creds, string domainId,
+        string? genderId, string? genderName, string? brand, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(genderId) && string.IsNullOrWhiteSpace(genderName))
+            return (null, null);
+        var mainId = await ReadMainSizeAttributeAsync(domainId, creds, ct) ?? "SIZE";
+        var genderVal = new Dictionary<string, string>();
+        if (!string.IsNullOrWhiteSpace(genderId)) genderVal["id"] = genderId.Trim();
+        if (!string.IsNullOrWhiteSpace(genderName)) genderVal["name"] = genderName.Trim();
+        var attrs = new List<object> { new { id = "GENDER", values = new[] { genderVal } } };
+        if (!string.IsNullOrWhiteSpace(brand))
+            attrs.Add(new { id = "BRAND", values = new[] { new { name = brand.Trim() } } });
+        var rows = new[] { "PP", "P", "M", "G", "GG" }.Select(size => new
+        {
+            attributes = new[] { new { id = mainId, values = new[] { new { name = size } } } }
+        }).ToArray();
+        var body = new Dictionary<string, object?>
+        {
+            ["names"] = new Dictionary<string, string> { [Site] = ChartTitle(genderName, brand) },
+            ["domain_id"] = domainId,
+            ["site_id"] = Site,
+            ["main_attribute"] = new { attributes = new[] { new { site_id = Site, id = mainId } } },
+            ["attributes"] = attrs,
+            ["rows"] = rows
+        };
+        var call = await CallAsync(HttpMethod.Post, "/catalog/charts", ct, creds.Token, creds.SellerId, body);
+        if (call.Json is { ValueKind: JsonValueKind.Object } json)
+        {
+            var parsed = ReadChartRef(json);
+            if (parsed is not null) return (parsed, null);
+            var id = Str(json, "id");
+            if (!string.IsNullOrWhiteSpace(id))
+                return (new MlSizeChartRef(id, ChartTitle(genderName, brand), "SPECIFIC", domainId), null);
+        }
+        return (null, call.Error ?? "create_failed");
+    }
+
+    async Task<string?> ReadMainSizeAttributeAsync(string domainId, (string Token, long SellerId) creds, CancellationToken ct)
+    {
+        foreach (var d in new[] { $"{Site}-{domainId}", domainId }.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var json = await SendJsonAsync(HttpMethod.Get, $"/domains/{Uri.EscapeDataString(d)}/technical_specs?section=grids", ct, creds.Token, creds.SellerId);
+            var found = FindMainAttribute(json);
+            if (!string.IsNullOrWhiteSpace(found)) return found;
+        }
+        return null;
+    }
+
+    static string? FindMainAttribute(JsonElement? json)
+    {
+        if (json is null) return null;
+        string? found = null;
+        void Walk(JsonElement el)
+        {
+            if (found is not null) return;
+            if (el.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var c in el.EnumerateArray()) Walk(c);
+                return;
+            }
+            if (el.ValueKind != JsonValueKind.Object) return;
+            var id = Str(el, "id");
+            if (!string.IsNullOrWhiteSpace(id) && (HasTag(el, "main_attribute_candidate") || id.Equals("SIZE", StringComparison.OrdinalIgnoreCase)))
+            {
+                if (HasTag(el, "main_attribute_candidate") || found is null)
+                    found = id;
+            }
+            foreach (var p in el.EnumerateObject())
+            {
+                if (p.Value.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
+                    Walk(p.Value);
+            }
+        }
+        Walk(json.Value);
+        return found;
+    }
+
+    static string ChartTitle(string? genderName, string? brand)
+    {
+        var g = string.IsNullOrWhiteSpace(genderName) ? "geral" : genderName.Trim();
+        var b = string.IsNullOrWhiteSpace(brand) ? "" : " " + brand.Trim();
+        var name = $"Guia de tamanhos camisas {g}{b}";
+        var chars = name.Select(c => char.IsLetterOrDigit(c) || c is ' ' ? c : ' ').ToArray();
+        name = string.Join(' ', new string(chars).Split(' ', StringSplitOptions.RemoveEmptyEntries));
+        return name.Length <= 60 ? name : name[..60].Trim();
     }
 
     static IReadOnlyList<MlSizeChartRef> ReadCharts(JsonElement? json)
