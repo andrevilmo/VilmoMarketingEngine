@@ -76,6 +76,9 @@
 .ml-cat-hint { margin: 0; }
 .ml-cat-attrs { margin-top: .35rem; }
 .ml-cat-attrs:empty { display: none; }
+.ml-attr-sec { margin: .35rem 0 0; font-size: .75rem; font-weight: 600; color: #6b7280; }
+.ml-grid-field span { display: block; }
+.ml-grid-manual { margin-top: .3rem; }
 .ml-listing-type { width: 100%; }
 .ml-attr-req { color: #b45309; font-weight: 600; }
 .ad-kind { display: flex; gap: 1rem; }

@@ -419,6 +419,31 @@ public static class Endpoints
             catch (InvalidOperationException ex) { return Results.BadRequest(new { error = ex.Message }); }
         }).RequireAuthorization();
 
+        app.MapGet("/marketplaces/MercadoLivre/categories/{categoryId}/size-charts", async (
+            string categoryId, string? genderId, string? genderName, string? brand,
+            HttpContext http, AppDbContext db, MercadoLivreCategoryService cats, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            var ctx = (CompanyContext)ctxr;
+            try { return Results.Ok(await cats.ListSizeChartsAsync(ctx.RequireCompany(), categoryId, genderId, genderName, brand, ct)); }
+            catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+        }).RequireAuthorization();
+
+        app.MapGet("/marketplaces/MercadoLivre/size-charts/{chartId}", async (
+            string chartId, HttpContext http, AppDbContext db, MercadoLivreCategoryService cats, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            var ctx = (CompanyContext)ctxr;
+            try
+            {
+                var detail = await cats.GetSizeChartAsync(ctx.RequireCompany(), chartId, ct);
+                return detail is null ? Results.NotFound(new { error = "SizeChartNotFound" }) : Results.Ok(detail);
+            }
+            catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+        }).RequireAuthorization();
+
         app.MapPost("/advertisements", Publish).RequireAuthorization();
         app.MapPost("/listings", Publish).RequireAuthorization();
         app.MapGet("/listings", async (HttpContext http, AppDbContext db, AdvertisementService ads, CancellationToken ct) =>

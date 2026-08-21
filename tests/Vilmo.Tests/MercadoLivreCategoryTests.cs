@@ -163,10 +163,13 @@ public class MercadoLivreCategoryTests : IClassFixture<ApiFactory>
             {
                 return Json(200, """
                     [
-                      {"id":"BRAND","name":"Marca","value_type":"string","tags":{"required":true},"values":[{"id":"1","name":"Acme"}]},
+                      {"id":"BRAND","name":"Marca","value_type":"string","tags":{"required":true,"grid_filter":true},"values":[{"id":"1","name":"Acme"}]},
                       {"id":"COLOR","name":"Cor","value_type":"list","tags":{"required":true},"values":[{"id":"52049","name":"Preto"},{"id":"-1","name":"N/A"}]},
                       {"id":"NOTES","name":"Notas","value_type":"string","tags":{"hidden":true},"values":[]},
-                      {"id":"MODEL","name":"Modelo","value_type":"string","tags":{"required":true},"values":[]}
+                      {"id":"MODEL","name":"Modelo","value_type":"string","tags":{"required":true},"values":[]},
+                      {"id":"SIZE_GRID_ID","name":"ID da guia de tamanhos","value_type":"grid_id","tags":{},"values":[]},
+                      {"id":"SIZE_GRID_ROW_ID","name":"ID da linha da guia","value_type":"grid_row_id","tags":{"hidden":true,"variation_attribute":true},"values":[]},
+                      {"id":"STYLE","name":"Estilo","value_type":"string","tags":{},"values":[]}
                     ]
                     """);
             }
@@ -183,6 +186,10 @@ public class MercadoLivreCategoryTests : IClassFixture<ApiFactory>
         var color = Assert.Single(list.Items, x => x.Id == "COLOR");
         Assert.DoesNotContain(color.Values, v => v.Id == "-1" || v.Name == "N/A");
         Assert.DoesNotContain(list.Items, x => x.Id == "NOTES");
+        Assert.Contains(list.Items, x => x.Id == "SIZE_GRID_ID" && x.Required);
+        Assert.Contains(list.Items, x => x.Id == "SIZE_GRID_ROW_ID" && x.Required);
+        Assert.Contains(list.Items, x => x.Id == "STYLE" && !x.Required);
+        Assert.True(list.SizeChartRequired);
     }
 
     [Fact]
@@ -210,6 +217,24 @@ public class MercadoLivreCategoryTests : IClassFixture<ApiFactory>
         Assert.Contains(rows, r => (string)r["id"]! == "GENDER" && (string)r["value_id"]! == "339665");
         Assert.DoesNotContain(rows, r => (string)r["id"]! == "COLOR");
         Assert.DoesNotContain(rows, r => (string)r["id"]! == "categoryId");
+    }
+
+    [Fact]
+    public void Item_attributes_size_grid_sends_value_name_only()
+    {
+        var rows = MercadoLivreItemAttributes.Build(new Dictionary<string, string>
+        {
+            ["ml:SIZE_GRID_ID"] = """{"value_id":"26008","value_name":"26008"}""",
+            ["ml:SIZE_GRID_ROW_ID"] = """{"value_id":"26008:1","value_name":"26008:1"}""",
+            ["ml:SIZE"] = """{"value_name":"P"}"""
+        }, null, null);
+        var grid = Assert.Single(rows, r => (string)r["id"]! == "SIZE_GRID_ID");
+        Assert.Equal("26008", grid["value_name"]);
+        Assert.False(grid.ContainsKey("value_id"));
+        var row = Assert.Single(rows, r => (string)r["id"]! == "SIZE_GRID_ROW_ID");
+        Assert.Equal("26008:1", row["value_name"]);
+        Assert.False(row.ContainsKey("value_id"));
+        Assert.Contains(rows, r => (string)r["id"]! == "SIZE" && (string)r["value_name"]! == "P");
     }
 
     [Fact]
@@ -281,6 +306,82 @@ public class MercadoLivreCategoryTests : IClassFixture<ApiFactory>
         Assert.False(MercadoLivreListingTypeId.TryNormalize("Clássica", out _));
         Assert.False(MercadoLivreListingTypeId.TryNormalize("camisa", out _));
         Assert.False(MercadoLivreListingTypeId.TryNormalize("", out _));
+    }
+
+    [Fact]
+    public async Task Size_charts_search_returns_guide_and_rows()
+    {
+        var company = Guid.NewGuid();
+        var handler = new StubHandler();
+        handler.Impl = req =>
+        {
+            var path = req.RequestUri!.PathAndQuery;
+            if (path.Contains("/categories/MLB107292", StringComparison.Ordinal)
+                && !path.Contains("attributes", StringComparison.Ordinal)
+                && !path.Contains("charts", StringComparison.Ordinal))
+            {
+                return Json(200, """{"id":"MLB107292","name":"Camisas","children_categories":[],"path_from_root":[],"settings":{"catalog_domain":"MLB-SHIRTS","listing_allowed":true}}""");
+            }
+            if (path.Contains("/catalog/charts/search", StringComparison.Ordinal))
+                return Json(200, """{"charts":[{"id":"26008","names":{"MLB":"Camisa feminina"},"type":"STANDARD","domain_id":"SHIRTS"}]}""");
+            if (path.Contains("/catalog/charts/26008", StringComparison.Ordinal))
+            {
+                return Json(200, """
+                    {"id":"26008","names":{"MLB":"Camisa feminina"},"rows":[
+                      {"id":"26008:1","attributes":[{"id":"SIZE","values":[{"name":"P"}]}]}
+                    ]}
+                    """);
+            }
+            return Json(404, "{}");
+        };
+        await using var db = Sqlite();
+        var cfg = new CompanyMarketplaceConfig
+        {
+            Id = Guid.NewGuid(),
+            CompanyId = company,
+            MarketplaceCode = "MercadoLivre",
+            IsEnabled = true,
+            LinkStatus = "Linked"
+        };
+        db.CompanyMarketplaceConfigs.Add(cfg);
+        db.CompanyMarketplaceParameters.Add(new CompanyMarketplaceParameter
+        {
+            Id = Guid.NewGuid(), ConfigId = cfg.Id, ParameterKey = "AccessToken",
+            ParameterValue = "APP_USR-test", IsSecret = false
+        });
+        db.CompanyMarketplaceParameters.Add(new CompanyMarketplaceParameter
+        {
+            Id = Guid.NewGuid(), ConfigId = cfg.Id, ParameterKey = "UserId",
+            ParameterValue = "123456", IsSecret = false
+        });
+        await db.SaveChangesAsync();
+        var svc = new MercadoLivreCategoryService(db, new StubFactory(handler), new MemoryCache(new MemoryCacheOptions()));
+        var list = await svc.ListSizeChartsAsync(company, "MLB107292", "339665", "Feminino", "Nike", default);
+        Assert.Equal("mercadolivre", list.Source);
+        Assert.Equal("26008", Assert.Single(list.Items).Id);
+        var detail = await svc.GetSizeChartAsync(company, "26008", default);
+        Assert.NotNull(detail);
+        Assert.Equal("26008:1", detail!.Rows[0].Id);
+        Assert.Equal("P", detail.Rows[0].Size);
+    }
+
+    [Fact]
+    public async Task Size_charts_without_token_do_not_call_search()
+    {
+        var handler = new StubHandler();
+        handler.Impl = req =>
+        {
+            if (req.RequestUri!.PathAndQuery.Contains("/categories/MLB107292", StringComparison.Ordinal))
+                return Json(200, """{"id":"MLB107292","name":"Camisas","children_categories":[],"path_from_root":[],"settings":{"catalog_domain":"MLB-SHIRTS","listing_allowed":true}}""");
+            if (req.RequestUri!.PathAndQuery.Contains("/catalog/charts", StringComparison.Ordinal))
+                return Json(500, """{"error":"should-not-call"}""");
+            return Json(404, "{}");
+        };
+        await using var db = Sqlite();
+        var svc = new MercadoLivreCategoryService(db, new StubFactory(handler), new MemoryCache(new MemoryCacheOptions()));
+        var list = await svc.ListSizeChartsAsync(Guid.NewGuid(), "MLB107292", "339665", "Feminino", null, default);
+        Assert.Equal("needs_token", list.Source);
+        Assert.Empty(list.Items);
     }
 
     static AppDbContext Sqlite()

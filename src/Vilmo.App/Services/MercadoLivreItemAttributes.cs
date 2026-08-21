@@ -94,9 +94,19 @@ public static class MercadoLivreItemAttributes
         return true;
     }
 
+    public static bool IsSizeGrid(string id) =>
+        id.Equals("SIZE_GRID_ID", StringComparison.OrdinalIgnoreCase)
+        || id.Equals("SIZE_GRID_ROW_ID", StringComparison.OrdinalIgnoreCase);
+
     static Dictionary<string, object?> Entry(string id, string? valueId, string? valueName)
     {
         var row = new Dictionary<string, object?> { ["id"] = id };
+        if (IsSizeGrid(id))
+        {
+            var name = !string.IsNullOrWhiteSpace(valueName) ? valueName.Trim() : valueId?.Trim();
+            if (!string.IsNullOrWhiteSpace(name)) row["value_name"] = name;
+            return row;
+        }
         if (!string.IsNullOrWhiteSpace(valueId)) row["value_id"] = valueId.Trim();
         if (!string.IsNullOrWhiteSpace(valueName)) row["value_name"] = valueName.Trim();
         return row;

@@ -196,7 +196,8 @@ const Vilmo = (() => {
       CategorySuggestFailed: "Não foi possível sugerir a categoria no Mercado Livre.",
       InvalidCategoryId: "Categoria ML deve ser o código da opção (ex.: MLB5672), não o nome.",
       InvalidListingTypeId: "Tipo de anúncio ML deve ser o código da opção (ex.: gold_special), não um nome livre.",
-      CategoryAttributesFailed: "Não foi possível carregar os atributos obrigatórios da categoria ML.",
+      SizeChartNotFound: "Tabela de medidas do Mercado Livre não encontrada.",
+      InvalidSizeChartId: "Informe o ID da guia de tamanhos do Mercado Livre.",
       MlAttributeRequired: "Preencha os atributos obrigatórios da categoria do Mercado Livre.",
       NoChannels: "Este anúncio não tem canais.",
       AdvertisementNotFound: "Anúncio não encontrado.",
@@ -565,7 +566,7 @@ const Vilmo = (() => {
           <div class="ml-cat-levels vilmo-grid cols-2"></div>
           <input type="hidden" class="attr-field ml-cat-value" data-mkt="${esc(m.code)}" data-key="${esc(key)}" value="">
           <div class="ml-cat-attrs vilmo-grid cols-2"></div>
-          <p class="ml-cat-hint text-xs text-muted-foreground">O Mercado Livre recebe o código da opção (MLB…), não o nome. Atributos com * são obrigatórios nessa categoria.</p>
+          <p class="ml-cat-hint text-xs text-muted-foreground">O Mercado Livre recebe o código da opção (MLB…), não o nome. Ao mudar a categoria, todos os atributos dela aparecem abaixo — os com * são obrigatórios para publicar.</p>
         </div>`;
       }
       return `<label>${esc(d.label)}<input class="kt-input attr-field" data-mkt="${esc(m.code)}" data-key="${esc(key)}"></label>`;
@@ -1012,13 +1013,27 @@ const Vilmo = (() => {
           }
           return { value_id: "", value_name: String(raw) };
         },
+        isGridField(el) {
+          const id = el && el.dataset ? el.dataset.mlId : "";
+          const type = String(el && el.dataset ? el.dataset.valueType : "").toLowerCase();
+          return type === "grid_id" || type === "grid_row_id"
+            || id === "SIZE_GRID_ID" || id === "SIZE_GRID_ROW_ID";
+        },
         attrPayload(el) {
           if (!el) return null;
           if (el.tagName === "SELECT") {
             const opt = el.selectedIndex >= 0 ? el.options[el.selectedIndex] : null;
-            if (!opt || !opt.value) return null;
-            const value_id = opt.getAttribute("data-ml-value-id") || opt.value;
-            const value_name = opt.getAttribute("data-ml-value-name") || (opt.textContent || "").trim();
+            const fromOpt = opt && opt.value
+              ? (opt.getAttribute("data-ml-value-name") || opt.value)
+              : "";
+            const manual = el.parentElement?.querySelector(".ml-grid-manual");
+            const fromManual = manual ? String(manual.value || "").trim() : "";
+            const value_name = fromOpt || fromManual;
+            if (!value_name) return null;
+            if (this.isGridField(el)) return { value_name };
+            const value_id = (opt && opt.value)
+              ? (opt.getAttribute("data-ml-value-id") || opt.value)
+              : "";
             if (this.isNaName(value_name) || value_id === "-1") return null;
             const row = { value_name };
             if (value_id) row.value_id = value_id;
@@ -1026,6 +1041,7 @@ const Vilmo = (() => {
           }
           const value_name = String(el.value || "").trim();
           if (!value_name || this.isNaName(value_name)) return null;
+          if (this.isGridField(el)) return { value_name };
           const row = { value_name };
           const list = el.list;
           if (list) {
@@ -1044,6 +1060,7 @@ const Vilmo = (() => {
           const recommended = !!(a.recommended || a.Recommended);
           const max = a.valueMaxLength || a.ValueMaxLength;
           const type = String(a.valueType || a.ValueType || "string").toLowerCase();
+          const gridFilter = !!(a.gridFilter || a.GridFilter);
           const saved = this.parseSaved(savedMap[key]);
           let seedName = saved && saved.value_name || "";
           let seedId = saved && saved.value_id || "";
@@ -1055,8 +1072,23 @@ const Vilmo = (() => {
             ? ` <span class="ml-attr-req">*</span>`
             : (recommended ? ` <span class="text-xs text-muted-foreground">recomendado</span>` : "");
           const reqAttr = required ? `data-required="1"` : "";
-          const useSelect = type === "list" || type === "boolean"
-            || (values.length >= 1 && values.length <= 120);
+          const extra = `data-mkt="MercadoLivre" data-key="${esc(key)}" data-ml-id="${esc(id)}" data-value-type="${esc(type)}"${gridFilter ? " data-grid-filter=\"1\"" : ""} ${reqAttr}`;
+          const isGrid = type === "grid_id" || type === "grid_row_id"
+            || id === "SIZE_GRID_ID" || id === "SIZE_GRID_ROW_ID";
+          if (isGrid) {
+            const hint = id === "SIZE_GRID_ID"
+              ? "Preencha Gênero e Marca para listar as guias. O Mercado Livre exige SIZE_GRID_ID nesta categoria."
+              : "Escolha a linha da guia. Isso preenche o tamanho automaticamente.";
+            const sel = seedId || seedName
+              ? `<option value="${esc(seedId || seedName)}" data-ml-value-id="${esc(seedId || seedName)}" data-ml-value-name="${esc(seedName || seedId)}" selected>${esc(seedName || seedId)}</option>`
+              : `<option value="">Selecionar…</option>`;
+            return `<label class="ml-grid-field">${esc(name)}${mark}
+              <select class="kt-select ml-attr-field" ${extra}>${sel}</select>
+              <input class="kt-input ml-grid-manual" type="text" value="${esc(seedName && !seedId ? seedName : "")}" placeholder="Ou informe o ID" autocomplete="off">
+              <span class="text-xs text-muted-foreground">${hint}</span>
+            </label>`;
+          }
+          const useSelect = type === "list" || type === "boolean";
           if (useSelect) {
             const opts = [`<option value="">Selecionar…</option>`].concat(values.map(v => {
               const vid = v.id || v.Id || "";
@@ -1067,7 +1099,7 @@ const Vilmo = (() => {
             }).filter(Boolean));
             if (seedName && !values.some(v => (v.id || v.Id) === seedId || (v.name || v.Name) === seedName))
               opts.push(`<option value="${esc(seedId || seedName)}" data-ml-value-id="${esc(seedId)}" data-ml-value-name="${esc(seedName)}" selected>${esc(seedName)}</option>`);
-            return `<label>${esc(name)}${mark}<select class="kt-select ml-attr-field" data-mkt="MercadoLivre" data-key="${esc(key)}" ${reqAttr}>${opts.join("")}</select></label>`;
+            return `<label>${esc(name)}${mark}<select class="kt-select ml-attr-field" ${extra}>${opts.join("")}</select></label>`;
           }
           const listId = `ml-attr-${esc(id)}`;
           const dl = values.length
@@ -1081,7 +1113,7 @@ const Vilmo = (() => {
           const inputType = type === "number" || type === "number_unit" ? "number" : "text";
           const maxAttr = max ? ` maxlength="${Number(max)}"` : "";
           const listAttr = values.length ? ` list="${listId}"` : "";
-          return `<label>${esc(name)}${mark}<input class="kt-input ml-attr-field" data-mkt="MercadoLivre" data-key="${esc(key)}" ${reqAttr} type="${inputType}" value="${esc(seedName)}"${maxAttr}${listAttr}>${dl}</label>`;
+          return `<label>${esc(name)}${mark}<input class="kt-input ml-attr-field" ${extra} type="${inputType}" value="${esc(seedName)}"${maxAttr}${listAttr}>${dl}</label>`;
         },
         async loadAttrs(code, extraSaved) {
           const box = this.attrsBox();
@@ -1093,21 +1125,141 @@ const Vilmo = (() => {
           const prev = Object.assign({}, this.savedFromDom(), extraSaved || {});
           this.attrSeq = (this.attrSeq || 0) + 1;
           const seq = this.attrSeq;
-          box.innerHTML = `<p class="text-xs text-muted-foreground">Carregando atributos obrigatórios da categoria…</p>`;
+          box.innerHTML = `<p class="text-xs text-muted-foreground">Carregando atributos da categoria…</p>`;
           try {
             const r = await api(`/marketplaces/MercadoLivre/categories/${encodeURIComponent(code)}/attributes`);
             if (seq !== this.attrSeq) return;
-            const items = (r.items || r.Items || []).filter(a => a.required || a.Required || a.newRequired || a.NewRequired || a.recommended || a.Recommended);
-            items.sort((a, b) => (b.required || b.Required ? 1 : 0) - (a.required || a.Required ? 1 : 0));
+            const items = r.items || r.Items || [];
             if (!items.length) {
-              box.innerHTML = `<p class="text-xs text-muted-foreground">Esta categoria não listou atributos obrigatórios.</p>`;
+              box.innerHTML = `<p class="text-xs text-muted-foreground">Esta categoria não listou atributos.</p>`;
               return;
             }
             const form = document.getElementById("ad-form");
-            box.innerHTML = items.map(a => this.attrFieldHtml(a, prev, form)).join("");
+            const req = items.filter(a => a.required || a.Required || a.newRequired || a.NewRequired);
+            const opt = items.filter(a => !(a.required || a.Required || a.newRequired || a.NewRequired));
+            const reqHtml = req.map(a => this.attrFieldHtml(a, prev, form)).join("");
+            const optHtml = opt.length
+              ? `<p class="ml-attr-sec col-span-2">Outros atributos desta categoria</p>${opt.map(a => this.attrFieldHtml(a, prev, form)).join("")}`
+              : "";
+            box.innerHTML = reqHtml + optHtml;
+            this.bindAttrWatchers();
+            await this.refreshSizeCharts();
           } catch (ex) {
             if (seq !== this.attrSeq) return;
             box.innerHTML = `<p class="text-xs" style="color:#991b1b">${esc(adErr(ex.message))}</p>`;
+          }
+        },
+        attrById(id) {
+          return this.attrsBox()?.querySelector(`.ml-attr-field[data-ml-id="${CSS.escape(id)}"]`);
+        },
+        bindAttrWatchers() {
+          this.attrsBox()?.querySelectorAll(".ml-attr-field").forEach(el => {
+            const id = el.dataset.mlId;
+            if (el.dataset.gridFilter === "1" || id === "GENDER" || id === "BRAND") {
+              el.onchange = () => this.refreshSizeCharts();
+              el.onblur = () => this.refreshSizeCharts();
+            }
+            if (id === "SIZE_GRID_ID")
+              el.onchange = () => this.refreshSizeRows();
+            if (id === "SIZE_GRID_ROW_ID")
+              el.onchange = () => this.syncSizeFromRow();
+          });
+          this.attrsBox()?.querySelectorAll(".ml-grid-manual").forEach(inp => {
+            const sel = inp.parentElement?.querySelector(".ml-attr-field");
+            inp.onblur = () => {
+              if (sel && sel.dataset.mlId === "SIZE_GRID_ID") this.refreshSizeRows();
+            };
+          });
+        },
+        genderBrand() {
+          const g = this.attrById("GENDER");
+          const b = this.attrById("BRAND");
+          const gp = this.attrPayload(g) || {};
+          const bp = this.attrPayload(b) || {};
+          return {
+            genderId: gp.value_id || "",
+            genderName: gp.value_name || "",
+            brand: bp.value_name || (document.querySelector("#ad-form")?.brand?.value || "").trim()
+          };
+        },
+        fillSelect(el, items, selected, emptyLabel) {
+          if (!el) return;
+          const keep = selected || el.value || "";
+          const opts = [`<option value="">${esc(emptyLabel || "Selecionar…")}</option>`];
+          (items || []).forEach(it => {
+            const id = it.id || it.Id;
+            const name = it.name || it.Name || it.size || it.Size || id;
+            const valueName = it.valueName || it.ValueName || id;
+            const sel = id === keep || name === keep ? " selected" : "";
+            opts.push(`<option value="${esc(id)}" data-ml-value-id="${esc(id)}" data-ml-value-name="${esc(valueName)}" data-ml-size="${esc(it.size || it.Size || "")}"${sel}>${esc(name)}</option>`);
+          });
+          el.innerHTML = opts.join("");
+          if (keep && ![...el.options].some(o => o.value === keep)) {
+            el.insertAdjacentHTML("beforeend", `<option value="${esc(keep)}" data-ml-value-id="${esc(keep)}" data-ml-value-name="${esc(keep)}" selected>${esc(keep)}</option>`);
+          }
+        },
+        async refreshSizeCharts() {
+          const el = this.attrById("SIZE_GRID_ID");
+          const cat = this.catCode(this.valueInp()?.value);
+          if (!el || !cat) return;
+          const { genderId, genderName, brand } = this.genderBrand();
+          if (!genderId && !genderName) {
+            this.fillSelect(el, [], el.value, "Selecione o gênero");
+            return;
+          }
+          const q = new URLSearchParams();
+          if (genderId) q.set("genderId", genderId);
+          if (genderName) q.set("genderName", genderName);
+          if (brand) q.set("brand", brand);
+          try {
+            const r = await api(`/marketplaces/MercadoLivre/categories/${encodeURIComponent(cat)}/size-charts?${q}`);
+            const items = (r.items || r.Items || []).map(c => ({
+              id: c.id || c.Id,
+              name: `${c.name || c.Name || c.id} (${c.id || c.Id})`,
+              valueName: c.id || c.Id
+            }));
+            this.fillSelect(el, items, el.value, items.length ? "Selecionar guia…" : "Nenhuma guia para este gênero/marca");
+            await this.refreshSizeRows();
+          } catch {
+            this.fillSelect(el, [], el.value, "Informe o ID da guia");
+          }
+        },
+        async refreshSizeRows() {
+          const grid = this.attrById("SIZE_GRID_ID");
+          const row = this.attrById("SIZE_GRID_ROW_ID");
+          if (!row) return;
+          const chartId = (this.attrPayload(grid) || {}).value_name || (grid ? grid.value : "") || "";
+          if (!chartId) {
+            this.fillSelect(row, [], "", "Selecione a guia");
+            return;
+          }
+          try {
+            const r = await api(`/marketplaces/MercadoLivre/size-charts/${encodeURIComponent(chartId)}`);
+            const items = (r.rows || r.Rows || []).map(x => ({
+              id: x.id || x.Id,
+              name: `${x.size || x.Size || x.id} (${x.id || x.Id})`,
+              size: x.size || x.Size || "",
+              valueName: x.id || x.Id
+            }));
+            this.fillSelect(row, items, row.value, items.length ? "Selecionar tamanho…" : "Sem linhas nesta guia");
+            this.syncSizeFromRow();
+          } catch {
+            this.fillSelect(row, [], row.value, "Informe o ID da linha");
+          }
+        },
+        syncSizeFromRow() {
+          const row = this.attrById("SIZE_GRID_ROW_ID");
+          const sizeEl = this.attrById("SIZE");
+          if (!row || !sizeEl) return;
+          const opt = row.selectedIndex >= 0 ? row.options[row.selectedIndex] : null;
+          const sizeName = opt && (opt.getAttribute("data-ml-size") || opt.getAttribute("data-ml-value-name") || "");
+          if (!sizeName || sizeName === row.value) return;
+          if (sizeEl.tagName === "SELECT") {
+            const hit = [...sizeEl.options].find(o =>
+              o.getAttribute("data-ml-value-name") === sizeName || o.textContent.trim() === sizeName || o.value === sizeName);
+            if (hit) sizeEl.value = hit.value;
+          } else {
+            sizeEl.value = sizeName;
           }
         },
         fillSuggested(list) {

@@ -546,6 +546,8 @@ public class AdvertisementApiTests : IClassFixture<ApiFactory>
                 new { marketplaceCode = "MercadoLivre", fieldName = "categoryId", fieldValue = "MLB188065" },
                 new { marketplaceCode = "MercadoLivre", fieldName = "ml:BRAND", fieldValue = """{"value_name":"Acme"}""" },
                 new { marketplaceCode = "MercadoLivre", fieldName = "ml:GENDER", fieldValue = """{"value_id":"339665","value_name":"Feminino"}""" },
+                new { marketplaceCode = "MercadoLivre", fieldName = "ml:SIZE_GRID_ID", fieldValue = """{"value_id":"26008","value_name":"26008"}""" },
+                new { marketplaceCode = "MercadoLivre", fieldName = "ml:SIZE_GRID_ROW_ID", fieldValue = """{"value_name":"26008:1"}""" },
                 new { marketplaceCode = "MercadoLivre", fieldName = "ml:COLOR", fieldValue = """{"value_id":"-1","value_name":"N/A"}""" }
             }
         }, companyId));
@@ -570,6 +572,11 @@ public class AdvertisementApiTests : IClassFixture<ApiFactory>
             && x.GetProperty("value_name").GetString() == "Acme");
         Assert.Contains(attrs.EnumerateArray(), x => x.GetProperty("id").GetString() == "GENDER"
             && x.GetProperty("value_id").GetString() == "339665");
+        var grid = Assert.Single(attrs.EnumerateArray(), x => x.GetProperty("id").GetString() == "SIZE_GRID_ID");
+        Assert.Equal("26008", grid.GetProperty("value_name").GetString());
+        Assert.False(grid.TryGetProperty("value_id", out _));
+        Assert.Contains(attrs.EnumerateArray(), x => x.GetProperty("id").GetString() == "SIZE_GRID_ROW_ID"
+            && x.GetProperty("value_name").GetString() == "26008:1");
         Assert.DoesNotContain(attrs.EnumerateArray(), x => x.GetProperty("id").GetString() == "COLOR");
     }
 }

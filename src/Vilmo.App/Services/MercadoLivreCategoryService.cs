@@ -1,12 +1,18 @@
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Vilmo.Data;
+using Vilmo.Security;
 
 namespace Vilmo.Services;
 
-public sealed class MercadoLivreCategoryService(AppDbContext db, IHttpClientFactory httpFactory, IMemoryCache cache)
+public sealed class MercadoLivreCategoryService(
+    AppDbContext db,
+    IHttpClientFactory httpFactory,
+    IMemoryCache cache,
+    SecretProtector? protector = null)
 {
     public const string MarketplaceCode = "MercadoLivre";
     const string DefaultBase = "https://api.mercadolibre.com";
@@ -159,13 +165,18 @@ public sealed class MercadoLivreCategoryService(AppDbContext db, IHttpClientFact
                 _ => true
             };
         }
+        string? catalogDomain = Str(el, "catalog_domain");
+        if (string.IsNullOrWhiteSpace(catalogDomain)
+            && el.TryGetProperty("settings", out var settingsObj) && settingsObj.ValueKind == JsonValueKind.Object)
+            catalogDomain = Str(settingsObj, "catalog_domain");
         var detail = new MlCategoryDetail(
             el.TryGetProperty("id", out var idEl) ? idEl.GetString() ?? id : id,
             el.TryGetProperty("name", out var nameEl) ? nameEl.GetString() ?? id : id,
             path,
             children,
             children.Count == 0,
-            listingAllowed
+            listingAllowed,
+            catalogDomain
         );
         cache.Set(key, detail, CacheFor);
         return detail;
@@ -206,6 +217,19 @@ public sealed class MercadoLivreCategoryService(AppDbContext db, IHttpClientFact
             .Where(x => x is not null)
             .Cast<MlCategoryAttribute>()
             .ToList();
+        var sizeChartRequired = items.Any(x =>
+            x.ValueType.Equals("grid_id", StringComparison.OrdinalIgnoreCase)
+            || x.Id.Equals("SIZE_GRID_ID", StringComparison.OrdinalIgnoreCase));
+        if (sizeChartRequired)
+        {
+            items = items.Select(x =>
+                x.Id.Equals("SIZE_GRID_ID", StringComparison.OrdinalIgnoreCase)
+                || x.Id.Equals("SIZE_GRID_ROW_ID", StringComparison.OrdinalIgnoreCase)
+                || x.ValueType.Equals("grid_id", StringComparison.OrdinalIgnoreCase)
+                || x.ValueType.Equals("grid_row_id", StringComparison.OrdinalIgnoreCase)
+                    ? x with { Required = true }
+                    : x).ToList();
+        }
         var recommended = await ReadRecommendedIdsAsync(id, ct);
         foreach (var rec in recommended)
         {
@@ -216,9 +240,56 @@ public sealed class MercadoLivreCategoryService(AppDbContext db, IHttpClientFact
                 items[idx] = match with { Recommended = true };
             }
         }
-        var result = new MlCategoryAttributeList(id, items, recommended, "mercadolivre");
+        items = items
+            .OrderByDescending(x => x.Required)
+            .ThenByDescending(x => x.Recommended)
+            .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var domain = (await GetAsync(id, ct))?.CatalogDomain;
+        var result = new MlCategoryAttributeList(id, items, recommended, "mercadolivre", domain, sizeChartRequired);
         cache.Set(key, result, CacheFor);
         return result;
+    }
+
+    public async Task<MlSizeChartList> ListSizeChartsAsync(
+        Guid companyId, string categoryId, string? genderId, string? genderName, string? brand, CancellationToken ct)
+    {
+        if (!MercadoLivreCategoryId.TryNormalize(categoryId, out var id))
+            throw new ArgumentException("InvalidCategoryId");
+        var domain = (await GetAsync(id, ct))?.CatalogDomain;
+        if (string.IsNullOrWhiteSpace(domain))
+            return new MlSizeChartList(id, domain, [], "no_domain");
+        var creds = await ReadSellerAsync(companyId, ct);
+        if (creds is null)
+            return new MlSizeChartList(id, domain, [], "needs_token");
+        var body = new Dictionary<string, object?>
+        {
+            ["domain_id"] = domain,
+            ["site_id"] = Site,
+            ["seller_id"] = creds.Value.SellerId,
+            ["attributes"] = SizeChartFilters(genderId, genderName, brand)
+        };
+        var json = await SendJsonAsync(HttpMethod.Post, "/catalog/charts/search", ct, creds.Value.Token, creds.Value.SellerId, body);
+        var charts = ReadCharts(json);
+        if (charts.Count == 0 && domain.StartsWith($"{Site}-", StringComparison.OrdinalIgnoreCase))
+        {
+            body["domain_id"] = domain[(Site.Length + 1)..];
+            json = await SendJsonAsync(HttpMethod.Post, "/catalog/charts/search", ct, creds.Value.Token, creds.Value.SellerId, body);
+            charts = ReadCharts(json);
+        }
+        return new MlSizeChartList(id, domain, charts, charts.Count > 0 ? "mercadolivre" : "empty");
+    }
+
+    public async Task<MlSizeChartDetail?> GetSizeChartAsync(Guid companyId, string chartId, CancellationToken ct)
+    {
+        var id = (chartId ?? "").Trim();
+        if (id.Length == 0 || id.Contains('/') || id.Contains(' '))
+            throw new ArgumentException("InvalidSizeChartId");
+        var creds = await ReadSellerAsync(companyId, ct);
+        if (creds is null) return null;
+        var json = await SendJsonAsync(HttpMethod.Get, $"/catalog/charts/{Uri.EscapeDataString(id)}", ct, creds.Value.Token, creds.Value.SellerId);
+        if (json is null || json.Value.ValueKind != JsonValueKind.Object) return null;
+        return ReadChartDetail(json.Value);
     }
 
     async Task<string> BaseUrlAsync(CancellationToken ct)
@@ -230,14 +301,25 @@ public sealed class MercadoLivreCategoryService(AppDbContext db, IHttpClientFact
         return string.IsNullOrWhiteSpace(url) ? DefaultBase : url.TrimEnd('/');
     }
 
-    async Task<JsonElement?> GetJsonAsync(string path, CancellationToken ct)
+    async Task<JsonElement?> GetJsonAsync(string path, CancellationToken ct) =>
+        await SendJsonAsync(HttpMethod.Get, path, ct);
+
+    async Task<JsonElement?> SendJsonAsync(
+        HttpMethod method, string path, CancellationToken ct,
+        string? bearer = null, long? callerId = null, object? body = null)
     {
         var url = $"{await BaseUrlAsync(ct)}{path}";
         try
         {
             var client = httpFactory.CreateClient("marketplace");
-            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            using var req = new HttpRequestMessage(method, url);
             req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            if (!string.IsNullOrWhiteSpace(bearer))
+                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
+            if (callerId is > 0)
+                req.Headers.TryAddWithoutValidation("x-caller-id", callerId.Value.ToString());
+            if (body is not null)
+                req.Content = JsonContent.Create(body);
             using var resp = await client.SendAsync(req, ct);
             var raw = await resp.Content.ReadAsStringAsync(ct);
             if (!resp.IsSuccessStatusCode) return null;
@@ -248,6 +330,124 @@ public sealed class MercadoLivreCategoryService(AppDbContext db, IHttpClientFact
         {
             return null;
         }
+    }
+
+    async Task<(string Token, long SellerId)?> ReadSellerAsync(Guid companyId, CancellationToken ct)
+    {
+        var cfg = await db.CompanyMarketplaceConfigs.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.MarketplaceCode == MarketplaceCode, ct);
+        if (cfg is null) return null;
+        var tokenRow = await db.CompanyMarketplaceParameters.AsNoTracking()
+            .FirstOrDefaultAsync(p => p.ConfigId == cfg.Id && p.ParameterKey == "AccessToken", ct);
+        var userRow = await db.CompanyMarketplaceParameters.AsNoTracking()
+            .FirstOrDefaultAsync(p => p.ConfigId == cfg.Id && p.ParameterKey == "UserId", ct);
+        var token = tokenRow?.ParameterValue;
+        if (string.IsNullOrWhiteSpace(token)) return null;
+        if (tokenRow is { IsSecret: true } && protector is not null)
+        {
+            try { token = protector.Unprotect(token); }
+            catch { /* keep packed value */ }
+        }
+        if (token.Contains("demo", StringComparison.OrdinalIgnoreCase)) return null;
+        long.TryParse(userRow?.ParameterValue, out var sellerId);
+        return (token, sellerId);
+    }
+
+    static List<object> SizeChartFilters(string? genderId, string? genderName, string? brand)
+    {
+        var filters = new List<object>();
+        if (!string.IsNullOrWhiteSpace(genderId) || !string.IsNullOrWhiteSpace(genderName))
+        {
+            var val = new Dictionary<string, string>();
+            if (!string.IsNullOrWhiteSpace(genderId)) val["id"] = genderId.Trim();
+            if (!string.IsNullOrWhiteSpace(genderName)) val["name"] = genderName.Trim();
+            filters.Add(new { id = "GENDER", values = new[] { val } });
+        }
+        if (!string.IsNullOrWhiteSpace(brand))
+            filters.Add(new { id = "BRAND", values = new[] { new { name = brand.Trim() } } });
+        return filters;
+    }
+
+    static IReadOnlyList<MlSizeChartRef> ReadCharts(JsonElement? json)
+    {
+        if (json is not { ValueKind: JsonValueKind.Object } obj) return [];
+        if (!obj.TryGetProperty("charts", out var arr) || arr.ValueKind != JsonValueKind.Array)
+            return [];
+        return arr.EnumerateArray().Select(ReadChartRef).Where(x => x is not null).Cast<MlSizeChartRef>().ToList();
+    }
+
+    static MlSizeChartRef? ReadChartRef(JsonElement x)
+    {
+        var id = Str(x, "id");
+        if (string.IsNullOrWhiteSpace(id)) return null;
+        var name = ChartName(x) ?? id;
+        return new MlSizeChartRef(id, name, Str(x, "type") ?? "", Str(x, "domain_id") ?? "");
+    }
+
+    static MlSizeChartDetail ReadChartDetail(JsonElement x)
+    {
+        var id = Str(x, "id") ?? "";
+        var rows = new List<MlSizeChartRow>();
+        if (x.TryGetProperty("rows", out var arr) && arr.ValueKind == JsonValueKind.Array)
+        {
+            var i = 1;
+            foreach (var row in arr.EnumerateArray())
+            {
+                var rowId = Str(row, "id");
+                if (string.IsNullOrWhiteSpace(rowId))
+                    rowId = $"{id}:{i}";
+                var size = RowSizeName(row);
+                rows.Add(new MlSizeChartRow(rowId, size ?? rowId));
+                i++;
+            }
+        }
+        return new MlSizeChartDetail(id, ChartName(x) ?? id, Str(x, "type") ?? "", rows);
+    }
+
+    static string? ChartName(JsonElement x)
+    {
+        if (!x.TryGetProperty("names", out var names) || names.ValueKind != JsonValueKind.Object)
+            return Str(x, "name");
+        if (names.TryGetProperty(Site, out var mlb) && mlb.ValueKind == JsonValueKind.String)
+            return mlb.GetString();
+        foreach (var p in names.EnumerateObject())
+        {
+            if (p.Value.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(p.Value.GetString()))
+                return p.Value.GetString();
+        }
+        return null;
+    }
+
+    static string? RowSizeName(JsonElement row)
+    {
+        if (!row.TryGetProperty("attributes", out var attrs) || attrs.ValueKind != JsonValueKind.Array)
+            return null;
+        string? fallback = null;
+        foreach (var a in attrs.EnumerateArray())
+        {
+            var id = Str(a, "id") ?? "";
+            var name = FirstValueName(a);
+            if (string.IsNullOrWhiteSpace(name)) continue;
+            if (id.Equals("SIZE", StringComparison.OrdinalIgnoreCase)
+                || id.Equals("FILTRABLE_SIZE", StringComparison.OrdinalIgnoreCase)
+                || id.EndsWith("_SIZE", StringComparison.OrdinalIgnoreCase))
+                return name;
+            fallback ??= name;
+        }
+        return fallback;
+    }
+
+    static string? FirstValueName(JsonElement attr)
+    {
+        if (attr.TryGetProperty("values", out var vals) && vals.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var v in vals.EnumerateArray())
+            {
+                var n = Str(v, "name");
+                if (!string.IsNullOrWhiteSpace(n)) return n;
+            }
+        }
+        return Str(attr, "value_name") ?? Str(attr, "name");
     }
 
     static MlCategoryRef? ReadRef(JsonElement x)
@@ -271,14 +471,21 @@ public sealed class MercadoLivreCategoryService(AppDbContext db, IHttpClientFact
     {
         var id = Str(x, "id");
         if (string.IsNullOrWhiteSpace(id)) return null;
-        var required = HasTag(x, "required") || HasTag(x, "new_required");
+        var valueType = Str(x, "value_type") ?? "string";
+        var grid = valueType.Equals("grid_id", StringComparison.OrdinalIgnoreCase)
+            || valueType.Equals("grid_row_id", StringComparison.OrdinalIgnoreCase)
+            || id.Equals("SIZE_GRID_ID", StringComparison.OrdinalIgnoreCase)
+            || id.Equals("SIZE_GRID_ROW_ID", StringComparison.OrdinalIgnoreCase);
+        var required = HasTag(x, "required") || HasTag(x, "new_required") || grid;
         var hidden = HasTag(x, "hidden");
-        if (hidden && !required) return null;
+        var readOnly = HasTag(x, "read_only");
+        if (readOnly && !grid) return null;
+        if (hidden && !required && !grid) return null;
         var values = ReadAttributeValues(x);
         return new MlCategoryAttribute(
             id,
             Str(x, "name") ?? id,
-            Str(x, "value_type") ?? "string",
+            valueType,
             Int(x, "value_max_length"),
             required,
             HasTag(x, "catalog_required"),
@@ -286,7 +493,8 @@ public sealed class MercadoLivreCategoryService(AppDbContext db, IHttpClientFact
             HasTag(x, "allow_variations"),
             hidden,
             Recommended: false,
-            values);
+            values,
+            HasTag(x, "grid_filter") || HasTag(x, "grid_template_required"));
     }
 
     static List<MlAttributeValue> ReadAttributeValues(JsonElement x)
@@ -301,7 +509,7 @@ public sealed class MercadoLivreCategoryService(AppDbContext db, IHttpClientFact
             if (MercadoLivreItemAttributes.IsNotApplicable(vid, name)) continue;
             if (string.IsNullOrWhiteSpace(vid) && string.IsNullOrWhiteSpace(name)) continue;
             list.Add(new MlAttributeValue(vid ?? "", name));
-            if (list.Count >= 120) break;
+            if (list.Count >= 250) break;
         }
         return list;
     }
@@ -408,13 +616,28 @@ public sealed record MlCategoryAttribute(
     bool AllowVariations,
     bool Hidden,
     bool Recommended,
-    IReadOnlyList<MlAttributeValue> Values);
+    IReadOnlyList<MlAttributeValue> Values,
+    bool GridFilter = false);
 
 public sealed record MlCategoryAttributeList(
     string CategoryId,
     IReadOnlyList<MlCategoryAttribute> Items,
     IReadOnlyList<string> RecommendedIds,
+    string Source,
+    string? DomainId = null,
+    bool SizeChartRequired = false);
+
+public sealed record MlSizeChartRef(string Id, string Name, string Type, string DomainId);
+
+public sealed record MlSizeChartList(
+    string CategoryId,
+    string? DomainId,
+    IReadOnlyList<MlSizeChartRef> Items,
     string Source);
+
+public sealed record MlSizeChartRow(string Id, string Size);
+
+public sealed record MlSizeChartDetail(string Id, string Name, string Type, IReadOnlyList<MlSizeChartRow> Rows);
 
 public sealed record MlListingType(string Id, string Name);
 
@@ -428,4 +651,5 @@ public sealed record MlCategoryDetail(
     IReadOnlyList<MlCategoryRef> PathFromRoot,
     IReadOnlyList<MlCategoryRef> Children,
     bool Leaf,
-    bool ListingAllowed);
+    bool ListingAllowed,
+    string? CatalogDomain = null);
