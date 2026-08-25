@@ -2,7 +2,7 @@
 
 This is the build plan only. No application code, Docker images, or certificates are created until a later task explicitly asks to implement.
 
-Referenced architecture: [MarketPlaceEngine.MD](./MarketPlaceEngine.MD) — **Opção A (in-house)** + **idempotency**. Service map, data model, Redis resources, and sequence diagrams: [ARCHITECTURE.md](./ARCHITECTURE.md). Default UI: [UI.md](./UI.md) (Metronic 9.5.0 HTML). CNPJ seller + developer apps: [HowToCreateCnpjMarketplaceAccounts.md](./HowToCreateCnpjMarketplaceAccounts.md). Depth on login roles, sales sync, outbound NF-e, and Correios labels: [USER_STORIES.md](./USER_STORIES.md). First tenant: [FirstCompany.md](./FirstCompany.md).
+Referenced architecture: [MarketPlaceEngine.MD](./MarketPlaceEngine.MD) — **Opção A (in-house)** + **idempotency**. Service map, data model, Redis resources, and sequence diagrams: [ARCHITECTURE.md](./ARCHITECTURE.md). Default UI: [UI.md](./UI.md) (Metronic 9.5.0 HTML). CNPJ seller + developer apps: [HowToCreateCnpjMarketplaceAccounts.md](./HowToCreateCnpjMarketplaceAccounts.md). Depth on login roles, sales sync, outbound NF-e, and Correios labels: [USER_STORIES.md](./USER_STORIES.md). First tenant: [FirstCompany.md](./FirstCompany.md). Commercial Mercado Livre growth (Ads, Google research, kits): [ML_SALES_GROWTH.md](./ML_SALES_GROWTH.md).
 
 ---
 
@@ -59,6 +59,8 @@ Redis is enough as the queue for this scope. Do not add RabbitMQ until stream la
 | Distributed stock | https://developers.mercadolivre.com.br/pt_br/pt_br/estoque-distribuido |
 | Fulfillment stock | https://developers.mercadolivre.com.br/pt_br/envio-de-produto/envios-fulfillment |
 | Platform hygiene / 429 | https://developers.mercadolivre.com.br/pt_br/envio-de-produto/boas-praticas-para-usar-a-plataforma |
+| Mercado Ads (Product Ads / Brand / Display) | https://developers.mercadolivre.com.br/pt_br/introducao-ao-mercado-ads |
+| Sales growth playbook (commercial) | [ML_SALES_GROWTH.md](./ML_SALES_GROWTH.md) |
 
 Facts the **seed definition** (table rows) must encode:
 
