@@ -102,7 +102,7 @@ public sealed class WorkProcessor(AppDbContext db, NfeIngestService nfe, SalesSe
     }
 }
 
-public sealed class PollingWorker(WorkProcessor processor, ILogger<PollingWorker> log) : BackgroundService
+public sealed class PollingWorker(IServiceScopeFactory scopes, ILogger<PollingWorker> log) : BackgroundService
 {
     public string[] Kinds { get; init; } = [WorkKinds.SaleImport, WorkKinds.PublishListing, WorkKinds.StockPublish, WorkKinds.UploadInvoice];
 
@@ -111,7 +111,12 @@ public sealed class PollingWorker(WorkProcessor processor, ILogger<PollingWorker
         log.LogInformation("worker kinds {Kinds}", string.Join(",", Kinds));
         while (!stoppingToken.IsCancellationRequested)
         {
-            try { await processor.DrainAsync(Kinds, stoppingToken); }
+            try
+            {
+                using var scope = scopes.CreateScope();
+                var processor = scope.ServiceProvider.GetRequiredService<WorkProcessor>();
+                await processor.DrainAsync(Kinds, stoppingToken);
+            }
             catch (Exception ex) { log.LogError(ex, "drain failed"); }
             await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
         }
