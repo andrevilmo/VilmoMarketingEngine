@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Vilmo.Data;
+using Vilmo.Marketplaces;
 using Vilmo.Security;
 using Vilmo.Services;
 using Vilmo.Workers;
@@ -39,6 +40,13 @@ public static class ServiceCollectionExtensions
         services.AddScoped<MarketplaceService>();
         services.AddScoped<ProvisioningService>();
         services.AddScoped<ProductService>();
+        services.AddSingleton<IMarketplaceHttpClient, RecordingMarketplaceHttpClient>();
+        services.AddSingleton<IMarketplaceStockAdapter, MercadoLivreStockAdapter>();
+        services.AddSingleton<IMarketplaceStockAdapter, ShopeeStockAdapter>();
+        services.AddSingleton<IMarketplaceStockAdapter, SheinStockAdapter>();
+        services.AddSingleton<IMarketplaceStockAdapter, MagaluStockAdapter>();
+        services.AddScoped<MarketplaceStockGateway>();
+        services.AddScoped<StockPublishService>();
         services.AddScoped<WorkProcessor>();
         services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             .AddJwtBearer(o =>

@@ -380,8 +380,8 @@ const Vilmo = (() => {
 
   async function viewListings() {
     const list = await api("/listings");
-    const rows = list.map(l => `<tr><td>${l.sku}</td><td>${l.marketplaceCode}</td><td>${l.status}</td><td>${l.remoteId || ""}</td></tr>`);
-    return page("Anúncios", "", table(["SKU", "Marketplace", "Status", "Id remoto"], rows));
+    const rows = list.map(l => `<tr><td>${l.sku}</td><td>${l.marketplaceCode}</td><td>${l.status}</td><td>${l.availableQuantity ?? 0}</td><td>${l.remoteId || ""}</td></tr>`);
+    return page("Anúncios", "", table(["SKU", "Marketplace", "Status", "Qtd", "Id remoto"], rows));
   }
 
   async function viewSales() {

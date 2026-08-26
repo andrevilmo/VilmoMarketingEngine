@@ -45,6 +45,10 @@ public sealed class ProductService(AppDbContext db)
                 l.CompanyId == companyId && l.VendorUserId == vendorUserId && l.Sku == sku && l.MarketplaceCode == code, ct);
             if (listing is null)
             {
+                var onHand = await db.InventoryBalances.AsNoTracking()
+                    .Where(b => b.CompanyId == companyId && b.Sku == sku)
+                    .Select(b => (decimal?)b.OnHand)
+                    .FirstOrDefaultAsync(ct);
                 listing = new Listing
                 {
                     Id = Guid.NewGuid(),
@@ -52,7 +56,8 @@ public sealed class ProductService(AppDbContext db)
                     VendorUserId = vendorUserId,
                     Sku = sku,
                     MarketplaceCode = code,
-                    Status = "Queued"
+                    Status = "Queued",
+                    AvailableQuantity = onHand ?? 0
                 };
                 db.Listings.Add(listing);
             }

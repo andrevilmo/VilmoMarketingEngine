@@ -179,6 +179,10 @@ public class Listing
     public string MarketplaceCode { get; set; } = "";
     public string Status { get; set; } = "Pending";
     public string? RemoteId { get; set; }
+    public decimal AvailableQuantity { get; set; }
+    public DateTimeOffset? LastStockPublishedAt { get; set; }
+    public string? LastStockPublishError { get; set; }
+    public string? LastStockPayloadJson { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 

@@ -5,13 +5,13 @@ using Vilmo.Services;
 
 namespace Vilmo.Workers;
 
-public sealed class WorkProcessor(AppDbContext db, NfeIngestService nfe, SalesService sales, ILogger<WorkProcessor> log)
+public sealed class WorkProcessor(AppDbContext db, NfeIngestService nfe, SalesService sales, StockPublishService stock, ILogger<WorkProcessor> log)
 {
     public async Task<int> DrainAsync(string[] kinds, CancellationToken ct)
     {
         var items = await db.WorkItems
             .Where(w => w.Status == "Pending" && kinds.Contains(w.Kind))
-            .OrderBy(w => w.CreatedAt)
+            .OrderBy(w => w.Id)
             .Take(20)
             .ToListAsync(ct);
         foreach (var item in items)
@@ -75,10 +75,17 @@ public sealed class WorkProcessor(AppDbContext db, NfeIngestService nfe, SalesSe
                 {
                     listing.Status = "PublishedDemo";
                     listing.RemoteId = $"demo-{listing.Id:N}"[..12];
+                    var onHand = await db.InventoryBalances.AsNoTracking()
+                        .Where(b => b.CompanyId == listing.CompanyId && b.Sku == listing.Sku)
+                        .Select(b => (decimal?)b.OnHand)
+                        .FirstOrDefaultAsync(ct);
+                    listing.AvailableQuantity = onHand ?? 0;
                 }
                 break;
             }
             case WorkKinds.StockPublish:
+                await stock.HandleWorkAsync(item, ct);
+                break;
             case WorkKinds.UploadInvoice:
                 break;
         }
@@ -95,7 +102,7 @@ public sealed class WorkProcessor(AppDbContext db, NfeIngestService nfe, SalesSe
     }
 }
 
-public sealed class PollingWorker(WorkProcessor processor, ILogger<PollingWorker> log) : BackgroundService
+public sealed class PollingWorker(IServiceScopeFactory scopes, ILogger<PollingWorker> log) : BackgroundService
 {
     public string[] Kinds { get; init; } = [WorkKinds.SaleImport, WorkKinds.PublishListing, WorkKinds.StockPublish, WorkKinds.UploadInvoice];
 
@@ -104,7 +111,12 @@ public sealed class PollingWorker(WorkProcessor processor, ILogger<PollingWorker
         log.LogInformation("worker kinds {Kinds}", string.Join(",", Kinds));
         while (!stoppingToken.IsCancellationRequested)
         {
-            try { await processor.DrainAsync(Kinds, stoppingToken); }
+            try
+            {
+                using var scope = scopes.CreateScope();
+                var processor = scope.ServiceProvider.GetRequiredService<WorkProcessor>();
+                await processor.DrainAsync(Kinds, stoppingToken);
+            }
             catch (Exception ex) { log.LogError(ex, "drain failed"); }
             await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
         }

@@ -6,7 +6,7 @@ using Vilmo.Workers;
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddVilmo(builder.Configuration);
 builder.Services.AddHostedService(sp => new PollingWorker(
-    sp.GetRequiredService<WorkProcessor>(),
+    sp.GetRequiredService<IServiceScopeFactory>(),
     sp.GetRequiredService<ILogger<PollingWorker>>())
 {
     Kinds = [WorkKinds.NfeIngest, WorkKinds.NfeEmit]
