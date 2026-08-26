@@ -5,13 +5,13 @@ using Vilmo.Services;
 
 namespace Vilmo.Workers;
 
-public sealed class WorkProcessor(AppDbContext db, NfeIngestService nfe, SalesService sales, ILogger<WorkProcessor> log)
+public sealed class WorkProcessor(AppDbContext db, NfeIngestService nfe, SalesService sales, StockPublishService stock, ILogger<WorkProcessor> log)
 {
     public async Task<int> DrainAsync(string[] kinds, CancellationToken ct)
     {
         var items = await db.WorkItems
             .Where(w => w.Status == "Pending" && kinds.Contains(w.Kind))
-            .OrderBy(w => w.CreatedAt)
+            .OrderBy(w => w.Id)
             .Take(20)
             .ToListAsync(ct);
         foreach (var item in items)
@@ -75,10 +75,17 @@ public sealed class WorkProcessor(AppDbContext db, NfeIngestService nfe, SalesSe
                 {
                     listing.Status = "PublishedDemo";
                     listing.RemoteId = $"demo-{listing.Id:N}"[..12];
+                    var onHand = await db.InventoryBalances.AsNoTracking()
+                        .Where(b => b.CompanyId == listing.CompanyId && b.Sku == listing.Sku)
+                        .Select(b => (decimal?)b.OnHand)
+                        .FirstOrDefaultAsync(ct);
+                    listing.AvailableQuantity = onHand ?? 0;
                 }
                 break;
             }
             case WorkKinds.StockPublish:
+                await stock.HandleWorkAsync(item, ct);
+                break;
             case WorkKinds.UploadInvoice:
                 break;
         }

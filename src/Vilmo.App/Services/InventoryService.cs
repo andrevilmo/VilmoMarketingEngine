@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Vilmo.Data;
 using Vilmo.Domain;
@@ -6,6 +7,8 @@ namespace Vilmo.Services;
 
 public sealed class InventoryService(AppDbContext db)
 {
+    static readonly JsonSerializerOptions JsonOpts = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+
     public async Task<List<object>> ListAsync(Guid companyId, CancellationToken ct)
     {
         var q =
@@ -29,6 +32,7 @@ public sealed class InventoryService(AppDbContext db)
 
     public async Task<(bool Ok, string? Error)> ApplySalePaidAsync(Sale sale, CancellationToken ct)
     {
+        var changedSkus = new List<string>();
         foreach (var item in sale.Items)
         {
             var exists = await db.InventoryMovements.AnyAsync(m =>
@@ -60,10 +64,13 @@ public sealed class InventoryService(AppDbContext db)
                 db.InventoryBalances.Add(bal);
             }
             bal.OnHand -= item.Quantity;
+            changedSkus.Add(item.Sku);
         }
         sale.StockShort = null;
         sale.Status = SaleStatuses.Paid;
         sale.UpdatedAt = DateTimeOffset.UtcNow;
+        foreach (var sku in changedSkus.Distinct())
+            EnqueueStockPublish(sale.CompanyId, sku, sale.MarketplaceCode, sale.VendorUserId, sale.Id);
         await db.SaveChangesAsync(ct);
         return (true, null);
     }
@@ -90,11 +97,13 @@ public sealed class InventoryService(AppDbContext db)
             db.InventoryBalances.Add(new InventoryBalance { Id = Guid.NewGuid(), CompanyId = companyId, Sku = sku, OnHand = qty });
         }
         else bal.OnHand += qty;
+        EnqueueStockPublish(companyId, sku, excludeMarketplace: null, excludeVendorUserId: null, saleId: null);
         await db.SaveChangesAsync(ct);
     }
 
     public async Task ReverseSalePaidAsync(Sale sale, CancellationToken ct)
     {
+        var reversed = new List<string>();
         foreach (var item in sale.Items)
         {
             var paid = await db.InventoryMovements.AnyAsync(m =>
@@ -113,7 +122,27 @@ public sealed class InventoryService(AppDbContext db)
             });
             var bal = await db.InventoryBalances.FirstAsync(b => b.CompanyId == sale.CompanyId && b.Sku == item.Sku, ct);
             bal.OnHand += item.Quantity;
+            reversed.Add(item.Sku);
         }
+        foreach (var sku in reversed.Distinct())
+            EnqueueStockPublish(sale.CompanyId, sku, sale.MarketplaceCode, sale.VendorUserId, sale.Id);
         await db.SaveChangesAsync(ct);
+    }
+
+    void EnqueueStockPublish(Guid companyId, string sku, string? excludeMarketplace, Guid? excludeVendorUserId, Guid? saleId)
+    {
+        db.WorkItems.Add(new WorkItem
+        {
+            Id = Guid.NewGuid(),
+            CompanyId = companyId,
+            Kind = WorkKinds.StockPublish,
+            PayloadJson = JsonSerializer.Serialize(new
+            {
+                sku,
+                excludeMarketplace,
+                excludeVendorUserId,
+                saleId
+            }, JsonOpts)
+        });
     }
 }

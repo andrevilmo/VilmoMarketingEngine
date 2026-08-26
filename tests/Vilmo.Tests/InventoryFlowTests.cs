@@ -41,6 +41,7 @@ public class InventoryFlowTests
         var first = await inv.ApplySalePaidAsync(sale, default);
         Assert.True(first.Ok);
         Assert.Equal(3, (await db.InventoryBalances.FirstAsync()).OnHand);
+        Assert.Contains(db.WorkItems, w => w.Kind == WorkKinds.StockPublish);
         var second = await inv.ApplySalePaidAsync(sale, default);
         Assert.True(second.Ok);
         Assert.Equal(3, (await db.InventoryBalances.FirstAsync()).OnHand);

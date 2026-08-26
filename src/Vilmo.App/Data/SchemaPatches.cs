@@ -39,5 +39,17 @@ public static class SchemaPatches
             CREATE INDEX IF NOT EXISTS ix_nfe_ingest_log_run_id
               ON nfe_ingest_log (run_id);
             """, ct);
+        await db.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE listing ADD COLUMN IF NOT EXISTS available_quantity numeric NOT NULL DEFAULT 0;
+            """, ct);
+        await db.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE listing ADD COLUMN IF NOT EXISTS last_stock_published_at timestamptz NULL;
+            """, ct);
+        await db.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE listing ADD COLUMN IF NOT EXISTS last_stock_publish_error text NULL;
+            """, ct);
+        await db.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE listing ADD COLUMN IF NOT EXISTS last_stock_payload_json text NULL;
+            """, ct);
     }
 }
