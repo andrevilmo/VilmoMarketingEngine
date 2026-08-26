@@ -1,6 +1,6 @@
 # Mercado Livre sales growth plan
 
-Commercial plan to grow sales **inside Mercado Livre**, using Mercado Ads first and Google / other tools where they actually pay. Worked example: the stainless-steel finger protector listing below.
+Commercial plan to grow sales **inside Mercado Livre**, using Mercado Ads first and Google / other tools where they actually pay. Worked example: the stainless-steel finger protector listing below. Portuguese summary: [ML_SALES_GROWTH.pt-BR.md](./ML_SALES_GROWTH.pt-BR.md).
 
 This is an **operating plan**, not an engineering spec. Product Ads still go through the seller panel (or later a Vilmo Ads adapter). Listing publish, photos, Kit BOM, and NF-e stay in Vilmo. Do **not** call Mercado Ads or Google Ads from ERP / WMS / PWA logic; any future automation uses the marketplace gateway + adapter layer in [MarketPlaceEngine.MD](./MarketPlaceEngine.MD).
 

@@ -60,7 +60,7 @@ Redis is enough as the queue for this scope. Do not add RabbitMQ until stream la
 | Fulfillment stock | https://developers.mercadolivre.com.br/pt_br/envio-de-produto/envios-fulfillment |
 | Platform hygiene / 429 | https://developers.mercadolivre.com.br/pt_br/envio-de-produto/boas-praticas-para-usar-a-plataforma |
 | Mercado Ads (Product Ads / Brand / Display) | https://developers.mercadolivre.com.br/pt_br/introducao-ao-mercado-ads |
-| Sales growth playbook (commercial) | [ML_SALES_GROWTH.md](./ML_SALES_GROWTH.md) |
+| Sales growth playbook (commercial) | [ML_SALES_GROWTH.md](./ML_SALES_GROWTH.md) · [pt-BR](./ML_SALES_GROWTH.pt-BR.md) |
 
 Facts the **seed definition** (table rows) must encode:
 
