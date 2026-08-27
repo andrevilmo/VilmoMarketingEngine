@@ -622,13 +622,30 @@ const Vilmo = (() => {
       }
       return `<label>${esc(d.label)}<input class="kt-input attr-field" data-mkt="${esc(m.code)}" data-key="${esc(key)}"></label>`;
     };
-    const extras = (markets || []).map(m => {
-      const defs = extraByMkt[m.code] || extraByMkt[m.Code] || [];
-      if (!defs.length) return "";
-      const inputs = defs.map(d => extraField(m, d)).join("");
-      return `<div class="ad-extra" data-extra="${esc(m.code)}"><h4 class="text-sm font-medium mb-2">${esc(m.displayName || m.code)}</h4><div class="vilmo-grid cols-2">${inputs}</div></div>`;
+    const mktRows = (markets || []).map(m => {
+      const name = m.displayName || m.code;
+      return `<div class="ad-mkt-row">
+        <label class="text-sm"><input type="checkbox" class="mkt-code" value="${esc(m.code)}" checked> ${esc(name)}</label>
+        <button type="button" class="kt-btn kt-btn-outline kt-btn-sm ad-mkt-edit" data-mkt="${esc(m.code)}">Editar ${esc(name)}</button>
+      </div>`;
     }).join("");
-    const checks = (markets || []).map(m => `<label class="text-sm"><input type="checkbox" class="mkt-code" value="${esc(m.code)}" checked> ${esc(m.displayName || m.code)}</label>`).join("");
+    const mktModals = (markets || []).map(m => {
+      const defs = extraByMkt[m.code] || extraByMkt[m.Code] || [];
+      const name = m.displayName || m.code;
+      const body = defs.length
+        ? `<div class="ad-extra" data-extra="${esc(m.code)}"><div class="vilmo-grid cols-2">${defs.map(d => extraField(m, d)).join("")}</div></div>`
+        : `<p class="text-sm text-muted-foreground">Este canal não pede campos extras. Os dados comuns do anúncio ficam no formulário.</p>`;
+      return `<div class="ad-mkt-modal" hidden data-modal-mkt="${esc(m.code)}">
+        <div class="ad-mkt-modal-backdrop" data-close-mkt-modal></div>
+        <div class="ad-mkt-modal-box" role="dialog" aria-modal="true" aria-labelledby="mkt-modal-title-${esc(m.code)}">
+          <div class="ad-mkt-modal-head">
+            <h3 id="mkt-modal-title-${esc(m.code)}" class="font-medium">Dados do ${esc(name)}</h3>
+            <button type="button" class="kt-btn kt-btn-ghost kt-btn-icon ad-mkt-close" data-close-mkt-modal aria-label="Fechar">×</button>
+          </div>
+          <div class="ad-mkt-modal-body">${body}</div>
+        </div>
+      </div>`;
+    }).join("");
     const vendorSel = store.me.level === "Vendor" ? "" : `<label>Vendedor (opcional)
       <select class="kt-select" name="vendorUserId"><option value="">Eu / empresa</option>${(vendors || []).map(v => `<option value="${v.id || v.userId || ""}">${esc(v.name || v.email || "")}</option>`).join("")}</select></label>`;
     const list = Array.isArray(ads) ? ads : (ads && ads.advertisements) || [];
@@ -707,15 +724,15 @@ const Vilmo = (() => {
       ${sellerBanner}
       <form id="ad-form" class="vilmo-card vilmo-grid cols-2 mb-4">
         <h3 class="col-span-2 font-medium">Salvar anúncio</h3>
-        <p class="col-span-2 text-sm text-muted-foreground">Escolha os marketplaces e salve o rascunho. Depois use <b>Publicar neste canal</b> ou <b>Cancelar</b> em cada marketplace, e <b>Atualizar dados online</b> para puxar o anúncio publicado.</p>
+        <p class="col-span-2 text-sm text-muted-foreground">Marque os marketplaces. Os campos específicos de cada canal abrem no botão <b>Editar</b>. Depois use <b>Publicar neste canal</b> ou <b>Cancelar</b> em cada marketplace, e <b>Atualizar dados online</b> para puxar o anúncio publicado.</p>
         <div class="col-span-2 ad-kind">
           <label class="text-sm"><input type="radio" name="kind" value="Product" checked> Um produto</label>
           <label class="text-sm"><input type="radio" name="kind" value="Kit"> Conjunto / kit</label>
         </div>
         <div class="col-span-2">
           <div class="font-medium text-sm mb-2">Marketplaces</div>
-          <div class="flex flex-wrap gap-3">${checks}</div>
-          ${extras}
+          <div class="ad-mkt-rows">${mktRows}</div>
+          ${mktModals}
         </div>
         ${vendorSel}
         <label>Título<input class="kt-input" name="title" required maxlength="180"></label>
@@ -1592,13 +1609,41 @@ const Vilmo = (() => {
           this.fill(this.valueInp()?.value || "");
         }
       };
+      const closeMktModal = () => {
+        document.querySelectorAll(".ad-mkt-modal").forEach(el => { el.hidden = true; });
+        document.body.classList.remove("ad-mkt-modal-open");
+      };
+      const openMktModal = (code) => {
+        const box = document.querySelector(`.mkt-code[value="${CSS.escape(code)}"]`);
+        if (!box || !box.checked) return;
+        document.querySelectorAll(".ad-mkt-modal").forEach(el => {
+          el.hidden = el.dataset.modalMkt !== code;
+        });
+        document.body.classList.add("ad-mkt-modal-open");
+        if (code === "MercadoLivre") mlCat.ensure();
+      };
       const syncExtras = (opts) => {
         const selected = [...document.querySelectorAll(".mkt-code:checked")].map(c => c.value);
-        document.querySelectorAll(".ad-extra").forEach(el => el.classList.toggle("on", selected.includes(el.dataset.extra)));
+        document.querySelectorAll(".ad-mkt-edit").forEach(btn => {
+          const on = selected.includes(btn.dataset.mkt);
+          btn.disabled = !on;
+          btn.setAttribute("aria-disabled", on ? "false" : "true");
+        });
+        document.querySelectorAll(".ad-mkt-modal").forEach(el => {
+          if (!el.hidden && !selected.includes(el.dataset.modalMkt)) closeMktModal();
+        });
         if (opts && opts.skipEnsure) return;
-        if (selected.includes("MercadoLivre")) mlCat.ensure();
       };
       document.querySelectorAll(".mkt-code").forEach(c => c.onchange = syncExtras);
+      document.querySelectorAll(".ad-mkt-edit").forEach(btn => {
+        btn.onclick = () => { if (!btn.disabled) openMktModal(btn.dataset.mkt); };
+      });
+      document.querySelectorAll("[data-close-mkt-modal]").forEach(el => {
+        el.onclick = closeMktModal;
+      });
+      if (window.__vilmoMktEsc) document.removeEventListener("keydown", window.__vilmoMktEsc);
+      window.__vilmoMktEsc = (e) => { if (e.key === "Escape") closeMktModal(); };
+      document.addEventListener("keydown", window.__vilmoMktEsc);
       if ($(".ml-cat-predict")) $(".ml-cat-predict").onclick = () => mlCat.predict();
       syncExtras();
       mlListingType.load();

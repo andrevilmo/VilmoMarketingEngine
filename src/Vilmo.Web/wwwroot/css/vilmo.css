@@ -69,8 +69,33 @@
 .ad-item-row { display: flex; gap: .5rem; align-items: flex-end; flex-wrap: wrap; margin-bottom: .5rem; }
 .ad-item-row label { flex: 1; min-width: 160px; }
 .ad-item-row .qty { max-width: 110px; }
-.ad-extra { display: none; margin-top: .75rem; padding-top: .75rem; border-top: 1px dashed #e5e7eb; }
-.ad-extra.on { display: block; }
+.ad-mkt-rows { display: grid; gap: .55rem; }
+.ad-mkt-row {
+  display: flex; align-items: center; justify-content: space-between; gap: .75rem; flex-wrap: wrap;
+  padding: .45rem .6rem; border: 1px solid #e5e7eb; border-radius: .55rem; background: #fafafa;
+}
+.ad-mkt-row label { margin: 0; display: inline-flex; align-items: center; gap: .4rem; }
+.ad-mkt-edit:disabled { opacity: .45; cursor: not-allowed; pointer-events: none; }
+.ad-mkt-modal {
+  position: fixed; inset: 0; z-index: 90;
+  display: flex; align-items: center; justify-content: center;
+  padding: 1rem;
+}
+.ad-mkt-modal[hidden] { display: none !important; }
+.ad-mkt-modal-backdrop { position: absolute; inset: 0; background: rgba(15, 23, 42, .55); }
+.ad-mkt-modal-box {
+  position: relative; z-index: 1;
+  width: min(720px, 100%);
+  max-height: min(88vh, 820px);
+  overflow: auto;
+  background: #fff; border-radius: 12px; padding: 1.1rem 1.2rem 1.25rem;
+  box-shadow: 0 18px 50px rgba(15, 23, 42, .28);
+}
+.ad-mkt-modal-head { display: flex; align-items: center; justify-content: space-between; gap: .75rem; margin-bottom: .85rem; }
+.ad-mkt-modal-head h3 { margin: 0; }
+.ad-mkt-close { font-size: 1.35rem; line-height: 1; min-width: 2rem; }
+body.ad-mkt-modal-open { overflow: hidden; }
+.ad-extra { display: block; }
 .ml-cat { display: grid; gap: .45rem; }
 .ml-cat-head { display: flex; justify-content: space-between; gap: .5rem; align-items: center; flex-wrap: wrap; font-size: .875rem; font-weight: 500; }
 .ml-cat-hint { margin: 0; }
