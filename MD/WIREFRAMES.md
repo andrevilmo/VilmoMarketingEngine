@@ -280,10 +280,27 @@ Separate from Metronic. Same login (Admin / Empresa). Vendor: blocked.
 ```
 ┌ Produtos ─────────────── [Novo] [Publicar] ─────────┐
 │ Table sku, nome, saldo, NCM                         │
-│ Publicar modal: ☐ ML ☐ Shopee ☐ SHEIN ☐ Magalu      │
-│ default = all Linked channels of this vendor        │
+│ Publicar → #/anuncios as Um produto (qty 1)         │
+└─────────────────────────────────────────────────────┘
+
+┌ Anúncios (empresa selecionada) ─────────────────────┐
+│ ○ Um produto   ● Conjunto / kit                     │
+│ Título, SKU anúncio, descrição, preço, qtd anúncio  │
+│ Condição, marca, EAN, peso, A×L×C                   │
+│ Itens: [SKU ▼] [qtd no conjunto] [+ item]           │
+│ ☐ ML ☐ Shopee ☐ SHEIN ☐ Magalu                      │
+│ extras do canal (categoria, tipo de anúncio, …)     │
+│ [Salvar anúncio]                                    │
+│ Card: anúncio + itens + preço                       │
+│   Mercado Livre  Publicado / Erro                   │
+│     [Cancelar] [Publicar neste canal]               │
+│     ▸ Passos da publicação (fechado)                │
+│       Ver técnico / callback (fechado)              │
+│   [Atualizar dados online]                          │
 └─────────────────────────────────────────────────────┘
 ```
+
+Paid sale of a kit SKU decreases each component by `qty_no_conjunto × qty_vendida`.
 
 ### Marketplaces da empresa — connection fields (US-15)
 

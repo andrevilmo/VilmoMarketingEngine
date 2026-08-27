@@ -59,7 +59,7 @@ Authorize the seller:
 
 1. Browser: `https://auth.mercadolivre.com.br/authorization?response_type=code&client_id=<APP_ID>&redirect_uri=<URI>&state=<companyId>`.
 2. Log in as the **CNPJ seller**.
-3. Vilmo exchanges `code` at `POST https://api.mercadolibre.com/oauth/token`.
+3. Vilmo reads `state` as the company id and exchanges `code` at `POST https://api.mercadolibre.com/oauth/token`. The redirect URI must stay exactly `https://vilmomkt.com/oauth/MercadoLivre/callback` (no extra query in the registered URI).
 4. Store `AccessToken`, `RefreshToken`, `UserId`. Site for Brazil: `SiteId=MLB`.
 
 ---

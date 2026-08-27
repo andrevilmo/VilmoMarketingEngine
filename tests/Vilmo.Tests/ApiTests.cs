@@ -106,6 +106,7 @@ public class XmlParseTests
 public class ApiFactory : WebApplicationFactory<Program>
 {
     readonly string _db = Path.Combine(Path.GetTempPath(), $"vilmo-test-{Guid.NewGuid():N}.db");
+    readonly string _pics = Path.Combine(Path.GetTempPath(), $"vilmo-pics-{Guid.NewGuid():N}");
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -117,7 +118,8 @@ public class ApiFactory : WebApplicationFactory<Program>
                 ["DB_PROVIDER"] = "sqlite",
                 ["ConnectionStrings:Sqlite"] = $"Data Source={_db}",
                 ["BOOTSTRAP_ADMIN_PASSWORD"] = "VilmoAdmin!2026",
-                ["JWT_SIGNING_KEY"] = "vilmo-test-jwt-signing-key-32chars!"
+                ["JWT_SIGNING_KEY"] = "vilmo-test-jwt-signing-key-32chars!",
+                ["Pictures:Directory"] = _pics
             });
         });
     }
@@ -126,6 +128,7 @@ public class ApiFactory : WebApplicationFactory<Program>
     {
         base.Dispose(disposing);
         try { File.Delete(_db); } catch { /* ignore */ }
+        try { Directory.Delete(_pics, true); } catch { /* ignore */ }
     }
 }
 
