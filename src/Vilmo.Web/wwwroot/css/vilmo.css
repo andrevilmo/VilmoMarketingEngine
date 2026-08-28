@@ -38,7 +38,16 @@
 .kt-alert-danger { background: #fef2f2; color: #991b1b; }
 .kt-alert-success { background: #ecfdf5; color: #065f46; }
 .kt-alert-warning { background: #fffbeb; color: #92400e; }
-.ingest-log-card { margin-top: 1rem; }
+.ml-import-card { padding-bottom: 1rem; }
+.ml-import-counts { margin-top: .75rem; }
+.ml-import-grid td { vertical-align: top; }
+.ml-import-thumb {
+  width: 48px; height: 48px; object-fit: cover; border-radius: 8px; background: #f3f4f6; display: block;
+}
+.ml-import-thumb-empty { border: 1px dashed #d1d5db; }
+.ml-import-actions { display: flex; gap: .4rem; flex-wrap: wrap; }
+.ml-import-status { font-size: .75rem; font-weight: 600; color: #0f766e; }
+.ml-import-sku { min-width: 160px; }
 .ingest-log-progress { margin: 0 0 0.85rem; }
 .ingest-log-progress .label { font-size: 0.9rem; margin-bottom: 0.4rem; }
 .ingest-log-bar { height: 8px; background: #e5e7eb; border-radius: 999px; overflow: hidden; }

@@ -5,7 +5,7 @@ using Vilmo.Services;
 
 namespace Vilmo.Workers;
 
-public sealed class WorkProcessor(AppDbContext db, NfeIngestService nfe, SalesService sales, ListingPublishLogService listingLogs, ILogger<WorkProcessor> log)
+public sealed class WorkProcessor(AppDbContext db, NfeIngestService nfe, SalesService sales, ListingPublishLogService listingLogs, ListingImportService imports, ILogger<WorkProcessor> log)
 {
     public async Task<int> DrainAsync(string[] kinds, CancellationToken ct)
     {
@@ -31,6 +31,8 @@ public sealed class WorkProcessor(AppDbContext db, NfeIngestService nfe, SalesSe
                 item.Error = ex.Message;
                 if (item.Kind == WorkKinds.NfeIngest)
                     await nfe.LogWorkFailureAsync(item, ex, ct);
+                else if (item.Kind == WorkKinds.ListingImport)
+                    await imports.LogWorkFailureAsync(item, ex, ct);
             }
             await db.SaveChangesAsync(ct);
         }
@@ -110,6 +112,9 @@ public sealed class WorkProcessor(AppDbContext db, NfeIngestService nfe, SalesSe
                     listing.LastSyncedAt ??= DateTimeOffset.UtcNow;
                 break;
             }
+            case WorkKinds.ListingImport:
+                await imports.ProcessQueuedAsync(item, ct);
+                break;
             case WorkKinds.StockPublish:
             case WorkKinds.UploadInvoice:
                 break;
@@ -136,7 +141,7 @@ public sealed class WorkProcessor(AppDbContext db, NfeIngestService nfe, SalesSe
 
 public sealed class PollingWorker(WorkProcessor processor, ILogger<PollingWorker> log) : BackgroundService
 {
-    public string[] Kinds { get; init; } = [WorkKinds.SaleImport, WorkKinds.PublishListing, WorkKinds.ListingRefresh, WorkKinds.ListingCancel, WorkKinds.StockPublish, WorkKinds.UploadInvoice];
+    public string[] Kinds { get; init; } = [WorkKinds.SaleImport, WorkKinds.PublishListing, WorkKinds.ListingRefresh, WorkKinds.ListingCancel, WorkKinds.ListingImport, WorkKinds.StockPublish, WorkKinds.UploadInvoice];
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {

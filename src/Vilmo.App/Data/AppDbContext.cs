@@ -31,6 +31,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<NfeDocument> NfeDocuments => Set<NfeDocument>();
     public DbSet<NfeIngestLog> NfeIngestLogs => Set<NfeIngestLog>();
     public DbSet<ShipmentLabel> ShipmentLabels => Set<ShipmentLabel>();
+    public DbSet<MarketplaceRemoteAd> MarketplaceRemoteAds => Set<MarketplaceRemoteAd>();
+    public DbSet<ListingImportLog> ListingImportLogs => Set<ListingImportLog>();
     public DbSet<WorkItem> WorkItems => Set<WorkItem>();
     public DbSet<IdempotencyRecord> IdempotencyRecords => Set<IdempotencyRecord>();
     public DbSet<WebhookEvent> WebhookEvents => Set<WebhookEvent>();
@@ -173,6 +175,19 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         {
             e.ToTable("shipment_labels");
             e.HasIndex(x => new { x.SaleId, x.Format }).IsUnique();
+        });
+        b.Entity<MarketplaceRemoteAd>(e =>
+        {
+            e.ToTable("marketplace_remote_ad");
+            e.HasIndex(x => new { x.CompanyId, x.MarketplaceCode, x.RemoteId }).IsUnique();
+            e.HasIndex(x => new { x.CompanyId, x.RunId });
+            e.HasIndex(x => new { x.CompanyId, x.MatchStatus });
+        });
+        b.Entity<ListingImportLog>(e =>
+        {
+            e.ToTable("listing_import_log");
+            e.HasIndex(x => new { x.CompanyId, x.CreatedAt });
+            e.HasIndex(x => x.RunId);
         });
         b.Entity<WorkItem>().ToTable("work_item");
         b.Entity<IdempotencyRecord>(e =>

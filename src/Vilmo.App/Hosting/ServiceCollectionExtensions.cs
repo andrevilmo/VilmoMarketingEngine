@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Vilmo.Data;
+using Vilmo.Marketplaces;
 using Vilmo.Security;
 using Vilmo.Services;
 using Vilmo.Workers;
@@ -43,6 +44,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ListingPublishLogService>();
         services.AddScoped<ListingPublishRunner>();
         services.AddScoped<AdvertisementService>();
+        services.AddScoped<ListingImportLogService>();
+        services.AddScoped<IMarketplaceListingCatalogAdapter, MercadoLivreListingCatalogAdapter>();
+        services.AddScoped<ListingImportService>();
         services.AddSingleton<AdvertisementPictureStore>();
         services.AddScoped<MercadoLivreCategoryService>();
         services.AddMemoryCache();

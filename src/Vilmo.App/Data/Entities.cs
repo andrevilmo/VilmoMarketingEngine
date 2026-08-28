@@ -360,6 +360,50 @@ public class ShipmentLabel
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
+public class MarketplaceRemoteAd
+{
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
+    public Guid VendorUserId { get; set; }
+    public Guid RunId { get; set; }
+    public string MarketplaceCode { get; set; } = "";
+    public string RemoteId { get; set; } = "";
+    public string Title { get; set; } = "";
+    public decimal? Price { get; set; }
+    public decimal? Quantity { get; set; }
+    public string? RemoteStatus { get; set; }
+    public string? Permalink { get; set; }
+    public string? Thumbnail { get; set; }
+    public string? SellerCustomField { get; set; }
+    public string? Gtin { get; set; }
+    public string? CategoryId { get; set; }
+    public string? ListingTypeId { get; set; }
+    public string PicturesJson { get; set; } = "[]";
+    public string? BuyingMode { get; set; }
+    public string? ShippingMode { get; set; }
+    public string SnapshotJson { get; set; } = "{}";
+    public string MatchStatus { get; set; } = "Unmatched";
+    public string? SuggestedSku { get; set; }
+    public string? SuggestedReason { get; set; }
+    public Guid? AdvertisementId { get; set; }
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public class ListingImportLog
+{
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
+    public Guid RunId { get; set; }
+    public string MarketplaceCode { get; set; } = "";
+    public string? RemoteId { get; set; }
+    public string StepCode { get; set; } = "";
+    public string Level { get; set; } = "info";
+    public string UserMessage { get; set; } = "";
+    public string TechnicalJson { get; set; } = "{}";
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
 public class WorkItem
 {
     public Guid Id { get; set; }

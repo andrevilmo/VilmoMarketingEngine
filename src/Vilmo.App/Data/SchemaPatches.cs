@@ -208,5 +208,70 @@ public static class SchemaPatches
             CREATE INDEX IF NOT EXISTS ix_marketplace_connect_log_run_id
               ON marketplace_connect_log (run_id);
             """, ct);
+
+        await db.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE IF NOT EXISTS marketplace_remote_ad (
+              id uuid PRIMARY KEY,
+              company_id uuid NOT NULL,
+              vendor_user_id uuid NOT NULL,
+              run_id uuid NOT NULL,
+              marketplace_code varchar(64) NOT NULL,
+              remote_id varchar(64) NOT NULL,
+              title text NOT NULL,
+              price numeric NULL,
+              quantity numeric NULL,
+              remote_status varchar(32) NULL,
+              permalink text NULL,
+              thumbnail text NULL,
+              seller_custom_field varchar(64) NULL,
+              gtin varchar(32) NULL,
+              category_id varchar(32) NULL,
+              listing_type_id varchar(32) NULL,
+              pictures_json text NOT NULL,
+              buying_mode varchar(32) NULL,
+              shipping_mode varchar(32) NULL,
+              snapshot_json text NOT NULL,
+              match_status varchar(32) NOT NULL,
+              suggested_sku varchar(64) NULL,
+              suggested_reason varchar(64) NULL,
+              advertisement_id uuid NULL,
+              created_at timestamptz NOT NULL,
+              updated_at timestamptz NOT NULL
+            );
+            """, ct);
+        await db.Database.ExecuteSqlRawAsync("""
+            CREATE UNIQUE INDEX IF NOT EXISTS ix_marketplace_remote_ad_company_mkt_remote
+              ON marketplace_remote_ad (company_id, marketplace_code, remote_id);
+            """, ct);
+        await db.Database.ExecuteSqlRawAsync("""
+            CREATE INDEX IF NOT EXISTS ix_marketplace_remote_ad_company_run
+              ON marketplace_remote_ad (company_id, run_id);
+            """, ct);
+        await db.Database.ExecuteSqlRawAsync("""
+            CREATE INDEX IF NOT EXISTS ix_marketplace_remote_ad_company_status
+              ON marketplace_remote_ad (company_id, match_status);
+            """, ct);
+        await db.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE IF NOT EXISTS listing_import_log (
+              id uuid PRIMARY KEY,
+              company_id uuid NOT NULL,
+              run_id uuid NOT NULL,
+              marketplace_code varchar(64) NOT NULL,
+              remote_id varchar(64) NULL,
+              step_code varchar(64) NOT NULL,
+              "level" varchar(16) NOT NULL,
+              user_message text NOT NULL,
+              technical_json text NOT NULL,
+              created_at timestamptz NOT NULL
+            );
+            """, ct);
+        await db.Database.ExecuteSqlRawAsync("""
+            CREATE INDEX IF NOT EXISTS ix_listing_import_log_company_created
+              ON listing_import_log (company_id, created_at);
+            """, ct);
+        await db.Database.ExecuteSqlRawAsync("""
+            CREATE INDEX IF NOT EXISTS ix_listing_import_log_run_id
+              ON listing_import_log (run_id);
+            """, ct);
     }
 }

@@ -9,6 +9,7 @@ const Vilmo = (() => {
     me: null
   };
   let ingestLogTimer = null;
+  let mlImportLogTimer = null;
 
   function uuid() { return crypto.randomUUID(); }
 
@@ -186,6 +187,15 @@ const Vilmo = (() => {
 
   function adErr(code) {
     return ({
+      MarketplaceNotLinked: "Conecte o Mercado Livre em Marketplaces antes de importar.",
+      DemoToken: "O token deste canal é de demonstração. Reconecte o Mercado Livre com OAuth real para importar.",
+      ImportNotSupported: "Este marketplace ainda não importa anúncios. Começamos pelo Mercado Livre.",
+      SkuRequired: "Escolha o SKU do estoque para vincular.",
+      ProductNotFound: "SKU não encontrado no estoque desta empresa.",
+      AlreadyLinked: "Este anúncio já está vinculado.",
+      RemoteIdAlreadyLinked: "Este anúncio do Mercado Livre já está ligado a outro SKU.",
+      SkuAlreadyLinked: "Este SKU já tem outro anúncio no Mercado Livre.",
+      RemoteAdNotFound: "Anúncio importado não encontrado.",
       MarketplaceRequired: "Selecione ao menos um marketplace.",
       UnknownMarketplace: "Marketplace não habilitado para esta empresa.",
       FamilyNameRequired: "Informe o nome da família do anúncio.",
@@ -408,8 +418,145 @@ const Vilmo = (() => {
     }, 2000);
   }
 
+  function stopMlImportLogPoll() {
+    if (mlImportLogTimer) {
+      clearInterval(mlImportLogTimer);
+      mlImportLogTimer = null;
+    }
+  }
+
+  function mlImportProgressMeta(step, level) {
+    const order = ["received", "queued", "worker_started", "scanning", "classified", "done"];
+    const idx = order.indexOf(step);
+    const pct = idx < 0 ? (level === "error" ? 100 : 15) : Math.round(((idx + 1) / order.length) * 100);
+    const cls = level === "error" ? "error" : (level === "warning" ? "warn" : "");
+    return { pct, cls };
+  }
+
+  function mlImportReasonPt(reason) {
+    return ({
+      seller_custom_field: "SKU no Mercado Livre",
+      ean: "EAN igual ao do estoque",
+      ean_ambiguous: "EAN em mais de um produto",
+      remote_id: "já no Vilmo",
+      manual: "você vinculou"
+    })[reason] || reason || "";
+  }
+
+  function renderMlImportLogs(payload) {
+    const items = (payload && payload.items) || [];
+    const progressEl = document.getElementById("ml-import-progress");
+    if (!progressEl) return;
+    if (!items.length) {
+      progressEl.innerHTML = `<div class="label text-sm text-muted-foreground">Nenhuma importação ainda nesta empresa.</div>`;
+      return false;
+    }
+    const latest = items[0];
+    const meta = mlImportProgressMeta(latest.stepCode, latest.level);
+    const when = latest.createdAt ? new Date(latest.createdAt).toLocaleString("pt-BR") : "";
+    progressEl.innerHTML = `<div class="label"><strong>Último passo:</strong> ${esc(latest.userMessage)} <span class="text-xs text-muted-foreground">${esc(when)}</span></div>
+      <div class="ingest-log-bar ${meta.cls}"><span style="width:${meta.pct}%"></span></div>`;
+    return latest.stepCode === "done" || latest.stepCode === "failed" || latest.stepCode === "not_linked" || latest.stepCode === "demo_token";
+  }
+
+  async function loadMlImportLogs(opts = {}) {
+    const progressEl = document.getElementById("ml-import-progress");
+    if (!progressEl) return true;
+    const params = new URLSearchParams();
+    if (opts.runId) params.set("runId", opts.runId);
+    params.set("limit", "40");
+    try {
+      const data = await api(`/advertisements/import-logs?${params}`);
+      return renderMlImportLogs(data);
+    } catch (ex) {
+      progressEl.innerHTML = `<div class="kt-alert kt-alert-danger">${esc(adErr(ex.message))}</div>`;
+      return true;
+    }
+  }
+
+  function mlImportSkuSelect() {
+    const tmpl = document.getElementById("ml-import-sku-options");
+    const opts = (tmpl && tmpl.innerHTML) || "";
+    return `<select class="kt-select ml-import-sku"><option value="">Escolher SKU</option>${opts}</select>`;
+  }
+
+  function renderMlImports(payload) {
+    const tableEl = document.getElementById("ml-import-table");
+    if (!tableEl) return;
+    const items = (payload && payload.items) || [];
+    const counts = (payload && payload.counts) || {};
+    const pending = items.filter(x => x.matchStatus === "Suggested" || x.matchStatus === "Unmatched");
+    const summary = `<div class="ml-import-counts text-xs text-muted-foreground">
+      Já vinculados: ${counts.alreadyLinked || 0} · sugeridos: ${counts.suggested || 0} · pendentes: ${counts.unmatched || 0} · vinculados agora: ${counts.linked || 0} · ignorados: ${counts.ignored || 0}
+    </div>`;
+    if (!pending.length) {
+      tableEl.innerHTML = `${summary}<p class="text-sm text-muted-foreground mt-2">Nenhum anúncio pendente de vínculo. Use <b>Importar do Mercado Livre</b> para buscar a conta.</p>`;
+      return;
+    }
+    const rows = pending.map(x => {
+      const thumb = x.thumbnail
+        ? `<img class="ml-import-thumb" src="${esc(x.thumbnail)}" alt="">`
+        : `<div class="ml-import-thumb ml-import-thumb-empty"></div>`;
+      const price = x.price != null ? `R$ ${esc(String(x.price))}` : "";
+      const qty = x.quantity != null ? `qtd ML ${esc(String(x.quantity))}` : "";
+      const link = x.permalink
+        ? `<a class="text-xs" href="${esc(x.permalink)}" target="_blank" rel="noopener">Abrir no ML</a>`
+        : "";
+      return `<tr data-remote-ad="${esc(x.id)}">
+        <td>${thumb}</td>
+        <td>
+          <div class="font-medium text-sm">${esc(x.title)}</div>
+          <div class="text-xs text-muted-foreground">${esc(x.remoteId)}${x.sellerCustomField ? ` · SKU ML ${esc(x.sellerCustomField)}` : ""}${x.gtin ? ` · EAN ${esc(x.gtin)}` : ""}</div>
+          <div class="text-xs text-muted-foreground">${[price, qty].filter(Boolean).join(" · ")}</div>
+          ${link}
+        </td>
+        <td><span class="ml-import-status">${esc(x.matchStatusPt || x.matchStatus)}</span>
+          ${x.suggestedReason ? `<div class="text-xs text-muted-foreground">${esc(mlImportReasonPt(x.suggestedReason))}</div>` : ""}</td>
+        <td>${mlImportSkuSelect()}</td>
+        <td class="ml-import-actions">
+          <button type="button" class="kt-btn kt-btn-primary kt-btn-sm ml-import-link">Vincular</button>
+          <button type="button" class="kt-btn kt-btn-outline kt-btn-sm ml-import-ignore">Ignorar</button>
+        </td>
+      </tr>`;
+    });
+    tableEl.innerHTML = `${summary}<div class="overflow-auto mt-2"><table class="vilmo-table ml-import-grid"><thead><tr>
+      <th></th><th>Anúncio no Mercado Livre</th><th>Situação</th><th>SKU do estoque</th><th></th>
+    </tr></thead><tbody>${rows.join("")}</tbody></table></div>
+    <p class="text-xs text-muted-foreground mt-2">Vincular não altera a quantidade do estoque local. A quantidade do Mercado Livre fica só no anúncio.</p>`;
+    tableEl.querySelectorAll("tr[data-remote-ad]").forEach((row, i) => {
+      const sku = pending[i] && pending[i].suggestedSku;
+      const sel = row.querySelector(".ml-import-sku");
+      if (sku && sel) sel.value = sku;
+    });
+  }
+
+  async function loadMlImports() {
+    const tableEl = document.getElementById("ml-import-table");
+    if (!tableEl) return;
+    try {
+      const data = await api("/advertisements/imports?marketplace=MercadoLivre&status=Suggested,Unmatched");
+      renderMlImports(data);
+    } catch (ex) {
+      tableEl.innerHTML = `<div class="kt-alert kt-alert-danger">${esc(adErr(ex.message))}</div>`;
+    }
+  }
+
+  function startMlImportLogPoll(runId) {
+    stopMlImportLogPoll();
+    loadMlImportLogs({ runId });
+    loadMlImports();
+    let ticks = 0;
+    mlImportLogTimer = setInterval(async () => {
+      ticks += 1;
+      const done = await loadMlImportLogs({ runId });
+      await loadMlImports();
+      if (done || ticks >= 30) stopMlImportLogPoll();
+    }, 2000);
+  }
+
   async function renderRoute() {
     stopIngestLogPoll();
+    stopMlImportLogPoll();
     const view = document.getElementById("view");
     const route = (location.hash.replace("#/", "").split("?")[0] || "dashboard");
     document.querySelectorAll(".menu-link").forEach(a => a.classList.toggle("active", a.dataset.route === route.split("/")[0]));
@@ -722,6 +869,20 @@ const Vilmo = (() => {
       : "";
     return page("Anúncios", "", `
       ${sellerBanner}
+      <div class="vilmo-card mb-4 ml-import-card">
+        <div class="flex gap-2 flex-wrap items-center justify-between">
+          <div>
+            <h3 class="font-medium">Anúncios do Mercado Livre</h3>
+            <p class="text-sm text-muted-foreground mt-1">Busca os anúncios já publicados na conta e vincula a um SKU do estoque. A quantidade do Mercado Livre <b>não</b> altera o saldo local.</p>
+          </div>
+          <button type="button" class="kt-btn kt-btn-primary kt-btn-sm" id="ml-import-btn" data-ml-connected="${mlSeller && mlSeller.connected ? "1" : "0"}" ${mlSeller && mlSeller.connected ? "" : "disabled"}>Importar do Mercado Livre</button>
+        </div>
+        ${mlSeller && mlSeller.connected ? "" : `<p class="text-sm text-muted-foreground mt-2">Conecte o Mercado Livre em Marketplaces para importar os anúncios da conta.</p>`}
+        <template id="ml-import-sku-options">${productOpts}</template>
+        <div id="ml-import-msg" class="mt-2"></div>
+        <div id="ml-import-progress" class="ingest-log-progress mt-2"></div>
+        <div id="ml-import-table"></div>
+      </div>
       <form id="ad-form" class="vilmo-card vilmo-grid cols-2 mb-4">
         <h3 class="col-span-2 font-medium">Salvar anúncio</h3>
         <p class="col-span-2 text-sm text-muted-foreground">Marque os marketplaces. Os campos específicos de cada canal abrem no botão <b>Editar</b>. Depois use <b>Publicar neste canal</b> ou <b>Cancelar</b> em cada marketplace, e <b>Atualizar dados online</b> para puxar o anúncio publicado.</p>
@@ -959,6 +1120,60 @@ const Vilmo = (() => {
       } });
       location.hash = "#/anuncios";
     });
+    if ($("#ml-import-btn") || $("#ml-import-table")) {
+      loadMlImports();
+      loadMlImportLogs();
+      const importMsg = $("#ml-import-msg");
+      const importBtn = $("#ml-import-btn");
+      if (importBtn) importBtn.onclick = async () => {
+        const connected = importBtn.getAttribute("data-ml-connected") === "1";
+        importBtn.disabled = true;
+        if (importMsg) importMsg.innerHTML = "";
+        const vendorEl = document.querySelector("#ad-form [name=vendorUserId]");
+        const body = {};
+        if (vendorEl && vendorEl.value) body.vendorUserId = vendorEl.value;
+        try {
+          const r = await api("/advertisements/imports/MercadoLivre", { method: "POST", body });
+          if (importMsg) importMsg.innerHTML = `<div class="kt-alert kt-alert-success">Importação na fila. Os anúncios aparecem abaixo em instantes.</div>`;
+          startMlImportLogPoll(r.runId);
+        } catch (ex) {
+          if (importMsg) importMsg.innerHTML = `<div class="kt-alert kt-alert-danger">${esc(adErr(ex.message))}</div>`;
+          loadMlImportLogs();
+        } finally {
+          importBtn.disabled = !connected;
+        }
+      };
+      const tableEl = $("#ml-import-table");
+      if (tableEl) tableEl.addEventListener("click", async (ev) => {
+        const linkBtn = ev.target.closest(".ml-import-link");
+        const ignoreBtn = ev.target.closest(".ml-import-ignore");
+        if (!linkBtn && !ignoreBtn) return;
+        const row = ev.target.closest("tr[data-remote-ad]");
+        if (!row) return;
+        const id = row.getAttribute("data-remote-ad");
+        try {
+          if (linkBtn) {
+            const sku = (row.querySelector(".ml-import-sku") || {}).value || "";
+            if (!sku) {
+              if (importMsg) importMsg.innerHTML = `<div class="kt-alert kt-alert-danger">${esc(adErr("SkuRequired"))}</div>`;
+              return;
+            }
+            linkBtn.disabled = true;
+            await api(`/advertisements/imports/${id}/link`, { method: "POST", body: { sku } });
+            renderRoute();
+            return;
+          }
+          ignoreBtn.disabled = true;
+          await api(`/advertisements/imports/${id}/ignore`, { method: "POST", body: {} });
+          if (importMsg) importMsg.innerHTML = `<div class="kt-alert kt-alert-success">Anúncio ignorado. Ele não entra no estoque.</div>`;
+          await loadMlImports();
+        } catch (ex) {
+          if (importMsg) importMsg.innerHTML = `<div class="kt-alert kt-alert-danger">${esc(adErr(ex.message))}</div>`;
+          if (linkBtn) linkBtn.disabled = false;
+          if (ignoreBtn) ignoreBtn.disabled = false;
+        }
+      });
+    }
     if ($("#ad-form")) {
       const opts = ($("#ad-item-options") && $("#ad-item-options").innerHTML) || "";
       const itemsBox = $("#ad-items");

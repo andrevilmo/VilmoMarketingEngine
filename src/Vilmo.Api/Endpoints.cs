@@ -556,6 +556,67 @@ public static class Endpoints
             catch (KeyNotFoundException ex) { return Results.NotFound(new { error = ex.Message }); }
         }).RequireAuthorization();
 
+        app.MapPost("/advertisements/imports/{code}", async (string code, JsonElement body, HttpContext http, AppDbContext db, ListingImportService imports, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            var ctx = (CompanyContext)ctxr;
+            Guid? vendor = body.ValueKind == JsonValueKind.Object && body.TryGetProperty("vendorUserId", out var v) && Guid.TryParse(v.GetString(), out var id)
+                ? id : null;
+            return await WithIdempotency(http, db, ctx.RequireCompany(), async () =>
+            {
+                try
+                {
+                    var result = await imports.EnqueueAsync(ctx, code, vendor, ct);
+                    return (202, result);
+                }
+                catch (ArgumentException ex) { return (400, (object)new { error = ex.Message }); }
+                catch (InvalidOperationException ex) { return (400, (object)new { error = ex.Message }); }
+            }, ct);
+        }).RequireAuthorization();
+
+        app.MapGet("/advertisements/imports", async (string? marketplace, string? status, Guid? runId, HttpContext http, AppDbContext db, ListingImportService imports, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            return Results.Ok(await imports.ListAsync((CompanyContext)ctxr, marketplace, status, runId, ct));
+        }).RequireAuthorization();
+
+        app.MapGet("/advertisements/import-logs", async (Guid? runId, int? limit, HttpContext http, AppDbContext db, ListingImportService imports, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            return Results.Ok(await imports.ListLogsAsync((CompanyContext)ctxr, runId, limit, ct));
+        }).RequireAuthorization();
+
+        app.MapPost("/advertisements/imports/{id:guid}/link", async (Guid id, JsonElement body, HttpContext http, AppDbContext db, ListingImportService imports, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            var ctx = (CompanyContext)ctxr;
+            var sku = body.TryGetProperty("sku", out var s) ? s.GetString() ?? "" : "";
+            return await WithIdempotency(http, db, ctx.RequireCompany(), async () =>
+            {
+                try { return (200, await imports.LinkAsync(ctx, id, sku, ct)); }
+                catch (ArgumentException ex) { return (400, (object)new { error = ex.Message }); }
+                catch (InvalidOperationException ex) { return (400, (object)new { error = ex.Message }); }
+                catch (KeyNotFoundException ex) { return (404, (object)new { error = ex.Message }); }
+            }, ct);
+        }).RequireAuthorization();
+
+        app.MapPost("/advertisements/imports/{id:guid}/ignore", async (Guid id, HttpContext http, AppDbContext db, ListingImportService imports, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            var ctx = (CompanyContext)ctxr;
+            return await WithIdempotency(http, db, ctx.RequireCompany(), async () =>
+            {
+                try { return (200, await imports.IgnoreAsync(ctx, id, ct)); }
+                catch (InvalidOperationException ex) { return (400, (object)new { error = ex.Message }); }
+                catch (KeyNotFoundException ex) { return (404, (object)new { error = ex.Message }); }
+            }, ct);
+        }).RequireAuthorization();
+
         app.MapPost("/inventory/{sku}/publish", async (string sku, JsonElement body, HttpContext http, AppDbContext db, AdvertisementService ads, CancellationToken ct) =>
         {
             var ctxr = await Need(http, db, ct);
