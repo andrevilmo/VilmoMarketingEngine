@@ -456,6 +456,13 @@ const Vilmo = (() => {
     const when = latest.createdAt ? new Date(latest.createdAt).toLocaleString("pt-BR") : "";
     progressEl.innerHTML = `<div class="label"><strong>Último passo:</strong> ${esc(latest.userMessage)} <span class="text-xs text-muted-foreground">${esc(when)}</span></div>
       <div class="ingest-log-bar ${meta.cls}"><span style="width:${meta.pct}%"></span></div>`;
+    const msg = document.getElementById("ml-import-msg");
+    if (msg) {
+      if (latest.level === "error")
+        msg.innerHTML = `<div class="kt-alert kt-alert-danger">${esc(latest.userMessage)}</div>`;
+      else if (latest.stepCode === "done")
+        msg.innerHTML = `<div class="kt-alert kt-alert-success">${esc(latest.userMessage)}</div>`;
+    }
     return latest.stepCode === "done" || latest.stepCode === "failed" || latest.stepCode === "not_linked" || latest.stepCode === "demo_token";
   }
 
