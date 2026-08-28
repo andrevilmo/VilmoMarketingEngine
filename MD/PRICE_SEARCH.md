@@ -401,7 +401,7 @@ Company-scoped. Vendor → 404. Demo tokens must not hit real sites (same rule a
 1. **Tables + Scrap UI shell + scope flag** — query, **On-line / Já encontrados**, site checkboxes, Local GET against empty table, Configurações list with seed rows including **`maxPages = 5`** and empty **usuário / senha** fields.
 2. **Mercado Livre public search adapter** — On-line fills snapshots **without** Marketplaces OAuth; Local then finds the same query without calling ML again. Username/password unused unless public search is blocked.
 3. **HtmlRecipe helper + SiteLoginHelper** — Joom / Martins (and Magalu) using Configurações usuário/senha before search.
-4. **Shopee / Magalu / SHEIN** — Official APIs when company credentials exist; otherwise keep disabled with a hint.
+4. **Shopee / Magalu / SHEIN** — Official APIs if app keys exist; otherwise HtmlRecipe after Configurações usuário/senha. Keep disabled with a hint if login+recipe both missing.
 5. **Browser helper** — only if a flagged site cannot be read as API or static HTML.
 6. **History compare** — Local `from`/`to`, or pick two On-line runs of the same query, diff prices.
 
