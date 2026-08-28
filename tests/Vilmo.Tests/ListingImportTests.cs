@@ -283,7 +283,7 @@ public class ListingImportFlowTests : IClassFixture<ApiFactory>
             Remote("MLB-SKU", "Calça do ML", "CALCA-001"),
             Remote("MLB-OPEN", "Anúncio sem SKU")
         ]);
-        var imports = new ListingImportService(db, new ListingImportLogService(db), protector, [adapter]);
+        var imports = new ListingImportService(db, new ListingImportLogService(db), protector, [adapter], new NoHttpFactory());
         await imports.ProcessQueuedAsync(work, default);
         Assert.Equal("Done", work.Status);
 
@@ -330,4 +330,68 @@ public class ListingImportFlowTests : IClassFixture<ApiFactory>
         public Task<IReadOnlyList<RemoteMarketplaceAd>> ListAdsAsync(MarketplaceCatalogContext ctx, CancellationToken ct) =>
             Task.FromResult(ads);
     }
+}
+
+public class ListingImportHttpTests
+{
+    [Fact]
+    public async Task Catalog_401_throws_instead_of_empty_list()
+    {
+        var adapter = new MercadoLivreListingCatalogAdapter(new HandlerFactory(new FixedHandler(HttpStatusCode.Unauthorized, """{"message":"invalid access token"}""")));
+        var ex = await Assert.ThrowsAsync<MarketplaceHttpException>(() =>
+            adapter.ListAdsAsync(new MarketplaceCatalogContext(Guid.NewGuid(), "APP_USR-expired", "https://api.mercadolibre.com", "123"), default));
+        Assert.Equal(401, ex.StatusCode);
+    }
+
+    [Fact]
+    public async Task Catalog_scan_unsupported_then_empty_offset_is_empty()
+    {
+        var handler = new SequenceHandler();
+        handler.Map.Add("search_type=scan", (HttpStatusCode.BadRequest, """{"error":"not_supported"}"""));
+        handler.Map.Add("offset=0", (HttpStatusCode.OK, """{"results":[],"paging":{"total":0}}"""));
+        var adapter = new MercadoLivreListingCatalogAdapter(new HandlerFactory(handler));
+        var ads = await adapter.ListAdsAsync(new MarketplaceCatalogContext(Guid.NewGuid(), "APP_USR-ok", "https://api.mercadolibre.com", "123"), default);
+        Assert.Empty(ads);
+    }
+
+    sealed class HandlerFactory(HttpMessageHandler handler) : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => new(handler, false);
+    }
+
+    sealed class FixedHandler(HttpStatusCode status, string body) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(status)
+            {
+                Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json")
+            });
+    }
+
+    sealed class SequenceHandler : HttpMessageHandler
+    {
+        public Dictionary<string, (HttpStatusCode Status, string Body)> Map { get; } = new();
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var url = request.RequestUri?.ToString() ?? "";
+            foreach (var (key, val) in Map)
+            {
+                if (!url.Contains(key, StringComparison.Ordinal)) continue;
+                return Task.FromResult(new HttpResponseMessage(val.Status)
+                {
+                    Content = new StringContent(val.Body, System.Text.Encoding.UTF8, "application/json")
+                });
+            }
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound)
+            {
+                Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json")
+            });
+        }
+    }
+}
+
+sealed class NoHttpFactory : IHttpClientFactory
+{
+    public HttpClient CreateClient(string name) => throw new InvalidOperationException("http not expected");
 }

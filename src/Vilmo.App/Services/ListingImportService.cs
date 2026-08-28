@@ -12,7 +12,8 @@ public sealed class ListingImportService(
     AppDbContext db,
     ListingImportLogService logs,
     SecretProtector protector,
-    IEnumerable<IMarketplaceListingCatalogAdapter> adapters)
+    IEnumerable<IMarketplaceListingCatalogAdapter> adapters,
+    IHttpClientFactory httpFactory)
 {
     static readonly Regex NonDigit = new("[^0-9]", RegexOptions.Compiled);
 
@@ -102,7 +103,22 @@ public sealed class ListingImportService(
             "Consultando a lista de anúncios no Mercado Livre.",
             new { sellerId = catalog.SellerId }, null, ct);
 
-        var remote = await adapter.ListAdsAsync(catalog, ct);
+        IReadOnlyList<RemoteMarketplaceAd> remote;
+        try
+        {
+            remote = await adapter.ListAdsAsync(catalog, ct);
+        }
+        catch (MarketplaceHttpException ex) when (ex.StatusCode == 401)
+        {
+            await logs.WriteAsync(work.CompanyId, runId, code, ListingImportLogSteps.Scanning, "warning",
+                "Token expirado. Tentando renovar o acesso ao Mercado Livre.",
+                new { httpStatus = ex.StatusCode, path = ex.Path }, null, ct);
+            var refreshed = await TryRefreshMercadoLivreTokenAsync(work.CompanyId, ct);
+            if (string.IsNullOrWhiteSpace(refreshed))
+                throw;
+            catalog = catalog with { AccessToken = refreshed };
+            remote = await adapter.ListAdsAsync(catalog, ct);
+        }
         var products = await db.Products.AsNoTracking().Where(p => p.CompanyId == work.CompanyId).ToListAsync(ct);
         var ads = await db.Advertisements.AsNoTracking()
             .Where(a => a.CompanyId == work.CompanyId && a.VendorUserId == vendorId)
@@ -168,9 +184,10 @@ public sealed class ListingImportService(
         using var payload = JsonDocument.Parse(string.IsNullOrWhiteSpace(work.PayloadJson) ? "{}" : work.PayloadJson);
         var runId = Guid.TryParse(Str(payload.RootElement, "runId"), out var rid) ? rid : work.Id;
         var code = Str(payload.RootElement, "marketplaceCode") ?? MercadoLivreListingCatalogAdapter.Code;
+        var msg = UserMessage(ex);
         await logs.WriteAsync(work.CompanyId, runId, code, ListingImportLogSteps.Failed, "error",
-            "A importação falhou. Tente de novo em instantes.",
-            new { error = ex.GetType().Name, message = ex.Message, workItemId = work.Id }, null, ct);
+            msg,
+            new { error = ex.GetType().Name, message = ex.Message, workItemId = work.Id, httpStatus = (ex as MarketplaceHttpException)?.StatusCode }, null, ct);
     }
 
     public async Task<object> ListAsync(CompanyContext ctx, string? marketplaceCode, string? matchStatus, Guid? runId, CancellationToken ct)
@@ -387,6 +404,89 @@ public sealed class ListingImportService(
 
     static bool IsDemoToken(string token) =>
         token.Contains("demo", StringComparison.OrdinalIgnoreCase);
+
+    static string UserMessage(Exception ex) =>
+        ex is MarketplaceHttpException http
+            ? (http.StatusCode == 401
+                ? "Token do Mercado Livre inválido ou expirado. Reconecte o canal em Marketplaces e importe de novo."
+                : MercadoLivreSellerListing.UserMessageFromHttp(http.StatusCode, http.Body))
+            : "A importação falhou. Tente de novo em instantes.";
+
+    async Task<string?> TryRefreshMercadoLivreTokenAsync(Guid companyId, CancellationToken ct)
+    {
+        var cfg = await db.CompanyMarketplaceConfigs
+            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.MarketplaceCode == MercadoLivreListingCatalogAdapter.Code, ct);
+        if (cfg is null) return null;
+        var refresh = await ReadParamAsync(cfg.Id, "RefreshToken", ct);
+        var clientId = await ReadParamAsync(cfg.Id, "ClientId", ct);
+        var clientSecret = await ReadParamAsync(cfg.Id, "ClientSecret", ct);
+        if (string.IsNullOrWhiteSpace(refresh) || string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(clientSecret))
+            return null;
+        if (refresh.Contains("demo", StringComparison.OrdinalIgnoreCase))
+            return null;
+        try
+        {
+            var client = httpFactory.CreateClient("marketplace");
+            using var req = new HttpRequestMessage(HttpMethod.Post, "https://api.mercadolibre.com/oauth/token");
+            req.Headers.Accept.Add(new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));
+            req.Content = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["grant_type"] = "refresh_token",
+                ["client_id"] = clientId,
+                ["client_secret"] = clientSecret,
+                ["refresh_token"] = refresh
+            });
+            using var resp = await client.SendAsync(req, ct);
+            var raw = await resp.Content.ReadAsStringAsync(ct);
+            if (!resp.IsSuccessStatusCode) return null;
+            using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(raw) ? "{}" : raw);
+            var access = doc.RootElement.TryGetProperty("access_token", out var a) ? a.GetString() : null;
+            if (string.IsNullOrWhiteSpace(access)) return null;
+            var newRefresh = doc.RootElement.TryGetProperty("refresh_token", out var r) ? r.GetString() : null;
+            await UpsertParamAsync(cfg.Id, "AccessToken", access, true, ct);
+            if (!string.IsNullOrWhiteSpace(newRefresh))
+                await UpsertParamAsync(cfg.Id, "RefreshToken", newRefresh, true, ct);
+            return access;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    async Task<string?> ReadParamAsync(Guid configId, string key, CancellationToken ct)
+    {
+        var row = await db.CompanyMarketplaceParameters
+            .FirstOrDefaultAsync(p => p.ConfigId == configId && p.ParameterKey == key, ct);
+        if (row is null || string.IsNullOrWhiteSpace(row.ParameterValue)) return null;
+        if (!row.IsSecret) return row.ParameterValue;
+        try { return protector.Unprotect(row.ParameterValue); }
+        catch { return row.ParameterValue; }
+    }
+
+    async Task UpsertParamAsync(Guid configId, string key, string value, bool secret, CancellationToken ct)
+    {
+        var stored = secret ? protector.Protect(value) : value;
+        var row = await db.CompanyMarketplaceParameters
+            .FirstOrDefaultAsync(p => p.ConfigId == configId && p.ParameterKey == key, ct);
+        if (row is null)
+        {
+            db.CompanyMarketplaceParameters.Add(new CompanyMarketplaceParameter
+            {
+                Id = Guid.NewGuid(),
+                ConfigId = configId,
+                ParameterKey = key,
+                ParameterValue = stored,
+                IsSecret = secret
+            });
+        }
+        else
+        {
+            row.ParameterValue = stored;
+            row.IsSecret = secret;
+        }
+        await db.SaveChangesAsync(ct);
+    }
 
     static void ApplySnapshot(MarketplaceRemoteAd row, RemoteMarketplaceAd item, Guid runId, Guid vendorId)
     {

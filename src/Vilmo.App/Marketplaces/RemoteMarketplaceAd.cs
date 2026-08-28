@@ -28,3 +28,12 @@ public interface IMarketplaceListingCatalogAdapter
     string MarketplaceCode { get; }
     Task<IReadOnlyList<RemoteMarketplaceAd>> ListAdsAsync(MarketplaceCatalogContext ctx, CancellationToken ct);
 }
+
+public sealed class MarketplaceHttpException(string marketplaceCode, int statusCode, string path, string body)
+    : InvalidOperationException($"{marketplaceCode} HTTP {statusCode}")
+{
+    public string MarketplaceCode { get; } = marketplaceCode;
+    public int StatusCode { get; } = statusCode;
+    public string Path { get; } = path;
+    public string Body { get; } = body ?? "";
+}

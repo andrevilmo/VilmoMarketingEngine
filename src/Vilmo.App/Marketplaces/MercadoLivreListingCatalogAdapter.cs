@@ -17,8 +17,9 @@ public sealed class MercadoLivreListingCatalogAdapter(IHttpClientFactory httpFac
         var sellerId = ctx.SellerId;
         if (string.IsNullOrWhiteSpace(sellerId))
         {
-            var me = await GetJsonAsync(ctx, "/users/me", ct);
-            sellerId = ReadId(me)?.ToString();
+            var me = await GetAsync(ctx, "/users/me", ct);
+            EnsureOk(me, "/users/me");
+            sellerId = ReadId(me.Json)?.ToString();
         }
         if (string.IsNullOrWhiteSpace(sellerId))
             throw new InvalidOperationException("SellerIdRequired");
@@ -48,17 +49,17 @@ public sealed class MercadoLivreListingCatalogAdapter(IHttpClientFactory httpFac
             var path = scrollId is null
                 ? $"/users/{Uri.EscapeDataString(sellerId)}/items/search?search_type=scan&limit={SearchPageSize}"
                 : $"/users/{Uri.EscapeDataString(sellerId)}/items/search?search_type=scan&scroll_id={Uri.EscapeDataString(scrollId)}&limit={SearchPageSize}";
-            var json = await GetJsonAsync(ctx, path, ct);
-            if (json is null && scrollId is null)
+            var got = await GetAsync(ctx, path, ct);
+            if (page == 0 && scrollId is null && !got.Ok && !IsAuthFailure(got.Status))
             {
                 usedScan = false;
                 break;
             }
-            if (json is null) break;
-            var pageIds = ReadResultIds(json.Value);
+            EnsureOk(got, path);
+            var pageIds = ReadResultIds(got.Json!.Value);
             if (pageIds.Count == 0) break;
             ids.AddRange(pageIds);
-            scrollId = Str(json.Value, "scroll_id");
+            scrollId = Str(got.Json.Value, "scroll_id");
             if (string.IsNullOrWhiteSpace(scrollId)) break;
         }
         if (!usedScan || ids.Count == 0)
@@ -67,12 +68,12 @@ public sealed class MercadoLivreListingCatalogAdapter(IHttpClientFactory httpFac
             for (var offset = 0; offset < 2000; offset += SearchPageSize)
             {
                 var path = $"/users/{Uri.EscapeDataString(sellerId)}/items/search?offset={offset}&limit={SearchPageSize}";
-                var json = await GetJsonAsync(ctx, path, ct);
-                if (json is null) break;
-                var pageIds = ReadResultIds(json.Value);
+                var got = await GetAsync(ctx, path, ct);
+                EnsureOk(got, path);
+                var pageIds = ReadResultIds(got.Json!.Value);
                 if (pageIds.Count == 0) break;
                 ids.AddRange(pageIds);
-                var total = json.Value.TryGetProperty("paging", out var paging) && paging.TryGetProperty("total", out var t) && t.TryGetInt32(out var n)
+                var total = got.Json.Value.TryGetProperty("paging", out var paging) && paging.TryGetProperty("total", out var t) && t.TryGetInt32(out var n)
                     ? n : ids.Count;
                 if (offset + SearchPageSize >= total) break;
             }
@@ -84,12 +85,13 @@ public sealed class MercadoLivreListingCatalogAdapter(IHttpClientFactory httpFac
     {
         if (ids.Count == 0) return [];
         var path = $"/items?ids={string.Join(",", ids.Select(Uri.EscapeDataString))}";
-        var json = await GetJsonAsync(ctx, path, ct);
+        var got = await GetAsync(ctx, path, ct);
+        EnsureOk(got, path);
         var list = new List<JsonElement>();
-        if (json is null) return list;
-        if (json.Value.ValueKind == JsonValueKind.Array)
+        var json = got.Json!.Value;
+        if (json.ValueKind == JsonValueKind.Array)
         {
-            foreach (var row in json.Value.EnumerateArray())
+            foreach (var row in json.EnumerateArray())
             {
                 if (row.ValueKind == JsonValueKind.Object && row.TryGetProperty("body", out var body)
                     && body.ValueKind == JsonValueKind.Object)
@@ -98,8 +100,8 @@ public sealed class MercadoLivreListingCatalogAdapter(IHttpClientFactory httpFac
                     list.Add(row.Clone());
             }
         }
-        else if (json.Value.ValueKind == JsonValueKind.Object)
-            list.Add(json.Value.Clone());
+        else if (json.ValueKind == JsonValueKind.Object)
+            list.Add(json.Clone());
         return list;
     }
 
@@ -186,7 +188,12 @@ public sealed class MercadoLivreListingCatalogAdapter(IHttpClientFactory httpFac
         return null;
     }
 
-    async Task<JsonElement?> GetJsonAsync(MarketplaceCatalogContext ctx, string path, CancellationToken ct)
+    sealed record MlGet(int Status, string Raw, JsonElement? Json)
+    {
+        public bool Ok => Status is >= 200 and < 300 && Json is not null;
+    }
+
+    async Task<MlGet> GetAsync(MarketplaceCatalogContext ctx, string path, CancellationToken ct)
     {
         var url = path.StartsWith("http", StringComparison.OrdinalIgnoreCase)
             ? path
@@ -197,17 +204,28 @@ public sealed class MercadoLivreListingCatalogAdapter(IHttpClientFactory httpFac
         req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         using var resp = await client.SendAsync(req, ct);
         var raw = await resp.Content.ReadAsStringAsync(ct);
-        if (!resp.IsSuccessStatusCode) return null;
+        JsonElement? json = null;
         try
         {
-            using var doc = JsonDocument.Parse(raw);
-            return doc.RootElement.Clone();
+            using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(raw) ? "null" : raw);
+            json = doc.RootElement.ValueKind is JsonValueKind.Object or JsonValueKind.Array
+                ? doc.RootElement.Clone()
+                : null;
         }
         catch (JsonException)
         {
-            return null;
+            json = null;
         }
+        return new MlGet((int)resp.StatusCode, raw, json);
     }
+
+    static void EnsureOk(MlGet got, string path)
+    {
+        if (got.Ok) return;
+        throw new MarketplaceHttpException(Code, got.Status, path, got.Raw);
+    }
+
+    static bool IsAuthFailure(int status) => status is 401 or 403;
 
     static long? ReadId(JsonElement? json)
     {
