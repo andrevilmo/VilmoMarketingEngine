@@ -88,6 +88,7 @@ Route: `#/scrap`. Config sites: `#/config` section or `#/config/scrap-sites`.
 │        ( ) Já encontrados — só a tabela salva                  │
 │ Sites  [x] Mercado Livre  [x] Shopee  [ ] Magalu               │
 │        [x] SHEIN  [ ] Joom  [ ] Martins                        │
+│ Páginas on-line  [ 3 ▾ ]  (máx. do site em Configurações)      │
 │ [ Pesquisar ]                                                  │
 │                                                                │
 │ ── se On-line ──────────────────────────────────────────────── │
@@ -113,6 +114,7 @@ Route: `#/scrap`. Config sites: `#/config` section or `#/config/scrap-sites`.
 - Failed site (401, 403, timeout, robots deny, empty parse) → red bar + technical JSON; other sites keep running.
 - **Já encontrados Pesquisar** → no queue. Empty result: “Nenhuma oferta salva para esta busca. Marque On-line para pesquisar nos sites.”
 - Local extras (filters on the table, not a second search): date **de / até** (`observedAt`), **último preço por anúncio** (default on) vs **histórico**.
+- On-line **Páginas**: how many remote result pages to walk (default 3, cannot exceed the site’s `maxPages` in Configurações). Progress can show `página 2/3`.
 
 ### 4.3 Comparison table
 
@@ -120,7 +122,7 @@ Rows = clustered offers for this `runId` (and optionally previous runs of the sa
 
 | Produto (agrupado) | Mercado Livre | Shopee | Magalu | SHEIN | Joom | Martins |
 | --- | --- | --- | --- | --- | --- | --- |
-| Carregador USB-C 20W | R$ 29,90 [abrir] | R$ 32,00 | — | R$ 27,50 | — | R$ 24,90 |
+| Carregador USB-C 20W | R$ 29,90 Abrir ↗ | R$ 32,00 Abrir ↗ | — | R$ 27,50 Abrir ↗ | — | R$ 24,90 Abrir ↗ |
 | … | | | | | | |
 
 Each cell: **price** (clickable), optional seller, **open-in-new-window link**, observed-at.
@@ -136,8 +138,19 @@ Each cell: **price** (clickable), optional seller, **open-in-new-window link**, 
 
 Default: **Preço mín. Asc** (cheapest first). One active column at a time; second click toggles Asc ↔ Desc. Arrow on the header (▲ / ▼).
 
-- **Local:** `GET /price-offers?sort=minPrice|title|observedAt|price.{siteCode}&dir=asc|desc` (server-side; needed when there are more rows than the page).
-- **On-line (current run):** same params on `GET /price-searches/{runId}`; v1 may sort in the browser if the run is ≤ 400 rows.
+- **Local:** `GET /price-offers?sort=…&dir=…&page=1&pageSize=50` (server-side).
+- **On-line (current run):** same on `GET /price-searches/{runId}`.
+
+**Pagination (two layers)**
+
+1. **Live / remote (worker, On-line only)** — walk the marketplace search **pages** until `pages` requested, `maxPages` cap, empty page, or `paging.total` reached. Each page respects `delayMs`. Adapters **must** paginate; a single HTTP call is not enough.
+   - Mercado Livre: `GET /sites/MLB/search?q=&offset=&limit=50` using `paging.total`.
+   - Official JSON: `OfficialSearchHelper` loops offset/cursor from the recipe (`pageParam` / `offsetParam` / `cursorPath`).
+   - HtmlRecipe: `{page}` in `searchUrlTemplate` or `nextPagePath` (CSS/rel=next). Stop on duplicate `remoteId`s or empty list.
+   - Browser: same stop rules; no infinite scroll into thousands of SKUs in v1.
+2. **Table (UI)** — the comparison grid is paged: **50 rows per page**, Página anterior / seguinte, “Mostrando 1–50 de 180”. Sort/filter resets to page 1. This applies to **both** On-line (after snapshots land) and Já encontrados.
+
+v1 does **not** fetch the entire marketplace catalog. Live search is “up to N pages per site”, then the table pages through **what was saved**.
 
 **Open in a new window:** every offer `url` / permalink is `<a href="…" target="_blank" rel="noopener noreferrer">`. Label: price text plus **Abrir**. Missing URL → price as plain text, no link. Do **not** embed the marketplace in an iframe.
 
@@ -160,7 +173,10 @@ Fields:
 | `searchUrlTemplate` | e.g. `https://joom.pro/pt-br/search?q={query}` |
 | `resultListPath` | CSS or JSON path for the list |
 | `titlePath`, `pricePath`, `urlPath`, `imagePath`, `sellerPath`, `eanPath` | Recipe |
-| `maxPages`, `delayMs` | Rate limit |
+| `maxPages`, `delayMs` | Rate limit; hard cap on live pages |
+| `pageParam` / `offsetParam` / `limitParam` | How the live URL encodes page 2+ (`offset`, `page`, `cursor`) |
+| `pageSize` | Remote page size (e.g. ML 50) |
+| `nextPagePath` | Optional CSS/JSON path to “next” when there is no page number |
 | `respectRobots` | Default true |
 | Secrets | login, cookie, API key — `is_secret` |
 
@@ -213,7 +229,7 @@ Do **not** write `InventoryBalance` or `Listing`. Local search does **not** read
 
 ```text
 WorkKinds.PriceSearch = "price.search.requested"
-Payload: { runId, siteCode, query, actorUserId }
+Payload: { runId, siteCode, query, pages, actorUserId }
 ```
 
 API inserts **one work item per selected site**. Worker `DrainAsync` already takes 20 pending items — that is the fan-out. Optional later: Redis concurrency cap per site (`delayMs`, circuit breaker).
@@ -228,13 +244,13 @@ IPriceSearchAdapter
   Task<IReadOnlyList<PriceOffer>> SearchAsync(PriceSearchContext ctx, ct)
 
 PriceSearchContext
-  CompanyId, Query, SearchUrl, AccessToken?, Recipe, MaxPages, Delay
+  CompanyId, Query, SearchUrl, AccessToken?, Recipe, MaxPages, PagesRequested, Delay
 ```
 
 | Helper (in-process, not a deployable) | Does |
 | --- | --- |
 | `SearchUrlBuilder` | `{query}` / `{slug}` encoding per site |
-| `OfficialSearchHelper` | Bearer GET + JSON page loop |
+| `OfficialSearchHelper` | Bearer GET + **page/offset/cursor loop** until empty, total, or max pages |
 | `HtmlRecipeParser` | AngleSharp (or similar) + recipe paths |
 | `JsonLdProductParser` | `application/ld+json` Product/Offer |
 | `PriceNormalizer` | `R$ 1.234,56` → `1234.56` BRL |
@@ -242,7 +258,7 @@ PriceSearchContext
 | `RateLimiter` | Per siteCode, honor `delayMs` / 429 |
 | `BrowserSearchHelper` | Playwright **only** if `fetchMode=Browser`; dedicated optional process later |
 
-**Mercado Livre v1 adapter (reference implementation):** `GET https://api.mercadolibre.com/sites/MLB/search?q={query}`. Map `results[].id, title, price, permalink, thumbnail, seller`. If company ML token is expired, fail that site with the same reconnect message as listing import — other sites continue.
+**Mercado Livre v1 adapter (reference implementation):** `GET https://api.mercadolibre.com/sites/MLB/search?q={query}&offset={n}&limit=50`. Loop while `offset + limit < paging.total` and page count ≤ `min(pagesRequested, maxPages)`. Map `results[].id, title, price, permalink, thumbnail, seller`. If company ML token is expired, fail that site with the same reconnect message as listing import — other sites continue.
 
 Generic `HtmlRecipeAdapter` implements `IPriceSearchAdapter` for any `code` whose `fetchMode=HtmlRecipe`. Compiled adapters register by `SiteCode` and win over the generic one.
 
@@ -274,10 +290,12 @@ sequenceDiagram
     loop each site in parallel
       W->>Db: claim work_item
       W->>Db: log scanning
-      W->>Site: search (API or recipe)
-      Site-->>W: list
-      W->>Db: price_offer_snapshot + run_site Done
-      W->>Db: log done
+      loop remote pages 1..N
+        W->>Site: search page (API offset or HTML page)
+        Site-->>W: list
+        W->>Db: snapshots + log página k/N
+      end
+      W->>Db: price_search_run_site Done
     end
     Web->>Api: GET /price-searches/runId (poll)
     Api-->>Web: progress + offers
@@ -293,10 +311,10 @@ HTTP handler: **no** outbound fetch. Idempotency-Key on POST (Online only). Dedu
 
 | Method | Path | Result |
 | --- | --- | --- |
-| `POST` | `/price-searches` | 202 `{ runId, query, sites[] }` body `{ query, siteCodes[], scope: "Online" }`. `scope: "Local"` on POST is **400** — use GET. |
-| `GET` | `/price-offers` | 200 `{ items, counts }` query `q`, `sites`, `from`, `to`, `latestOnly=true`, `sort`, `dir` (`asc`\|`desc`). Local table search. |
+| `POST` | `/price-searches` | 202 `{ runId, query, sites[] }` body `{ query, siteCodes[], scope: "Online", pages? }`. `pages` clamped to each site’s `maxPages`. `scope: "Local"` on POST is **400** — use GET. |
+| `GET` | `/price-offers` | 200 `{ items, counts, page, pageSize, total }` query `q`, `sites`, `from`, `to`, `latestOnly=true`, `sort`, `dir`, `page`, `pageSize`. Local table search. |
 | `GET` | `/price-searches` | Previous **On-line** runs (datetime, query, offer counts) |
-| `GET` | `/price-searches/{runId}` | Run + per-site status + offers (filter `site`, `sort`, `dir`) |
+| `GET` | `/price-searches/{runId}` | Run + per-site status + offers (filter `site`, `sort`, `dir`, `page`, `pageSize`) |
 | `GET` | `/price-search-logs?runId=` | Progress log (Online only) |
 | `GET` | `/scrape-sites` | Enabled sites + whether recipe is complete |
 | `PUT` | `/scrape-sites/{code}` | Company enable + parameters (Configurações) |
@@ -363,6 +381,7 @@ Success for phase 2:
 - Dual search flag: **On-line** (workers + persist) vs **Já encontrados** (Postgres only).
 - Comparison table: **Asc/Desc** on title, min price, per-site price, `observedAt`. Default cheapest first.
 - Offer permalinks open in a **new tab** (`target="_blank"` + `noopener`).
+- Live search **paginates remote APIs/HTML** up to N pages; the comparison **table** is paged (50 rows).
 - Unified `PriceOffer`, helpers, Configurações recipes, parallel site jobs.
 - Official API before HTML; browser last.
 - Vendor cannot see Scrap.
@@ -384,6 +403,8 @@ Success for phase 2:
 | **Rate limits / identity** | User-Agent, per-site delay, circuit breaker: specified, not built. |
 | **History UX** | Two-run diff is phase 6; Local `from`/`to` is specified but easy to underspecify in the first UI. |
 | **Sort vs grouping** | Asc/Desc is specified; grouped rows still use one “min price”. Sorting a site column when many cells are `—` is defined (empties last) but untested. |
+| **Remote pagination completeness** | v1 stops at `maxPages` (default 3). ML `carregador usb` has thousands of hits; we will not download the full catalog. Infinite-scroll HTML (no `page=` / no `next`) needs the browser helper or is a gap. |
+| **Table pagination vs live fetch** | UI pages **saved** rows. Clicking “página 2” of the table does **not** fetch remote page 2; run On-line with a higher **Páginas** to save more first. |
 
 ### Gaps that are acceptable to defer
 
