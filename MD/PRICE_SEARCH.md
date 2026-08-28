@@ -19,7 +19,7 @@ Admin and Company users can:
 3. On-line: each selected site is fetched **in parallel**. The screen shows per-site progress as results arrive — same pattern as NF-e ingest and Anúncios import logs.
 4. Persist **every offer found** with **search datetime**, site, title, price, URL, seller, thumbnail, and raw snapshot.
 5. Show a **comparison table** (types and prices across sites) and keep history so the same query can be compared over time.
-6. Add / edit scrape sites in **Configurações** (URL template, parse recipe, secrets, rate limits) **without a redeploy**.
+6. Add / edit scrape sites in **Configurações** (URL template, parse recipe, **username / password** for site login, rate limits) **without a redeploy**.
 
 This is **market research** (what the market is charging). It is **not** Anúncios import (seller’s own listings), not stock, and not POST `/items`.
 
@@ -55,14 +55,14 @@ HTML scraping of storefront search pages is **fragile** (Cloudflare, JS render, 
 
 | Site (v1 seed) | Example search URL (query = `carregador usb`) | Planned fetch mode |
 | --- | --- | --- |
-| Mercado Livre | `https://lista.mercadolivre.com.br/{slug}` | **Official** `GET /sites/MLB/search?q=` with the company’s ML token if linked; public search as fallback. Reuse catalog patterns from listing import — **do not** scrape `lista.mercadolivre.com.br` first. |
-| Shopee | `https://shopee.com.br/search?keyword=` | Open Platform product search **if** the company has Shopee app credentials. HTML storefront is heavily bot-protected — recipe only as a flagged experiment. |
-| Magazine Luiza | `https://www.magazineluiza.com.br/busca/` | Magalu partner APIs when configured. Storefront + login is **secret parameters** in Configurações (never git). |
-| SHEIN | `https://br.shein.com/pdsearch/{query}/` | SHEIN Open Platform when configured. Storefront is JS-heavy. |
-| Joom | `https://joom.pro/pt-br/search?q=` | Start as **HtmlRecipe** (search URL template + selectors). Escalate to browser helper if the list is empty / blocked. |
-| Martins Atacado | `https://www.martinsatacado.com.br/busca/` | B2B; likely login wall. Recipe + optional secret session. |
+| Mercado Livre | `https://lista.mercadolivre.com.br/{slug}` | Prefer official `GET /sites/MLB/search?q=` (public search, no seller OAuth required). If that is blocked, worker logs in with Configurações **usuário/senha** and uses HtmlRecipe/Browser on the storefront. Do **not** depend on Marketplaces OAuth for Scrap. |
+| Shopee | `https://shopee.com.br/search?keyword=` | Open Platform if app keys exist; otherwise storefront after **usuário/senha**. HTML is bot-protected — recipe or Browser. |
+| Magazine Luiza | `https://www.magazineluiza.com.br/busca/` | Storefront / B2B after Configurações **usuário/senha**. Partner API only if separately configured. |
+| SHEIN | `https://br.shein.com/pdsearch/{query}/` | Open Platform if configured; otherwise storefront after **usuário/senha**. JS-heavy. |
+| Joom | `https://joom.pro/pt-br/search?q=` | HtmlRecipe; login with **usuário/senha** when the list is behind a wall. Browser if blocked. |
+| Martins Atacado | `https://www.martinsatacado.com.br/busca/` | B2B: **usuário/senha** required before search. |
 
-**Do not commit** Magalu (or any) email/password into the repo, env samples, or this document. Put them in `scrape_site_parameter` with `is_secret`, same as marketplace `AccessToken`, via SecretProtector.
+**Do not commit** any site email/password into the repo, env samples, or this document. Company staff enter them in Configurações (`username` + `password` with `is_secret`). Worker never echoes passwords in logs or snapshots.
 
 Feature flag per company **and** per site: enable/disable without redeploy.
 
@@ -163,6 +163,16 @@ v1 clustering: normalize title (lowercase, strip accents, collapse whitespace) +
 
 Admin/Company only. One card per site (like Marketplaces da empresa).
 
+```
+┌ Sites de busca ────────────────────────────────────────────┐
+│ Mercado Livre                          [x] ativo           │
+│ Usuário  [                      ]                          │
+│ Senha    [                      ]   (nunca exibida de novo)│
+│ Máx. páginas  [ 5 ]                                        │
+│ … receita / URL …                                          │
+└────────────────────────────────────────────────────────────┘
+```
+
 Fields:
 
 | Field | Purpose |
@@ -180,21 +190,52 @@ Fields:
 | `pageSize` | Remote page size (e.g. ML 50) |
 | `nextPagePath` | Optional CSS/JSON path to “next” when there is no page number |
 | `respectRobots` | Default true |
-| Secrets | login, cookie, API key — `is_secret` |
+| `username` | Site login (email / CPF / CNPJ as that site expects). Per company. Shown in the form. Empty = try unauthenticated search. |
+| `password` | Site login password. `is_secret` via SecretProtector. **Write-only** in the UI: GET never returns it; PUT empty means “keep current”. |
+| `loginUrl` | Optional login page if HtmlRecipe (e.g. Magalu / Martins). Empty = adapter default for that `code`. |
+| `sessionCookie` | Worker-managed after a successful login. `is_secret`. Not edited by the user. |
 
 **Adicionar site** creates a new `code` at runtime (same idea as `POST /marketplaces`). Worker uses `HtmlRecipe` unless `fetchMode` is OfficialApi and a compiled adapter exists for that code.
 
-Seed `scrape_site_parameter` (editable later in Configurações):
+#### Login (worker only)
+
+Username and password live on **each site card** in Configurações — not in Marketplaces OAuth, not in the browser, not in git.
+
+```text
+On-line job for site S:
+  1. If username+password set:
+       if sessionCookie missing/expired or last search got 401 / login HTML:
+         POST/fill loginUrl (or adapter default)
+         store sessionCookie (TTL)
+       attach session to every search page
+  2. Else: unauthenticated search (ML public API, public HTML).
+  3. Login fails (bad password, captcha, 2FA): that site → Failed,
+     “Revise usuário e senha em Configurações”. Other sites continue.
+  4. Session dies mid-run: re-login **once**, then fail the site.
+```
+
+- Progress log may show `entrando…` then `página 2/5`. Never log the password; mask username (`a***@x.com`).
+- 2FA / SMS / CAPTCHA: out of v1 — fail with that reason. Do not open an interactive challenge in vilmo-web.
+- These fields **authenticate**; they do **not** replace `resultListPath` / `titlePath` / `pricePath`. After login the worker still needs a recipe or an official search JSON.
+
+Seed `scrape_site_parameter` (editable later in Configurações). **Do not seed passwords.**
 
 | site | key | value | is_secret |
 |------|-----|-------|-----------|
 | Mercado Livre | `maxPages` | `5` | false |
 | Mercado Livre | `limit` | `50` | false |
+| Mercado Livre | `username` | *(empty until company fills)* | false |
+| Mercado Livre | `password` | *(empty until company fills)* | true |
 | Shopee | `maxPages` | `5` | false |
+| Shopee | `username` / `password` | empty | password true |
 | Magalu | `maxPages` | `5` | false |
+| Magalu | `username` / `password` | empty | password true |
 | SHEIN | `maxPages` | `5` | false |
+| SHEIN | `username` / `password` | empty | password true |
 | Joom | `maxPages` | `5` | false |
+| Joom | `username` / `password` | empty | password true |
 | Martins | `maxPages` | `5` | false |
+| Martins | `username` / `password` | empty | password true |
 
 ---
 
@@ -258,7 +299,7 @@ IPriceSearchAdapter
   Task<IReadOnlyList<PriceOffer>> SearchAsync(PriceSearchContext ctx, ct)
 
 PriceSearchContext
-  CompanyId, Query, SearchUrl, AccessToken?, Recipe, MaxPages, PagesRequested, Delay
+  CompanyId, Query, SearchUrl, AccessToken?, Username?, Password?, Session?, Recipe, MaxPages, PagesRequested, Delay
 ```
 
 | Helper (in-process, not a deployable) | Does |
@@ -270,9 +311,10 @@ PriceSearchContext
 | `PriceNormalizer` | `R$ 1.234,56` → `1234.56` BRL |
 | `RobotsChecker` | Cache robots.txt; skip if disallowed |
 | `RateLimiter` | Per siteCode, honor `delayMs` / 429 |
+| `SiteLoginHelper` | Uses Configurações `username`/`password`/`loginUrl`; caches `sessionCookie`; one retry on 401 |
 | `BrowserSearchHelper` | Playwright **only** if `fetchMode=Browser`; dedicated optional process later |
 
-**Mercado Livre v1 adapter (reference implementation):** `GET https://api.mercadolibre.com/sites/MLB/search?q={query}&offset={n}&limit=50`. Loop while `offset + limit < paging.total` and page count ≤ `min(pagesRequested, maxPages)`. Map `results[].id, title, price, permalink, thumbnail, seller`. If company ML token is expired, fail that site with the same reconnect message as listing import — other sites continue.
+**Mercado Livre v1 adapter (reference implementation):** `GET https://api.mercadolibre.com/sites/MLB/search?q={query}&offset={n}&limit=50` **without** Marketplaces OAuth (public search). Loop while `offset + limit < paging.total` and page count ≤ `min(pagesRequested, maxPages)`. Map `results[].id, title, price, permalink, thumbnail, seller`. If public search is blocked (403) and `username`/`password` are set, fall back to storefront login + HtmlRecipe. Expired Marketplaces OAuth must **not** block Scrap.
 
 Generic `HtmlRecipeAdapter` implements `IPriceSearchAdapter` for any `code` whose `fetchMode=HtmlRecipe`. Compiled adapters register by `SiteCode` and win over the generic one.
 
@@ -304,8 +346,13 @@ sequenceDiagram
     loop each site in parallel
       W->>Db: claim work_item
       W->>Db: log scanning
+      opt username+password set
+        W->>Site: login
+        Site-->>W: session
+        W->>Db: store sessionCookie (secret)
+      end
       loop remote pages 1..N
-        W->>Site: search page (API offset or HTML page)
+        W->>Site: search page (API offset or HTML page, + session)
         Site-->>W: list
         W->>Db: snapshots + log página k/N
       end
@@ -330,8 +377,8 @@ HTTP handler: **no** outbound fetch. Idempotency-Key on POST (Online only). Dedu
 | `GET` | `/price-searches` | Previous **On-line** runs (datetime, query, offer counts) |
 | `GET` | `/price-searches/{runId}` | Run + per-site status + offers (filter `site`, `sort`, `dir`, `page`, `pageSize`) |
 | `GET` | `/price-search-logs?runId=` | Progress log (Online only) |
-| `GET` | `/scrape-sites` | Enabled sites + whether recipe is complete |
-| `PUT` | `/scrape-sites/{code}` | Company enable + parameters (Configurações) |
+| `GET` | `/scrape-sites` | Enabled sites + recipe completeness + `username` + `passwordSet` (never the password) |
+| `PUT` | `/scrape-sites/{code}` | Company enable + parameters including `username`, `password` (write-only), `maxPages` |
 | `POST` | `/scrape-sites` | Admin: register a new `code` |
 
 Company-scoped. Vendor → 404. Demo tokens must not hit real sites (same rule as ML import).
@@ -345,15 +392,15 @@ Company-scoped. Vendor → 404. Demo tokens must not hit real sites (same rule a
 - Cap `maxPages` (seed **5** per site, editable in Configurações) and `delayMs` (e.g. ≥ 1000 ms) in seed recipes.
 - Circuit breaker per site: consecutive 403/429 → skip until cooldown.
 - Store snapshots, not full HTML dumps of logged-in account pages, if we can extract the list JSON instead.
-- Secrets only in `scrape_site_parameter` / marketplace params. Rotate any password that was pasted into chat.
+- Secrets only in `scrape_site_parameter` (`password`, `sessionCookie`). Rotate any password that was pasted into chat. GET `/scrape-sites` returns `passwordSet: true/false`, never the secret.
 
 ---
 
 ## 10. Phased delivery (when implementation is requested)
 
-1. **Tables + Scrap UI shell + scope flag** — query, **On-line / Já encontrados**, site checkboxes, Local GET against empty table, Configurações list with seed rows including **`maxPages = 5`**.
-2. **Mercado Livre OfficialApi adapter** — On-line fills snapshots; Local then finds the same query without calling ML again.
-3. **HtmlRecipe helper + Joom (and Martins if robots allow)** — Configurações recipes editable.
+1. **Tables + Scrap UI shell + scope flag** — query, **On-line / Já encontrados**, site checkboxes, Local GET against empty table, Configurações list with seed rows including **`maxPages = 5`** and empty **usuário / senha** fields.
+2. **Mercado Livre public search adapter** — On-line fills snapshots **without** Marketplaces OAuth; Local then finds the same query without calling ML again. Username/password unused unless public search is blocked.
+3. **HtmlRecipe helper + SiteLoginHelper** — Joom / Martins (and Magalu) using Configurações usuário/senha before search.
 4. **Shopee / Magalu / SHEIN** — Official APIs when company credentials exist; otherwise keep disabled with a hint.
 5. **Browser helper** — only if a flagged site cannot be read as API or static HTML.
 6. **History compare** — Local `from`/`to`, or pick two On-line runs of the same query, diff prices.
@@ -369,7 +416,8 @@ Success for phase 2:
 
 - Changing `InventoryBalance` / sale price from scraped numbers (a later “sugerir preço” can read snapshots).
 - Publishing or pausing ads from Scrap.
-- Scraping from the user’s browser, browser extensions, or storing Magalu login in frontend JS.
+- Scraping from the user’s browser, browser extensions, or putting site passwords in frontend JS / git.
+- Interactive 2FA / CAPTCHA in the Scrap UI.
 - A new microservice per site.
 - Fuzzy ML clustering, alerts, or scheduled recurring On-line searches (natural follow-ups after v1).
 - Searching Vilmo `product` / `advertisement` in Local mode (ERP catalog is not “found on the web”).
@@ -378,55 +426,56 @@ Success for phase 2:
 
 ## 12. Open decisions (resolve at implementation time)
 
-- Exact CSS/JSON paths for Joom and Martins (capture one sample response in a lab, not in git with PII).
-- Whether Magalu/Shopee/SHEIN wait for Open API apps vs a time-limited Browser experiment.
-- Whether `scrape_site` is platform-global (admin defines recipes) + company enablement (like `marketplace` + `company_marketplace_config`) — **recommended**, so recipes are not copied per tenant.
+- Exact CSS/JSON paths and `loginUrl` form fields for Joom, Martins, Magalu (capture one sample in a lab, not in git with PII). Username/password do not invent those paths.
+- Whether Magalu/Shopee/SHEIN wait for Open API apps vs HtmlRecipe after login vs Browser.
+- Whether `scrape_site` is platform-global (admin defines recipes) + company enablement (like `marketplace` + `company_marketplace_config`) — **recommended**, so recipes are not copied per tenant. **Credentials are always per company.**
 - Local match: only snapshots from runs with the same `query_normalized`, vs full-text on all titles (broader, noisier).
 - Local default date window (all time vs last 30 days).
+- Session TTL and cookie vs bearer after login (site-specific; discover at implementation).
 
 ---
 
 ## 13. Status and gaps (plan only — nothing is built)
 
-**How it is going:** architecture is decided and written. **No Scrap screen, APIs, tables, or adapters exist in the running app.** Configurações today is only A1 certificate. Live Mercado Livre OAuth on vilmomkt.com is **expired** (listing import already shows reconnect) — On-line ML would fail until that token is renewed.
+**How it is going:** architecture is decided and written. **No Scrap screen, APIs, tables, or adapters exist in the running app.** Configurações today is only A1 certificate. That empty first ship is **accepted**.
 
 ### Decided (in this plan)
 
-- Dual search flag: **On-line** (workers + persist) vs **Já encontrados** (Postgres only).
+- Dual search flag: **On-line** (workers + persist) vs **Já encontrados** (Postgres only). Empty Local until the first successful On-line run — **accepted**.
 - Comparison table: **Asc/Desc** on title, min price, per-site price, `observedAt`. Default cheapest first.
 - Offer permalinks open in a **new tab** (`target="_blank"` + `noopener`).
 - Live search paginates remote APIs/HTML up to each site’s **`maxPages` (default 5 in Configurações)**; the comparison table pages saved rows (50). Table “página 2” does not fetch remote page 2 — accepted.
+- **Per-site `username` + `password`** in Configurações for storefront/B2B login. Worker logs in, caches session, retries once if the session dies. Scrap does **not** wait on Marketplaces OAuth.
+- Cross-site grouping stays **title normalize + optional EAN** in v1; fuzzy matching **later** — accepted.
 - Unified `PriceOffer`, helpers, Configurações recipes, parallel site jobs.
-- Official API before HTML; browser last.
+- Official/public API before HTML; browser last.
 - Vendor cannot see Scrap.
 - Stock / ads are not written.
 
-### Gaps that block a useful v1
+### Remaining gaps (still real)
 
-| Gap | Why it matters |
+| Gap | Why it still matters after usuário/senha |
 | --- | --- |
-| **Not implemented** | Plan file only. No `#/scrap`, no `price_offer_snapshot`. |
-| **Empty Local table until first On-line** | Já encontrados is useless until at least one successful live fetch. |
-| **ML token expired on prod** | First On-line site (ML) cannot run until Marketplaces is reconnected. |
-| **No recipes captured** | Joom / Martins CSS or JSON paths unknown. Magalu / Shopee / SHEIN storefronts are JS/Cloudflare-heavy; Open API apps not wired for *search*. |
-| **Cross-site matching** | Comparison table depends on title normalize / EAN. Different wording (“carregador usb-c” vs “fonte 20W”) will not group. Fuzzy matching is out of v1. |
+| **Not implemented** | Plan file only. Accepted as “do later”; still the only reason Scrap does not exist in the app. |
+| **Parse recipes still missing** | Login gets a *session*. The worker still needs `resultListPath` / `titlePath` / `pricePath` (or official JSON). Joom/Martins/Magalu CSS or JSON paths are unknown. Username/password does not fill those fields. |
+| **Login form per site unknown** | `loginUrl`, field names, CSRF, cookie vs bearer — not captured. `SiteLoginHelper` cannot run until one lab login is recorded (no PII in git). |
+| **2FA / CAPTCHA / Cloudflare** | If Magalu/Shopee/SHEIN/Joom show a challenge after password, v1 **fails that site**. No interactive 2FA in the UI. |
+| **ML official API ≠ seller password** | Public `GET /sites/MLB/search` does not use the ML account password. Seller email/password is only for a storefront fallback. Anúncios OAuth stays a separate reconnect. |
 | **Local relevance** | `ILIKE` will miss accents/typos and may return too much. No `pg_trgm` / FTS yet. |
-| **Auth for B2B / Magalu** | Martins and possibly Magalu need a logged-in session. Secrets belong in Configurações; nothing is stored today. |
-| **ToS / robots / 403** | HTML mode may be blocked; we have no lab samples of success vs block pages. |
-| **Configurações UX** | “Sites de busca” is not on the Configurações screen (only PFX). |
-| **Rate limits / identity** | User-Agent, per-site delay, circuit breaker: specified, not built. |
-| **History UX** | Two-run diff is phase 6; Local `from`/`to` is specified but easy to underspecify in the first UI. |
-| **Sort vs grouping** | Asc/Desc is specified; grouped rows still use one “min price”. Sorting a site column when many cells are `—` is defined (empties last) but untested. |
-| **Remote pagination completeness** | Live walk stops at each site’s `maxPages` (default **5**). ML `carregador usb` has thousands of hits; we will not download the full catalog. Infinite-scroll HTML (no `page=` / no `next`) needs the browser helper or stops after page 1. |
+| **ToS / robots / 403** | HTML mode may be blocked even after login; we have no lab samples of success vs block pages. |
+| **Infinite-scroll HTML** | No `page=` / no `next` → stop after page 1 unless Browser (deferred). |
+| **Remote page cap** | Live walk stops at each site’s `maxPages` (default **5**). Will not dump a full ML ranking. |
+| **History UX** | Two-run diff is phase 6. |
+| **Open product decisions** | Local match rule (`query_normalized` vs all titles); default date window; global recipes vs copy-per-tenant. |
 
 ### Gaps that are acceptable to defer
 
-- Playwright browser helper.
-- Scheduled On-line refresh.
-- Price alerts / “sugerir preço de venda”.
+- Fuzzy / embedding match (explicitly later).
+- Playwright browser helper (until a logged-in HTML site cannot be parsed).
+- Scheduled On-line refresh, price alerts, “sugerir preço”.
 - Include Vilmo catalog SKUs in the same table.
-- Shopee / Magalu / SHEIN if we ship ML + Local + one HtmlRecipe site first.
+- Shopee / Magalu / SHEIN Open APIs if ML public search + one logged-in HtmlRecipe site ships first.
 
 ### What “done” is *not*
 
-Live import of **your** ML ads (Anúncios) is a different feature and does not populate Scrap snapshots. A user who only imported ads still has an **empty** Já encontrados table until they run Scrap On-line.
+Live import of **your** ML ads (Anúncios) is a different feature and does not populate Scrap snapshots. A user who only imported ads still has an **empty** Já encontrados table until they run Scrap On-line. Expired Marketplaces OAuth does **not** block Scrap ML public search.
