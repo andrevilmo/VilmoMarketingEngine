@@ -88,7 +88,8 @@ Route: `#/scrap`. Config sites: `#/config` section or `#/config/scrap-sites`.
 │        ( ) Já encontrados — só a tabela salva                  │
 │ Sites  [x] Mercado Livre  [x] Shopee  [ ] Magalu               │
 │        [x] SHEIN  [ ] Joom  [ ] Martins                        │
-│ Páginas on-line  [ 3 ▾ ]  (máx. do site em Configurações)      │
+│ Páginas on-line: cada site usa o máx. de Configurações         │
+│   (padrão 5; opcional: limitar esta busca a [ _ ] páginas)     │
 │ [ Pesquisar ]                                                  │
 │                                                                │
 │ ── se On-line ──────────────────────────────────────────────── │
@@ -114,7 +115,7 @@ Route: `#/scrap`. Config sites: `#/config` section or `#/config/scrap-sites`.
 - Failed site (401, 403, timeout, robots deny, empty parse) → red bar + technical JSON; other sites keep running.
 - **Já encontrados Pesquisar** → no queue. Empty result: “Nenhuma oferta salva para esta busca. Marque On-line para pesquisar nos sites.”
 - Local extras (filters on the table, not a second search): date **de / até** (`observedAt`), **último preço por anúncio** (default on) vs **histórico**.
-- On-line **Páginas**: how many remote result pages to walk (default 3, cannot exceed the site’s `maxPages` in Configurações). Progress can show `página 2/3`.
+- On-line **Páginas**: each ticked site walks **its own** `maxPages` from Configurações (**default 5**). An optional per-run field may **lower** that for this search only; it cannot exceed the site’s configured `maxPages`. Progress can show `página 2/5`.
 
 ### 4.3 Comparison table
 
@@ -173,7 +174,8 @@ Fields:
 | `searchUrlTemplate` | e.g. `https://joom.pro/pt-br/search?q={query}` |
 | `resultListPath` | CSS or JSON path for the list |
 | `titlePath`, `pricePath`, `urlPath`, `imagePath`, `sellerPath`, `eanPath` | Recipe |
-| `maxPages`, `delayMs` | Rate limit; hard cap on live pages |
+| `maxPages` | Hard cap on live pages **per site**. Seed **5**. Editable in Configurações. Worker uses `min(pagesRequested, maxPages)` for that site. |
+| `delayMs` | Pause between remote pages (e.g. ≥ 1000 ms) |
 | `pageParam` / `offsetParam` / `limitParam` | How the live URL encodes page 2+ (`offset`, `page`, `cursor`) |
 | `pageSize` | Remote page size (e.g. ML 50) |
 | `nextPagePath` | Optional CSS/JSON path to “next” when there is no page number |
@@ -328,7 +330,7 @@ Company-scoped. Vendor → 404. Demo tokens must not hit real sites (same rule a
 
 - Respect `robots.txt` when `fetchMode` is Html/Browser. Official APIs use their rate-limit headers / 429 backoff.
 - Identify Vilmo with a contactable User-Agent on HTML mode.
-- Cap `maxPages` (e.g. 3) and `delayMs` (e.g. ≥ 1000 ms) in seed recipes.
+- Cap `maxPages` (seed **5** per site, editable in Configurações) and `delayMs` (e.g. ≥ 1000 ms) in seed recipes.
 - Circuit breaker per site: consecutive 403/429 → skip until cooldown.
 - Store snapshots, not full HTML dumps of logged-in account pages, if we can extract the list JSON instead.
 - Secrets only in `scrape_site_parameter` / marketplace params. Rotate any password that was pasted into chat.
@@ -337,7 +339,7 @@ Company-scoped. Vendor → 404. Demo tokens must not hit real sites (same rule a
 
 ## 10. Phased delivery (when implementation is requested)
 
-1. **Tables + Scrap UI shell + scope flag** — query, **On-line / Já encontrados**, site checkboxes, Local GET against empty table, Configurações list with seed rows (templates only).
+1. **Tables + Scrap UI shell + scope flag** — query, **On-line / Já encontrados**, site checkboxes, Local GET against empty table, Configurações list with seed rows including **`maxPages = 5`**.
 2. **Mercado Livre OfficialApi adapter** — On-line fills snapshots; Local then finds the same query without calling ML again.
 3. **HtmlRecipe helper + Joom (and Martins if robots allow)** — Configurações recipes editable.
 4. **Shopee / Magalu / SHEIN** — Official APIs when company credentials exist; otherwise keep disabled with a hint.
@@ -381,7 +383,7 @@ Success for phase 2:
 - Dual search flag: **On-line** (workers + persist) vs **Já encontrados** (Postgres only).
 - Comparison table: **Asc/Desc** on title, min price, per-site price, `observedAt`. Default cheapest first.
 - Offer permalinks open in a **new tab** (`target="_blank"` + `noopener`).
-- Live search **paginates remote APIs/HTML** up to N pages; the comparison **table** is paged (50 rows).
+- Live search paginates remote APIs/HTML up to each site’s **`maxPages` (default 5 in Configurações)**; the comparison table pages saved rows (50). Table “página 2” does not fetch remote page 2 — accepted.
 - Unified `PriceOffer`, helpers, Configurações recipes, parallel site jobs.
 - Official API before HTML; browser last.
 - Vendor cannot see Scrap.
@@ -403,8 +405,7 @@ Success for phase 2:
 | **Rate limits / identity** | User-Agent, per-site delay, circuit breaker: specified, not built. |
 | **History UX** | Two-run diff is phase 6; Local `from`/`to` is specified but easy to underspecify in the first UI. |
 | **Sort vs grouping** | Asc/Desc is specified; grouped rows still use one “min price”. Sorting a site column when many cells are `—` is defined (empties last) but untested. |
-| **Remote pagination completeness** | v1 stops at `maxPages` (default 3). ML `carregador usb` has thousands of hits; we will not download the full catalog. Infinite-scroll HTML (no `page=` / no `next`) needs the browser helper or is a gap. |
-| **Table pagination vs live fetch** | UI pages **saved** rows. Clicking “página 2” of the table does **not** fetch remote page 2; run On-line with a higher **Páginas** to save more first. |
+| **Remote pagination completeness** | Live walk stops at each site’s `maxPages` (default **5**). ML `carregador usb` has thousands of hits; we will not download the full catalog. Infinite-scroll HTML (no `page=` / no `next`) needs the browser helper or stops after page 1. |
 
 ### Gaps that are acceptable to defer
 
