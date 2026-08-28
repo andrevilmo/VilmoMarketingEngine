@@ -29,6 +29,7 @@ services:
     mem_limit: 280m
     volumes:
       - /opt/vilmo/certs:/certs:ro
+      - /opt/vilmo/data/pictures:/data/pictures
 
   vilmo-nfe:
     mem_limit: 220m

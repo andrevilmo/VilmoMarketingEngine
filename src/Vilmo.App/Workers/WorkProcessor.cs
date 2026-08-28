@@ -5,7 +5,7 @@ using Vilmo.Services;
 
 namespace Vilmo.Workers;
 
-public sealed class WorkProcessor(AppDbContext db, NfeIngestService nfe, SalesService sales, ILogger<WorkProcessor> log)
+public sealed class WorkProcessor(AppDbContext db, NfeIngestService nfe, SalesService sales, ListingPublishLogService listingLogs, ListingImportService imports, ILogger<WorkProcessor> log)
 {
     public async Task<int> DrainAsync(string[] kinds, CancellationToken ct)
     {
@@ -31,6 +31,8 @@ public sealed class WorkProcessor(AppDbContext db, NfeIngestService nfe, SalesSe
                 item.Error = ex.Message;
                 if (item.Kind == WorkKinds.NfeIngest)
                     await nfe.LogWorkFailureAsync(item, ex, ct);
+                else if (item.Kind == WorkKinds.ListingImport)
+                    await imports.LogWorkFailureAsync(item, ex, ct);
             }
             await db.SaveChangesAsync(ct);
         }
@@ -69,19 +71,61 @@ public sealed class WorkProcessor(AppDbContext db, NfeIngestService nfe, SalesSe
             }
             case WorkKinds.PublishListing:
             {
-                var listingId = Guid.Parse(JsonGet(item.PayloadJson, "listingId"));
-                var listing = await db.Listings.FirstOrDefaultAsync(l => l.Id == listingId, ct);
+                var listing = await LoadListingAsync(item, ct);
                 if (listing is not null)
                 {
-                    listing.Status = "PublishedDemo";
-                    listing.RemoteId = $"demo-{listing.Id:N}"[..12];
+                    if (listing.AdvertisementId is { } adId)
+                        await listingLogs.WriteAsync(listing.CompanyId, Guid.NewGuid(), adId, listing.Id, listing.MarketplaceCode,
+                            "publish", ListingPublishLogSteps.WorkerStarted, "info",
+                            $"Fila processou a publicação. Situação atual: {listing.Status}.",
+                            new { listing.Id, listing.Status, listing.RemoteId, workId = item.Id }, ct);
+                    if (listing.Status == ListingStatuses.Cancelled)
+                        break;
+                    if (listing.Status is ListingStatuses.Queued)
+                    {
+                        listing.Status = ListingStatuses.Error;
+                        listing.RemoteStatus = "error";
+                        if (listing.AdvertisementId is { } aid)
+                            await listingLogs.WriteAsync(listing.CompanyId, Guid.NewGuid(), aid, listing.Id, listing.MarketplaceCode,
+                                "publish", ListingPublishLogSteps.Failed, "error",
+                                "A fila encontrou o anúncio ainda na fila, sem callback do marketplace.",
+                                new { listing.Id, workId = item.Id }, ct);
+                    }
                 }
                 break;
             }
+            case WorkKinds.ListingCancel:
+            {
+                var listing = await LoadListingAsync(item, ct);
+                if (listing is not null)
+                {
+                    listing.Status = ListingStatuses.Cancelled;
+                    listing.RemoteStatus = "paused";
+                    listing.LastSyncedAt = DateTimeOffset.UtcNow;
+                }
+                break;
+            }
+            case WorkKinds.ListingRefresh:
+            {
+                var listing = await LoadListingAsync(item, ct);
+                if (listing is not null)
+                    listing.LastSyncedAt ??= DateTimeOffset.UtcNow;
+                break;
+            }
+            case WorkKinds.ListingImport:
+                await imports.ProcessQueuedAsync(item, ct);
+                break;
             case WorkKinds.StockPublish:
             case WorkKinds.UploadInvoice:
                 break;
         }
+    }
+
+    async Task<Listing?> LoadListingAsync(WorkItem item, CancellationToken ct)
+    {
+        if (!Guid.TryParse(JsonGet(item.PayloadJson, "listingId"), out var listingId) || listingId == Guid.Empty)
+            return null;
+        return await db.Listings.FirstOrDefaultAsync(l => l.Id == listingId, ct);
     }
 
     static string JsonGet(string json, string key)
@@ -97,7 +141,7 @@ public sealed class WorkProcessor(AppDbContext db, NfeIngestService nfe, SalesSe
 
 public sealed class PollingWorker(WorkProcessor processor, ILogger<PollingWorker> log) : BackgroundService
 {
-    public string[] Kinds { get; init; } = [WorkKinds.SaleImport, WorkKinds.PublishListing, WorkKinds.StockPublish, WorkKinds.UploadInvoice];
+    public string[] Kinds { get; init; } = [WorkKinds.SaleImport, WorkKinds.PublishListing, WorkKinds.ListingRefresh, WorkKinds.ListingCancel, WorkKinds.ListingImport, WorkKinds.StockPublish, WorkKinds.UploadInvoice];
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {

@@ -16,6 +16,13 @@ public static class Endpoints
     {
         app.MapGet("/health", () => Results.Text("vilmo-api\n", "text/plain"));
 
+        app.MapGet("/media/pictures/{stem}.{ext}", (string stem, string ext, AdvertisementPictureStore pics) =>
+        {
+            if (!pics.TryResolve($"{stem}.{ext}", out var path, out var mime))
+                return Results.NotFound();
+            return Results.File(path, mime);
+        });
+
         app.MapPost("/auth/login", async (LoginBody body, AuthService auth, CancellationToken ct) =>
         {
             var (status, payload) = await auth.LoginAsync(body.Email ?? "", body.Password ?? "", ct);
@@ -205,6 +212,16 @@ public static class Endpoints
             return one is null ? Results.NotFound() : Results.Ok(one);
         }).RequireAuthorization();
 
+        app.MapGet("/companies/{companyId:guid}/marketplaces/{code}/logs", async (Guid companyId, string code, HttpContext http, AppDbContext db, MarketplaceConnectLogService logs, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            var ctx = (CompanyContext)ctxr;
+            if (ctx.IsVendor) return Results.NotFound();
+            if (!ctx.IsAdmin && ctx.CompanyId != companyId) return Results.NotFound();
+            return Results.Ok(new { items = await logs.ListAsync(companyId, code, ct) });
+        }).RequireAuthorization();
+
         app.MapPut("/companies/{companyId:guid}/marketplaces/{code}", async (Guid companyId, string code, JsonElement body, HttpContext http, AppDbContext db, MarketplaceService svc, CancellationToken ct) =>
         {
             var ctx = await NeedCompanyStaff(http, db, ct, companyId);
@@ -266,14 +283,34 @@ public static class Endpoints
             if (ctx.IsVendor) return Results.NotFound();
             var companyId = ctx.CompanyId ?? throw new InvalidOperationException("CompanyRequired");
             var pub = config["PUBLIC_BASE_URL"] ?? $"{http.Request.Scheme}://{http.Request.Host}";
-            return Results.Ok(await svc.ConnectUrlAsync(companyId, code, pub));
+            return Results.Ok(await svc.ConnectUrlAsync(companyId, code, pub, ct));
         }).RequireAuthorization();
 
-        app.MapGet("/oauth/{code}/callback", async (string code, Guid? companyId, HttpContext http, MarketplaceService svc, CancellationToken ct) =>
+        app.MapGet("/oauth/{marketplaceCode}/callback", async (
+            string marketplaceCode,
+            Guid? companyId,
+            string? state,
+            string? code,
+            string? error,
+            string? error_description,
+            int? demo,
+            HttpContext http,
+            MarketplaceService svc,
+            IConfiguration config,
+            CancellationToken ct) =>
         {
-            if (companyId is null) return Results.BadRequest(new { error = "companyId required" });
-            await svc.HandleOAuthCallbackAsync(code, companyId.Value, ct);
-            return Results.Redirect("/web/#/marketplaces?connected=" + code);
+            if (!string.IsNullOrWhiteSpace(error))
+                return Results.Redirect(MarketplaceOAuthRedirect(marketplaceCode, "denied", error_description ?? error));
+            Guid tenant;
+            if (companyId is Guid cid)
+                tenant = cid;
+            else if (!Guid.TryParse(state, out tenant))
+                return Results.BadRequest(new { error = "companyId required" });
+            var pub = config["PUBLIC_BASE_URL"] ?? $"{http.Request.Scheme}://{http.Request.Host}";
+            var result = await svc.HandleOAuthCallbackAsync(marketplaceCode, tenant, code, demo == 1, pub, ct);
+            if (!result.Ok)
+                return Results.Redirect(MarketplaceOAuthRedirect(marketplaceCode, "error", result.Error ?? "OAuthFailed"));
+            return Results.Redirect(MarketplaceOAuthRedirect(marketplaceCode, "ok", null));
         });
 
         app.MapPost("/webhooks/{code}", async (string code, JsonElement body, MarketplaceService svc, CancellationToken ct) =>
@@ -314,10 +351,11 @@ public static class Endpoints
 
         app.MapGet("/products", async (HttpContext http, AppDbContext db, ProductService products, CancellationToken ct) =>
         {
-            var ctx = await NeedNotVendor(http, db, ct);
-            if (ctx is IResult r) return r;
-            var c = (CompanyContext)ctx;
-            return Results.Ok(await products.ListAsync(c.RequireCompany(), ct));
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            var ctx = (CompanyContext)ctxr;
+            if (ctx.CompanyId is null) return Results.BadRequest(new { error = "CompanyRequired" });
+            return Results.Ok(await products.ListAsync(ctx.RequireCompany(), ct));
         }).RequireAuthorization();
 
         app.MapPost("/products", async (ProductDraft body, HttpContext http, AppDbContext db, ProductService products, CancellationToken ct) =>
@@ -341,26 +379,263 @@ public static class Endpoints
             return p is null ? Results.NotFound() : Results.Ok(p);
         }).RequireAuthorization();
 
-        app.MapPost("/advertisements", Publish).RequireAuthorization();
-        app.MapPost("/listings", Publish).RequireAuthorization();
-        app.MapGet("/listings", async (HttpContext http, AppDbContext db, CancellationToken ct) =>
+        app.MapGet("/marketplaces/listing-fields", async (HttpContext http, AppDbContext db, AdvertisementService ads, CancellationToken ct) =>
         {
             var ctxr = await Need(http, db, ct);
             if (ctxr is IResult r) return r;
-            var ctx = (CompanyContext)ctxr;
-            var q = db.Listings.AsNoTracking().Where(l => l.CompanyId == ctx.CompanyId);
-            if (ctx.IsVendor) q = q.Where(l => l.VendorUserId == ctx.UserId);
-            return Results.Ok(await q.OrderByDescending(l => l.Id).Take(200).ToListAsync(ct));
+            return Results.Ok(await ads.ListingFieldsAsync(ct));
         }).RequireAuthorization();
 
-        app.MapPost("/inventory/{sku}/publish", async (string sku, JsonElement body, HttpContext http, AppDbContext db, ProductService products, CancellationToken ct) =>
+        app.MapGet("/marketplaces/MercadoLivre/categories", async (HttpContext http, AppDbContext db, MercadoLivreCategoryService cats, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            return Results.Ok(await cats.ListRootsAsync(ct));
+        }).RequireAuthorization();
+
+        app.MapGet("/marketplaces/MercadoLivre/listing-types", async (HttpContext http, AppDbContext db, MercadoLivreCategoryService cats, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            return Results.Ok(await cats.ListListingTypesAsync(ct));
+        }).RequireAuthorization();
+
+        app.MapGet("/marketplaces/MercadoLivre/seller-status", async (HttpContext http, AppDbContext db, MercadoLivreCategoryService cats, CancellationToken ct) =>
         {
             var ctxr = await Need(http, db, ct);
             if (ctxr is IResult r) return r;
             var ctx = (CompanyContext)ctxr;
-            var codes = ReadCodes(body);
-            var vendorId = ctx.IsVendor ? ctx.UserId : (body.TryGetProperty("vendorUserId", out var v) && Guid.TryParse(v.GetString(), out var id) ? id : ctx.UserId);
-            return Results.Ok(await products.PublishAsync(ctx.RequireCompany(), vendorId, sku, codes, ct));
+            return Results.Ok(await cats.SellerStatusAsync(ctx.RequireCompany(), ct));
+        }).RequireAuthorization();
+
+        app.MapGet("/marketplaces/MercadoLivre/categories/suggest", async (string? q, HttpContext http, AppDbContext db, MercadoLivreCategoryService cats, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            try { return Results.Ok(await cats.SuggestAsync(q, ct)); }
+            catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+            catch (InvalidOperationException ex) { return Results.BadRequest(new { error = ex.Message }); }
+        }).RequireAuthorization();
+
+        app.MapGet("/marketplaces/MercadoLivre/categories/{categoryId}", async (string categoryId, HttpContext http, AppDbContext db, MercadoLivreCategoryService cats, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            var detail = await cats.GetAsync(categoryId, ct);
+            return detail is null ? Results.NotFound(new { error = "CategoryNotFound" }) : Results.Ok(detail);
+        }).RequireAuthorization();
+
+        app.MapGet("/marketplaces/MercadoLivre/categories/{categoryId}/attributes", async (string categoryId, HttpContext http, AppDbContext db, MercadoLivreCategoryService cats, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            try { return Results.Ok(await cats.ListAttributesAsync(categoryId, ct)); }
+            catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+            catch (InvalidOperationException ex) { return Results.BadRequest(new { error = ex.Message }); }
+        }).RequireAuthorization();
+
+        app.MapGet("/marketplaces/MercadoLivre/categories/{categoryId}/size-charts", async (
+            string categoryId, string? genderId, string? genderName, string? brand,
+            HttpContext http, AppDbContext db, MercadoLivreCategoryService cats, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            var ctx = (CompanyContext)ctxr;
+            try { return Results.Ok(await cats.ListSizeChartsAsync(ctx.RequireCompany(), categoryId, genderId, genderName, brand, ct)); }
+            catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+        }).RequireAuthorization();
+
+        app.MapGet("/marketplaces/MercadoLivre/size-charts/{chartId}", async (
+            string chartId, HttpContext http, AppDbContext db, MercadoLivreCategoryService cats, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            var ctx = (CompanyContext)ctxr;
+            try
+            {
+                var detail = await cats.GetSizeChartAsync(ctx.RequireCompany(), chartId, ct);
+                return detail is null ? Results.NotFound(new { error = "SizeChartNotFound" }) : Results.Ok(detail);
+            }
+            catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+        }).RequireAuthorization();
+
+        app.MapPost("/advertisements", Publish).RequireAuthorization();
+        app.MapPost("/advertisements/pictures", async (
+            HttpContext http, AppDbContext db, AdvertisementPictureStore pics, IConfiguration config, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            if (!http.Request.HasFormContentType)
+                return Results.BadRequest(new { error = "InvalidPictureFile" });
+            var form = await http.Request.ReadFormAsync(ct);
+            var file = form.Files["file"] ?? form.Files.FirstOrDefault();
+            if (file is null || file.Length == 0)
+                return Results.BadRequest(new { error = "PictureEmpty" });
+            try
+            {
+                await using var stream = file.OpenReadStream();
+                var saved = await pics.SaveAsync(stream, ct);
+                var url = AdvertisementPictureStore.PublicFileUrl(http, config, saved.FileName);
+                return Results.Ok(new { url, fileName = saved.FileName, contentType = saved.ContentType });
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+        }).RequireAuthorization();
+        app.MapPost("/listings", Publish).RequireAuthorization();
+        app.MapGet("/listings", async (HttpContext http, AppDbContext db, AdvertisementService ads, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            return Results.Ok(await ads.ListAsync((CompanyContext)ctxr, ct));
+        }).RequireAuthorization();
+
+        app.MapGet("/advertisements", async (HttpContext http, AppDbContext db, AdvertisementService ads, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            return Results.Ok(await ads.ListAsync((CompanyContext)ctxr, ct));
+        }).RequireAuthorization();
+
+        app.MapGet("/advertisements/{id:guid}", async (Guid id, HttpContext http, AppDbContext db, AdvertisementService ads, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            var mapped = await ads.GetAsync((CompanyContext)ctxr, id, ct);
+            return mapped is null ? Results.NotFound(new { error = "AdvertisementNotFound" }) : Results.Ok(mapped);
+        }).RequireAuthorization();
+
+        app.MapPost("/advertisements/{id:guid}/refresh", async (Guid id, HttpContext http, AppDbContext db, AdvertisementService ads, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            var ctx = (CompanyContext)ctxr;
+            return await WithIdempotency(http, db, ctx.RequireCompany(), async () =>
+            {
+                try { return (200, await ads.RefreshOnlineAsync(ctx, id, ct)); }
+                catch (ArgumentException ex) { return (400, (object)new { error = ex.Message }); }
+                catch (InvalidOperationException ex) { return (400, (object)new { error = ex.Message }); }
+                catch (KeyNotFoundException ex) { return (404, (object)new { error = ex.Message }); }
+            }, ct);
+        }).RequireAuthorization();
+
+        app.MapPost("/advertisements/{id:guid}/channels/{code}/publish", async (Guid id, string code, HttpContext http, AppDbContext db, AdvertisementService ads, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            var ctx = (CompanyContext)ctxr;
+            return await WithIdempotency(http, db, ctx.RequireCompany(), async () =>
+            {
+                try { return (200, await ads.ProceedChannelAsync(ctx, id, code, ct)); }
+                catch (ArgumentException ex) { return (400, (object)new { error = ex.Message }); }
+                catch (InvalidOperationException ex) { return (400, (object)new { error = ex.Message }); }
+                catch (KeyNotFoundException ex) { return (404, (object)new { error = ex.Message }); }
+            }, ct);
+        }).RequireAuthorization();
+
+        app.MapPost("/advertisements/{id:guid}/channels/{code}/cancel", async (Guid id, string code, HttpContext http, AppDbContext db, AdvertisementService ads, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            var ctx = (CompanyContext)ctxr;
+            return await WithIdempotency(http, db, ctx.RequireCompany(), async () =>
+            {
+                try { return (200, await ads.CancelChannelAsync(ctx, id, code, ct)); }
+                catch (ArgumentException ex) { return (400, (object)new { error = ex.Message }); }
+                catch (InvalidOperationException ex) { return (400, (object)new { error = ex.Message }); }
+                catch (KeyNotFoundException ex) { return (404, (object)new { error = ex.Message }); }
+            }, ct);
+        }).RequireAuthorization();
+
+        app.MapGet("/advertisements/{id:guid}/channels/{code}/logs", async (Guid id, string code, HttpContext http, AppDbContext db, AdvertisementService ads, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            try { return Results.Ok(await ads.ListChannelLogsAsync((CompanyContext)ctxr, id, code, ct)); }
+            catch (KeyNotFoundException ex) { return Results.NotFound(new { error = ex.Message }); }
+        }).RequireAuthorization();
+
+        app.MapPost("/advertisements/imports/{code}", async (string code, JsonElement body, HttpContext http, AppDbContext db, ListingImportService imports, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            var ctx = (CompanyContext)ctxr;
+            Guid? vendor = body.ValueKind == JsonValueKind.Object && body.TryGetProperty("vendorUserId", out var v) && Guid.TryParse(v.GetString(), out var id)
+                ? id : null;
+            return await WithIdempotency(http, db, ctx.RequireCompany(), async () =>
+            {
+                try
+                {
+                    var result = await imports.EnqueueAsync(ctx, code, vendor, ct);
+                    return (202, result);
+                }
+                catch (ArgumentException ex) { return (400, (object)new { error = ex.Message }); }
+                catch (InvalidOperationException ex) { return (400, (object)new { error = ex.Message }); }
+            }, ct);
+        }).RequireAuthorization();
+
+        app.MapGet("/advertisements/imports", async (string? marketplace, string? status, Guid? runId, HttpContext http, AppDbContext db, ListingImportService imports, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            return Results.Ok(await imports.ListAsync((CompanyContext)ctxr, marketplace, status, runId, ct));
+        }).RequireAuthorization();
+
+        app.MapGet("/advertisements/import-logs", async (Guid? runId, int? limit, HttpContext http, AppDbContext db, ListingImportService imports, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            return Results.Ok(await imports.ListLogsAsync((CompanyContext)ctxr, runId, limit, ct));
+        }).RequireAuthorization();
+
+        app.MapPost("/advertisements/imports/{id:guid}/link", async (Guid id, JsonElement body, HttpContext http, AppDbContext db, ListingImportService imports, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            var ctx = (CompanyContext)ctxr;
+            var sku = body.TryGetProperty("sku", out var s) ? s.GetString() ?? "" : "";
+            return await WithIdempotency(http, db, ctx.RequireCompany(), async () =>
+            {
+                try { return (200, await imports.LinkAsync(ctx, id, sku, ct)); }
+                catch (ArgumentException ex) { return (400, (object)new { error = ex.Message }); }
+                catch (InvalidOperationException ex) { return (400, (object)new { error = ex.Message }); }
+                catch (KeyNotFoundException ex) { return (404, (object)new { error = ex.Message }); }
+            }, ct);
+        }).RequireAuthorization();
+
+        app.MapPost("/advertisements/imports/{id:guid}/ignore", async (Guid id, HttpContext http, AppDbContext db, ListingImportService imports, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            var ctx = (CompanyContext)ctxr;
+            return await WithIdempotency(http, db, ctx.RequireCompany(), async () =>
+            {
+                try { return (200, await imports.IgnoreAsync(ctx, id, ct)); }
+                catch (InvalidOperationException ex) { return (400, (object)new { error = ex.Message }); }
+                catch (KeyNotFoundException ex) { return (404, (object)new { error = ex.Message }); }
+            }, ct);
+        }).RequireAuthorization();
+
+        app.MapPost("/inventory/{sku}/publish", async (string sku, JsonElement body, HttpContext http, AppDbContext db, AdvertisementService ads, CancellationToken ct) =>
+        {
+            var ctxr = await Need(http, db, ct);
+            if (ctxr is IResult r) return r;
+            var ctx = (CompanyContext)ctxr;
+            using var doc = JsonDocument.Parse(JsonSerializer.Serialize(new
+            {
+                sku,
+                kind = AdvertisementKinds.Product,
+                marketplaceCodes = ReadCodes(body),
+                vendorUserId = ctx.IsVendor ? ctx.UserId : (body.TryGetProperty("vendorUserId", out var v) && Guid.TryParse(v.GetString(), out var id) ? id : ctx.UserId),
+                items = new[] { new { sku, quantity = 1m } }
+            }));
+            try
+            {
+                return Results.Ok(await ads.PublishAsync(ctx.RequireCompany(), ctx.UserId, ctx.IsVendor, doc.RootElement.Clone(), ct));
+            }
+            catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+            catch (KeyNotFoundException) { return Results.NotFound(); }
         }).RequireAuthorization();
 
         app.MapPost("/nfe/chaves/{chave}/ingest", async (string chave, JsonElement body, HttpContext http, AppDbContext db, NfeIngestService nfe, CancellationToken ct) =>
@@ -617,18 +892,21 @@ public static class Endpoints
             return Results.Ok(new { ctx.Level, companies, users, lowStock, salesByStatus = byStatus });
         }).RequireAuthorization();
 
-        static async Task<IResult> Publish(JsonElement body, HttpContext http, AppDbContext db, ProductService products, CancellationToken ct)
+        static async Task<IResult> Publish(JsonElement body, HttpContext http, AppDbContext db, AdvertisementService ads, CancellationToken ct)
         {
             var ctxr = await Need(http, db, ct);
             if (ctxr is IResult r) return r;
             var ctx = (CompanyContext)ctxr;
-            var sku = body.GetProperty("sku").GetString() ?? "";
-            var codes = ReadCodes(body);
-            var vendorId = ctx.IsVendor ? ctx.UserId : (body.TryGetProperty("vendorUserId", out var v) && Guid.TryParse(v.GetString(), out var id) ? id : ctx.UserId);
             return await WithIdempotency(http, db, ctx.RequireCompany(), async () =>
             {
-                var created = await products.PublishAsync(ctx.RequireCompany(), vendorId, sku, codes, ct);
-                return (201, created);
+                try
+                {
+                    var created = await ads.PublishAsync(ctx.RequireCompany(), ctx.UserId, ctx.IsVendor, body, ct);
+                    return (201, created);
+                }
+                catch (ArgumentException ex) { return (400, (object)new { error = ex.Message }); }
+                catch (InvalidOperationException ex) { return (400, (object)new { error = ex.Message }); }
+                catch (KeyNotFoundException ex) { return (404, (object)new { error = ex.Message }); }
             }, ct);
         }
     }
@@ -709,6 +987,14 @@ public static class Endpoints
         try { await db.SaveChangesAsync(ct); }
         catch (DbUpdateException) { /* raced */ }
         return Results.Json(payload, statusCode: st);
+    }
+
+    static string MarketplaceOAuthRedirect(string marketplaceCode, string oauth, string? error)
+    {
+        var url = $"/web/#/marketplaces?connected={Uri.EscapeDataString(marketplaceCode)}&oauth={Uri.EscapeDataString(oauth)}";
+        if (string.IsNullOrWhiteSpace(error)) return url;
+        var clipped = error.Length > 180 ? error[..180] : error;
+        return url + "&error=" + Uri.EscapeDataString(clipped);
     }
 
     public sealed record LoginBody(string? Email, string? Password);

@@ -175,11 +175,105 @@ public class Listing
     public Guid Id { get; set; }
     public Guid CompanyId { get; set; }
     public Guid VendorUserId { get; set; }
+    public Guid? AdvertisementId { get; set; }
     public string Sku { get; set; } = "";
     public string MarketplaceCode { get; set; } = "";
-    public string Status { get; set; } = "Pending";
+    public string Status { get; set; } = "Draft";
     public string? RemoteId { get; set; }
+    public string? RemoteTitle { get; set; }
+    public decimal? RemotePrice { get; set; }
+    public decimal? RemoteQuantity { get; set; }
+    public string? RemoteStatus { get; set; }
+    public string? RemotePermalink { get; set; }
+    public DateTimeOffset? LastSyncedAt { get; set; }
+    public string? LastSyncJson { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public class ListingPublishLog
+{
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
+    public Guid RunId { get; set; }
+    public Guid AdvertisementId { get; set; }
+    public Guid ListingId { get; set; }
+    public string MarketplaceCode { get; set; } = "";
+    public string Action { get; set; } = "publish";
+    public string StepCode { get; set; } = "";
+    public string Level { get; set; } = "info";
+    public string UserMessage { get; set; } = "";
+    public string TechnicalJson { get; set; } = "{}";
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public class MarketplaceConnectLog
+{
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
+    public Guid RunId { get; set; }
+    public string MarketplaceCode { get; set; } = "";
+    public string Action { get; set; } = "connect";
+    public string StepCode { get; set; } = "";
+    public string Level { get; set; } = "info";
+    public string UserMessage { get; set; } = "";
+    public string TechnicalJson { get; set; } = "{}";
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public class Advertisement
+{
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
+    public Guid VendorUserId { get; set; }
+    public string Kind { get; set; } = "Product";
+    public string Sku { get; set; } = "";
+    public string Title { get; set; } = "";
+    /// <summary>Mercado Livre User Products requires family_name on POST /items.</summary>
+    public string FamilyName { get; set; } = "";
+    public string? Description { get; set; }
+    public decimal Price { get; set; }
+    public string Currency { get; set; } = "BRL";
+    public decimal AvailableQuantity { get; set; } = 1;
+    public string Condition { get; set; } = "new";
+    public string? Brand { get; set; }
+    public string? Gtin { get; set; }
+    public decimal? WeightGrams { get; set; }
+    public decimal? HeightCm { get; set; }
+    public decimal? WidthCm { get; set; }
+    public decimal? LengthCm { get; set; }
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public List<AdvertisementItem> Items { get; set; } = [];
+    public List<AdvertisementAttribute> Attributes { get; set; } = [];
+}
+
+public class AdvertisementItem
+{
+    public Guid Id { get; set; }
+    public Guid AdvertisementId { get; set; }
+    public string Sku { get; set; } = "";
+    public decimal Quantity { get; set; } = 1;
+    public int SortOrder { get; set; }
+}
+
+public class AdvertisementAttribute
+{
+    public Guid Id { get; set; }
+    public Guid AdvertisementId { get; set; }
+    public string MarketplaceCode { get; set; } = "";
+    public string FieldName { get; set; } = "";
+    public string FieldValue { get; set; } = "";
+}
+
+public class MarketplaceListingFieldDefinition
+{
+    public Guid Id { get; set; }
+    public string MarketplaceCode { get; set; } = "";
+    public string FieldKey { get; set; } = "";
+    public string Label { get; set; } = "";
+    public string ValueKind { get; set; } = "string";
+    public bool IsCommon { get; set; }
+    public bool Required { get; set; }
+    public int SortOrder { get; set; }
 }
 
 public class Sale
@@ -263,6 +357,50 @@ public class ShipmentLabel
     public Guid SaleId { get; set; }
     public string Format { get; set; } = "Mm100x150";
     public byte[] Pdf { get; set; } = [];
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public class MarketplaceRemoteAd
+{
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
+    public Guid VendorUserId { get; set; }
+    public Guid RunId { get; set; }
+    public string MarketplaceCode { get; set; } = "";
+    public string RemoteId { get; set; } = "";
+    public string Title { get; set; } = "";
+    public decimal? Price { get; set; }
+    public decimal? Quantity { get; set; }
+    public string? RemoteStatus { get; set; }
+    public string? Permalink { get; set; }
+    public string? Thumbnail { get; set; }
+    public string? SellerCustomField { get; set; }
+    public string? Gtin { get; set; }
+    public string? CategoryId { get; set; }
+    public string? ListingTypeId { get; set; }
+    public string PicturesJson { get; set; } = "[]";
+    public string? BuyingMode { get; set; }
+    public string? ShippingMode { get; set; }
+    public string SnapshotJson { get; set; } = "{}";
+    public string MatchStatus { get; set; } = "Unmatched";
+    public string? SuggestedSku { get; set; }
+    public string? SuggestedReason { get; set; }
+    public Guid? AdvertisementId { get; set; }
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public class ListingImportLog
+{
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
+    public Guid RunId { get; set; }
+    public string MarketplaceCode { get; set; } = "";
+    public string? RemoteId { get; set; }
+    public string StepCode { get; set; } = "";
+    public string Level { get; set; } = "info";
+    public string UserMessage { get; set; } = "";
+    public string TechnicalJson { get; set; } = "{}";
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 

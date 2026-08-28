@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.EntityFrameworkCore;
 using Vilmo.Api;
 using Vilmo.Data;
@@ -5,6 +6,11 @@ using Vilmo.Hosting;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddVilmo(builder.Configuration);
+builder.Services.Configure<FormOptions>(o =>
+{
+    o.MultipartBodyLengthLimit = 10 * 1024 * 1024;
+    o.ValueLengthLimit = 10 * 1024 * 1024;
+});
 builder.Services.AddCors(o => o.AddDefaultPolicy(p => p.AllowAnyHeader().AllowAnyMethod().AllowAnyOrigin()));
 
 var app = builder.Build();

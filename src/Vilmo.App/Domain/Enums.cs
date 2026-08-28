@@ -73,6 +73,52 @@ public static class WorkKinds
     public const string StockPublish = "stock.publish.requested";
     public const string UploadInvoice = "marketplace.upload_invoice";
     public const string PublishListing = "listing.publish.requested";
+    public const string ListingRefresh = "listing.refresh.requested";
+    public const string ListingCancel = "listing.cancel.requested";
+    public const string ListingImport = "listing.import.requested";
+}
+
+public static class ListingStatuses
+{
+    public const string Draft = "Draft";
+    public const string Queued = "Queued";
+    public const string Published = "Published";
+    public const string Cancelled = "Cancelled";
+    public const string Error = "Error";
+
+    public static readonly IReadOnlyDictionary<string, string> Pt = new Dictionary<string, string>
+    {
+        [Draft] = "Rascunho",
+        [Queued] = "Na fila",
+        [Published] = "Publicado",
+        ["PublishedDemo"] = "Publicado",
+        [Cancelled] = "Cancelado",
+        [Error] = "Erro"
+    };
+}
+
+public static class AdvertisementKinds
+{
+    public const string Product = "Product";
+    public const string Kit = "Kit";
+}
+
+public static class RemoteAdMatchStatuses
+{
+    public const string AlreadyLinked = "AlreadyLinked";
+    public const string Suggested = "Suggested";
+    public const string Unmatched = "Unmatched";
+    public const string Linked = "Linked";
+    public const string Ignored = "Ignored";
+
+    public static readonly IReadOnlyDictionary<string, string> Pt = new Dictionary<string, string>
+    {
+        [AlreadyLinked] = "Já vinculado",
+        [Suggested] = "SKU sugerido",
+        [Unmatched] = "Pendente de vínculo",
+        [Linked] = "Vinculado",
+        [Ignored] = "Ignorado"
+    };
 }
 
 public static class NfeDocumentKinds
