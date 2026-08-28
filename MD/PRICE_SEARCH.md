@@ -184,6 +184,18 @@ Fields:
 
 **Adicionar site** creates a new `code` at runtime (same idea as `POST /marketplaces`). Worker uses `HtmlRecipe` unless `fetchMode` is OfficialApi and a compiled adapter exists for that code.
 
+Seed `scrape_site_parameter` (editable later in Configurações):
+
+| site | key | value | is_secret |
+|------|-----|-------|-----------|
+| Mercado Livre | `maxPages` | `5` | false |
+| Mercado Livre | `limit` | `50` | false |
+| Shopee | `maxPages` | `5` | false |
+| Magalu | `maxPages` | `5` | false |
+| SHEIN | `maxPages` | `5` | false |
+| Joom | `maxPages` | `5` | false |
+| Martins | `maxPages` | `5` | false |
+
 ---
 
 ## 5. Domain
