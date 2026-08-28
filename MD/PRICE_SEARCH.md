@@ -123,7 +123,25 @@ Rows = clustered offers for this `runId` (and optionally previous runs of the sa
 | Carregador USB-C 20W | R$ 29,90 [abrir] | R$ 32,00 | — | R$ 27,50 | — | R$ 24,90 |
 | … | | | | | | |
 
-Each cell: **price**, optional seller, link, observed-at. Sort by **lowest price across sites**. Filters: site, min/max BRL, only in-stock if the snapshot has it.
+Each cell: **price** (clickable), optional seller, **open-in-new-window link**, observed-at.
+
+**Order (Asc / Desc)** — clickable column headers, not a fixed sort.
+
+| Column | Sorts by |
+| --- | --- |
+| Produto | Grouped title A–Z / Z–A |
+| Preço (mín. entre sites) | Lowest (or highest) price among ticked sites in that row |
+| Each site column | That site’s price (`—` last) |
+| Atualizado | `observedAt` |
+
+Default: **Preço mín. Asc** (cheapest first). One active column at a time; second click toggles Asc ↔ Desc. Arrow on the header (▲ / ▼).
+
+- **Local:** `GET /price-offers?sort=minPrice|title|observedAt|price.{siteCode}&dir=asc|desc` (server-side; needed when there are more rows than the page).
+- **On-line (current run):** same params on `GET /price-searches/{runId}`; v1 may sort in the browser if the run is ≤ 400 rows.
+
+**Open in a new window:** every offer `url` / permalink is `<a href="…" target="_blank" rel="noopener noreferrer">`. Label: price text plus **Abrir**. Missing URL → price as plain text, no link. Do **not** embed the marketplace in an iframe.
+
+Filters (unchanged): site, min/max BRL, only in-stock if the snapshot has it.
 
 v1 clustering: normalize title (lowercase, strip accents, collapse whitespace) + optional EAN/GTIN when the page/API exposes it. v2: fuzzy / embedding — out of this plan.
 
@@ -276,9 +294,9 @@ HTTP handler: **no** outbound fetch. Idempotency-Key on POST (Online only). Dedu
 | Method | Path | Result |
 | --- | --- | --- |
 | `POST` | `/price-searches` | 202 `{ runId, query, sites[] }` body `{ query, siteCodes[], scope: "Online" }`. `scope: "Local"` on POST is **400** — use GET. |
-| `GET` | `/price-offers` | 200 `{ items, counts }` query `q`, `sites`, `from`, `to`, `latestOnly=true`. Local table search. |
+| `GET` | `/price-offers` | 200 `{ items, counts }` query `q`, `sites`, `from`, `to`, `latestOnly=true`, `sort`, `dir` (`asc`\|`desc`). Local table search. |
 | `GET` | `/price-searches` | Previous **On-line** runs (datetime, query, offer counts) |
-| `GET` | `/price-searches/{runId}` | Run + per-site status + offers (filter `site`) |
+| `GET` | `/price-searches/{runId}` | Run + per-site status + offers (filter `site`, `sort`, `dir`) |
 | `GET` | `/price-search-logs?runId=` | Progress log (Online only) |
 | `GET` | `/scrape-sites` | Enabled sites + whether recipe is complete |
 | `PUT` | `/scrape-sites/{code}` | Company enable + parameters (Configurações) |
@@ -343,6 +361,8 @@ Success for phase 2:
 ### Decided (in this plan)
 
 - Dual search flag: **On-line** (workers + persist) vs **Já encontrados** (Postgres only).
+- Comparison table: **Asc/Desc** on title, min price, per-site price, `observedAt`. Default cheapest first.
+- Offer permalinks open in a **new tab** (`target="_blank"` + `noopener`).
 - Unified `PriceOffer`, helpers, Configurações recipes, parallel site jobs.
 - Official API before HTML; browser last.
 - Vendor cannot see Scrap.
@@ -363,6 +383,7 @@ Success for phase 2:
 | **Configurações UX** | “Sites de busca” is not on the Configurações screen (only PFX). |
 | **Rate limits / identity** | User-Agent, per-site delay, circuit breaker: specified, not built. |
 | **History UX** | Two-run diff is phase 6; Local `from`/`to` is specified but easy to underspecify in the first UI. |
+| **Sort vs grouping** | Asc/Desc is specified; grouped rows still use one “min price”. Sorting a site column when many cells are `—` is defined (empties last) but untested. |
 
 ### Gaps that are acceptable to defer
 
