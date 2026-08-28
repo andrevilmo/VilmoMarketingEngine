@@ -13,10 +13,13 @@ Portuguese labels in the product. API codes in English.
 Admin and Company users can:
 
 1. Open a **Scrap** screen, type a search string (ex.: `carregador usb c`), and **select one or more sites**.
-2. Run the search. Each selected site is fetched **in parallel** (async workers). The screen shows per-site progress as results arrive — same pattern as NF-e ingest and Anúncios import logs.
-3. Persist **every offer found** with **search datetime**, site, title, price, URL, seller, thumbnail, and raw snapshot.
-4. Show a **comparison table** (types and prices across sites) and keep history so the same query can be compared over time.
-5. Add / edit scrape sites in **Configurações** (URL template, parse recipe, secrets, rate limits) **without a redeploy**.
+2. Choose **where** to search with a flag:
+   - **On-line** — fetch live pages/APIs now (parallel workers), then **save** what was found.
+   - **Já encontrados** — search **only** the table of offers already saved (no outbound HTTP). Instant.
+3. On-line: each selected site is fetched **in parallel**. The screen shows per-site progress as results arrive — same pattern as NF-e ingest and Anúncios import logs.
+4. Persist **every offer found** with **search datetime**, site, title, price, URL, seller, thumbnail, and raw snapshot.
+5. Show a **comparison table** (types and prices across sites) and keep history so the same query can be compared over time.
+6. Add / edit scrape sites in **Configurações** (URL template, parse recipe, secrets, rate limits) **without a redeploy**.
 
 This is **market research** (what the market is charging). It is **not** Anúncios import (seller’s own listings), not stock, and not POST `/items`.
 
@@ -28,10 +31,12 @@ The marketplace rule stays: **the browser never talks to Magalu/Shopee/ML HTML**
 
 ```text
 Scrap UI (vilmo-web)
-  → POST /price-searches  { query, siteCodes[] }   → 202 { runId }
-  → poll GET /price-searches/{runId} + /price-search-logs
+  → flag scope = Online | Local
+  → Online: POST /price-searches  { query, siteCodes[], scope: "Online" }  → 202 { runId }
+       poll GET /price-searches/{runId} + /price-search-logs
+  → Local:  GET  /price-offers?q=&sites=&from=&to=   → 200 { items, counts }  (Postgres only)
   → unified OfferDTO
-vilmo-api: ACK fast, enqueue work, no HTTP to the target sites
+vilmo-api: ACK fast; **never** HTTP to the target sites (including Local)
 vilmo-worker: one job per (runId, siteCode), in parallel
   → IPriceSearchAdapter.SearchAsync(ctx)
        Official API adapter  (preferred: ML, later Shopee/Magalu/SHEIN Open)
@@ -79,10 +84,13 @@ Route: `#/scrap`. Config sites: `#/config` section or `#/config/scrap-sites`.
 ```
 ┌ Scrap ─────────────────────────────────────────────────────────┐
 │ Busca  [ carregador usb c          ]                           │
+│ Onde   (•) On-line — buscar agora nos sites e gravar           │
+│        ( ) Já encontrados — só a tabela salva                  │
 │ Sites  [x] Mercado Livre  [x] Shopee  [ ] Magalu               │
 │        [x] SHEIN  [ ] Joom  [ ] Martins                        │
 │ [ Pesquisar ]                                                  │
 │                                                                │
+│ ── se On-line ──────────────────────────────────────────────── │
 │ Mercado Livre  ████████░░  24 ofertas · 13:40:02               │
 │ Shopee         ██████░░░░  consultando…                        │
 │ SHEIN          ░░░░░░░░░░  na fila                             │
@@ -91,9 +99,20 @@ Route: `#/scrap`. Config sites: `#/config` section or `#/config/scrap-sites`.
 └────────────────────────────────────────────────────────────────┘
 ```
 
-- Selecting a site that is disabled or missing recipe → checkbox disabled + hint (“Cadastre em Configurações”).
-- **Pesquisar** → `202` immediately; progress rows update as each site job finishes (poll 2s, same as import logs).
+**Flag `scope` (UI copy: “Onde”)**
+
+| Value | API | Worker | Writes snapshots | Progress bars |
+| --- | --- | --- | --- | --- |
+| `Online` | `POST /price-searches` → 202 | Yes, one job per site | Yes | Yes |
+| `Local` | `GET /price-offers?...` → 200 | No | No | No — table fills immediately |
+
+- Default: **Já encontrados** when opening Scrap (cheap, no rate limits). User switches to **On-line** when they want fresh prices.
+- Site checkboxes apply to **both** modes (Local filters `site_code IN (...)`).
+- Selecting a site that is disabled or missing recipe → checkbox disabled + hint (“Cadastre em Configurações”). On Local, a site with **no saved rows** is still selectable; the column shows “—”.
+- **On-line Pesquisar** → `202` immediately; progress rows update as each site job finishes (poll 2s, same as import logs).
 - Failed site (401, 403, timeout, robots deny, empty parse) → red bar + technical JSON; other sites keep running.
+- **Já encontrados Pesquisar** → no queue. Empty result: “Nenhuma oferta salva para esta busca. Marque On-line para pesquisar nos sites.”
+- Local extras (filters on the table, not a second search): date **de / até** (`observedAt`), **último preço por anúncio** (default on) vs **histórico**.
 
 ### 4.3 Comparison table
 
@@ -154,14 +173,23 @@ UI and comparison tables only read this DTO. Adapters never leak into `vilmo-web
 | --- | --- |
 | `scrape_site` | Catalog of sites (platform + per-company enable) |
 | `scrape_site_parameter` | Recipe + secrets (`is_secret`) |
-| `price_search_run` | `id`, `company_id`, `query`, `query_normalized`, `started_at`, `created_by` |
+| `price_search_run` | `id`, `company_id`, `query`, `query_normalized`, `scope` (`Online` / `Local` — Local runs are optional audit rows, default **no insert**), `started_at`, `created_by` |
 | `price_search_run_site` | `run_id`, `site_code`, `status` (Queued/Running/Done/Failed), `http_status`, `offer_count`, `error` |
 | `price_offer_snapshot` | One row per offer observed: `run_id`, `site_code`, `remote_id`, fields above, unique `(run_id, site_code, remote_id)` |
 | `price_search_log` | Progress steps (received, queued, scanning, parsed, done, failed) — same UX as `listing_import_log` |
 
-History: new run = new snapshots. Comparing “today vs last week” is two `run_id`s with the same `query_normalized`.
+History: each **On-line** run inserts new snapshots (append-only). Local never inserts. Comparing “today vs last week” is two On-line `run_id`s with the same `query_normalized`, or Local with `from`/`to` on `observed_at`.
 
-Do **not** write `InventoryBalance` or `Listing`.
+**Local query (v1):** company-scoped `price_offer_snapshot` where:
+
+- selected `site_code`s, and
+- `query_normalized` of the run that created the row matches the typed query, **or** title/EAN `ILIKE` the query tokens.
+
+Indexes: `(company_id, site_code, observed_at)`, `(company_id, query via run)`, GIN/trigram on `title` when we add `pg_trgm` (v1 can be `ILIKE` + limit 400).
+
+Default cell for comparison: **latest** `observed_at` per `(site_code, remote_id)` so the table is not one row per scrape.
+
+Do **not** write `InventoryBalance` or `Listing`. Local search does **not** read `product` / `advertisement` unless we later add an explicit “incluir meu catálogo” flag (out of v1).
 
 ### 5.3 Work
 
@@ -213,25 +241,33 @@ sequenceDiagram
   participant W as vilmo-worker
   participant Site as Site or official API
 
-  User->>Web: Pesquisar (query + sites)
-  Web->>Api: POST /price-searches
-  Api->>Db: price_search_run + run_site Queued
-  Api->>Db: work_item x N sites
-  Api-->>Web: 202 runId
-  loop each site in parallel
-    W->>Db: claim work_item
-    W->>Db: log scanning
-    W->>Site: search (API or recipe)
-    Site-->>W: list
-    W->>Db: price_offer_snapshot + run_site Done
-    W->>Db: log done
+  alt scope Local
+    User->>Web: Pesquisar (Já encontrados)
+    Web->>Api: GET /price-offers?q&sites&from&to
+    Api->>Db: snapshots only
+    Api-->>Web: 200 items
+    Web-->>User: comparison table (immediate)
+  else scope Online
+    User->>Web: Pesquisar (On-line)
+    Web->>Api: POST /price-searches
+    Api->>Db: price_search_run + run_site Queued
+    Api->>Db: work_item x N sites
+    Api-->>Web: 202 runId
+    loop each site in parallel
+      W->>Db: claim work_item
+      W->>Db: log scanning
+      W->>Site: search (API or recipe)
+      Site-->>W: list
+      W->>Db: price_offer_snapshot + run_site Done
+      W->>Db: log done
+    end
+    Web->>Api: GET /price-searches/runId (poll)
+    Api-->>Web: progress + offers
+    Web-->>User: table fills as sites finish
   end
-  Web->>Api: GET /price-searches/runId (poll)
-  Api-->>Web: progress + offers
-  Web-->>User: table fills as sites finish
 ```
 
-HTTP handler: **no** outbound fetch. Idempotency-Key on POST. Dedupe snapshots by `(run_id, site_code, remote_id)`.
+HTTP handler: **no** outbound fetch. Idempotency-Key on POST (Online only). Dedupe snapshots by `(run_id, site_code, remote_id)`. Local GET is read-only and not idempotent.
 
 ---
 
@@ -239,10 +275,11 @@ HTTP handler: **no** outbound fetch. Idempotency-Key on POST. Dedupe snapshots b
 
 | Method | Path | Result |
 | --- | --- | --- |
-| `POST` | `/price-searches` | 202 `{ runId, query, sites[] }` body `{ query, siteCodes[] }` |
-| `GET` | `/price-searches` | Previous runs (datetime, query, offer counts) |
+| `POST` | `/price-searches` | 202 `{ runId, query, sites[] }` body `{ query, siteCodes[], scope: "Online" }`. `scope: "Local"` on POST is **400** — use GET. |
+| `GET` | `/price-offers` | 200 `{ items, counts }` query `q`, `sites`, `from`, `to`, `latestOnly=true`. Local table search. |
+| `GET` | `/price-searches` | Previous **On-line** runs (datetime, query, offer counts) |
 | `GET` | `/price-searches/{runId}` | Run + per-site status + offers (filter `site`) |
-| `GET` | `/price-search-logs?runId=` | Progress log |
+| `GET` | `/price-search-logs?runId=` | Progress log (Online only) |
 | `GET` | `/scrape-sites` | Enabled sites + whether recipe is complete |
 | `PUT` | `/scrape-sites/{code}` | Company enable + parameters (Configurações) |
 | `POST` | `/scrape-sites` | Admin: register a new `code` |
@@ -264,14 +301,17 @@ Company-scoped. Vendor → 404. Demo tokens must not hit real sites (same rule a
 
 ## 10. Phased delivery (when implementation is requested)
 
-1. **Tables + work kind + Scrap UI shell** — query, site checkboxes, progress, empty table. Configurações list with seed rows (templates only).
-2. **Mercado Livre OfficialApi adapter** — prove parallel UX with one real site; comparison table with one column filled.
+1. **Tables + Scrap UI shell + scope flag** — query, **On-line / Já encontrados**, site checkboxes, Local GET against empty table, Configurações list with seed rows (templates only).
+2. **Mercado Livre OfficialApi adapter** — On-line fills snapshots; Local then finds the same query without calling ML again.
 3. **HtmlRecipe helper + Joom (and Martins if robots allow)** — Configurações recipes editable.
 4. **Shopee / Magalu / SHEIN** — Official APIs when company credentials exist; otherwise keep disabled with a hint.
 5. **Browser helper** — only if a flagged site cannot be read as API or static HTML.
-6. **History compare** — pick two runs of the same query, diff prices.
+6. **History compare** — Local `from`/`to`, or pick two On-line runs of the same query, diff prices.
 
-Success for phase 2: search `carregador usb` on Scrap with Mercado Livre checked → offers with price + permalink in the table, `observedAt` set, stock **unchanged**.
+Success for phase 2:
+
+- On-line `carregador usb` + Mercado Livre → offers with price + permalink, `observedAt` set, stock **unchanged**.
+- Já encontrados with the same string → same rows from Postgres, **zero** outbound ML HTTP.
 
 ---
 
@@ -281,7 +321,8 @@ Success for phase 2: search `carregador usb` on Scrap with Mercado Livre checked
 - Publishing or pausing ads from Scrap.
 - Scraping from the user’s browser, browser extensions, or storing Magalu login in frontend JS.
 - A new microservice per site.
-- Fuzzy ML clustering, alerts, or scheduled recurring searches (natural follow-ups after v1).
+- Fuzzy ML clustering, alerts, or scheduled recurring On-line searches (natural follow-ups after v1).
+- Searching Vilmo `product` / `advertisement` in Local mode (ERP catalog is not “found on the web”).
 
 ---
 
@@ -290,3 +331,47 @@ Success for phase 2: search `carregador usb` on Scrap with Mercado Livre checked
 - Exact CSS/JSON paths for Joom and Martins (capture one sample response in a lab, not in git with PII).
 - Whether Magalu/Shopee/SHEIN wait for Open API apps vs a time-limited Browser experiment.
 - Whether `scrape_site` is platform-global (admin defines recipes) + company enablement (like `marketplace` + `company_marketplace_config`) — **recommended**, so recipes are not copied per tenant.
+- Local match: only snapshots from runs with the same `query_normalized`, vs full-text on all titles (broader, noisier).
+- Local default date window (all time vs last 30 days).
+
+---
+
+## 13. Status and gaps (plan only — nothing is built)
+
+**How it is going:** architecture is decided and written. **No Scrap screen, APIs, tables, or adapters exist in the running app.** Configurações today is only A1 certificate. Live Mercado Livre OAuth on vilmomkt.com is **expired** (listing import already shows reconnect) — On-line ML would fail until that token is renewed.
+
+### Decided (in this plan)
+
+- Dual search flag: **On-line** (workers + persist) vs **Já encontrados** (Postgres only).
+- Unified `PriceOffer`, helpers, Configurações recipes, parallel site jobs.
+- Official API before HTML; browser last.
+- Vendor cannot see Scrap.
+- Stock / ads are not written.
+
+### Gaps that block a useful v1
+
+| Gap | Why it matters |
+| --- | --- |
+| **Not implemented** | Plan file only. No `#/scrap`, no `price_offer_snapshot`. |
+| **Empty Local table until first On-line** | Já encontrados is useless until at least one successful live fetch. |
+| **ML token expired on prod** | First On-line site (ML) cannot run until Marketplaces is reconnected. |
+| **No recipes captured** | Joom / Martins CSS or JSON paths unknown. Magalu / Shopee / SHEIN storefronts are JS/Cloudflare-heavy; Open API apps not wired for *search*. |
+| **Cross-site matching** | Comparison table depends on title normalize / EAN. Different wording (“carregador usb-c” vs “fonte 20W”) will not group. Fuzzy matching is out of v1. |
+| **Local relevance** | `ILIKE` will miss accents/typos and may return too much. No `pg_trgm` / FTS yet. |
+| **Auth for B2B / Magalu** | Martins and possibly Magalu need a logged-in session. Secrets belong in Configurações; nothing is stored today. |
+| **ToS / robots / 403** | HTML mode may be blocked; we have no lab samples of success vs block pages. |
+| **Configurações UX** | “Sites de busca” is not on the Configurações screen (only PFX). |
+| **Rate limits / identity** | User-Agent, per-site delay, circuit breaker: specified, not built. |
+| **History UX** | Two-run diff is phase 6; Local `from`/`to` is specified but easy to underspecify in the first UI. |
+
+### Gaps that are acceptable to defer
+
+- Playwright browser helper.
+- Scheduled On-line refresh.
+- Price alerts / “sugerir preço de venda”.
+- Include Vilmo catalog SKUs in the same table.
+- Shopee / Magalu / SHEIN if we ship ML + Local + one HtmlRecipe site first.
+
+### What “done” is *not*
+
+Live import of **your** ML ads (Anúncios) is a different feature and does not populate Scrap snapshots. A user who only imported ads still has an **empty** Já encontrados table until they run Scrap On-line.
