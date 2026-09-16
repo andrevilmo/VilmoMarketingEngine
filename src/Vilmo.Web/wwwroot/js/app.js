@@ -10,6 +10,7 @@ const Vilmo = (() => {
   };
   let ingestLogTimer = null;
   let cartImportTimer = null;
+  let cartSlideState = null;
 
   function uuid() { return crypto.randomUUID(); }
 
@@ -278,9 +279,109 @@ const Vilmo = (() => {
     } catch { /* keep hidden */ }
   }
 
+  async function authImageBlob(href) {
+    const res = await fetch(API + href, { headers: { Authorization: `Bearer ${store.token}`, "X-Company-Id": store.companyId } });
+    if (!res.ok) throw new Error("image");
+    return URL.createObjectURL(await res.blob());
+  }
+
+  function closeCartSlides() {
+    const el = document.getElementById("cart-slides-modal");
+    if (el) el.remove();
+    document.body.classList.remove("cart-slides-open");
+    if (!cartSlideState) return;
+    window.removeEventListener("keydown", cartSlideState.onKey);
+    (cartSlideState.urls || []).forEach(u => { try { URL.revokeObjectURL(u); } catch { /* ignore */ } });
+    cartSlideState = null;
+  }
+
+  async function showCartSlide() {
+    if (!cartSlideState) return;
+    const state = cartSlideState;
+    const { hrefs, index, img, counter } = state;
+    counter.textContent = `${index + 1} / ${hrefs.length}`;
+    img.alt = `Imagem ${index + 1} de ${hrefs.length}`;
+    img.classList.add("is-loading");
+    if (!state.urls[index]) {
+      try { state.urls[index] = await authImageBlob(hrefs[index]); }
+      catch { if (cartSlideState === state) img.classList.remove("is-loading"); return; }
+    }
+    if (cartSlideState !== state || cartSlideState.index !== index) return;
+    img.src = state.urls[index];
+    img.classList.remove("is-loading");
+  }
+
+  function stepCartSlide(delta) {
+    if (!cartSlideState || cartSlideState.hrefs.length < 2) return;
+    const n = cartSlideState.hrefs.length;
+    cartSlideState.index = (cartSlideState.index + delta + n) % n;
+    showCartSlide();
+  }
+
+  function openCartSlides(hrefs, title) {
+    closeCartSlides();
+    if (!hrefs.length) return;
+    const modal = document.createElement("div");
+    modal.id = "cart-slides-modal";
+    modal.className = "cart-slides-modal";
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    modal.setAttribute("aria-label", title || "Imagens");
+    modal.innerHTML = `
+      <div class="cart-slides-backdrop" data-close="1"></div>
+      <div class="cart-slides-box">
+        <div class="cart-slides-head">
+          <h3>${esc(title || "Imagens")}</h3>
+          <button type="button" class="kt-btn kt-btn-ghost kt-btn-icon cart-slides-close" aria-label="Fechar">✕</button>
+        </div>
+        <div class="cart-slides-stage">
+          <button type="button" class="cart-slides-nav prev" aria-label="Anterior">‹</button>
+          <img alt="">
+          <button type="button" class="cart-slides-nav next" aria-label="Próxima">›</button>
+        </div>
+        <div class="cart-slides-foot"><span class="cart-slides-counter"></span></div>
+      </div>`;
+    document.body.appendChild(modal);
+    document.body.classList.add("cart-slides-open");
+    const onKey = (e) => {
+      if (e.key === "Escape") closeCartSlides();
+      else if (e.key === "ArrowLeft") stepCartSlide(-1);
+      else if (e.key === "ArrowRight") stepCartSlide(1);
+    };
+    cartSlideState = {
+      hrefs,
+      index: 0,
+      urls: [],
+      img: modal.querySelector(".cart-slides-stage img"),
+      counter: modal.querySelector(".cart-slides-counter"),
+      onKey
+    };
+    window.addEventListener("keydown", onKey);
+    modal.querySelector("[data-close]").onclick = closeCartSlides;
+    modal.querySelector(".cart-slides-close").onclick = closeCartSlides;
+    modal.querySelector(".cart-slides-nav.prev").onclick = () => stepCartSlide(-1);
+    modal.querySelector(".cart-slides-nav.next").onclick = () => stepCartSlide(1);
+    const single = hrefs.length < 2;
+    modal.querySelector(".cart-slides-nav.prev").disabled = single;
+    modal.querySelector(".cart-slides-nav.next").disabled = single;
+    showCartSlide();
+  }
+
+  function bindCartImageSlides() {
+    document.querySelectorAll(".cart-view-images").forEach(btn => {
+      btn.onclick = () => {
+        let hrefs = [];
+        try { hrefs = JSON.parse(decodeURIComponent(btn.dataset.slides || "[]")); } catch { hrefs = []; }
+        if (!Array.isArray(hrefs) || !hrefs.length) return;
+        openCartSlides(hrefs, btn.dataset.title || "Imagens");
+      };
+    });
+  }
+
   async function renderRoute() {
     stopIngestLogPoll();
     stopCartImportPoll();
+    closeCartSlides();
     const view = document.getElementById("view");
     const route = (location.hash.replace("#/", "").split("?")[0] || "dashboard");
     document.querySelectorAll(".menu-link").forEach(a => a.classList.toggle("active", a.dataset.route === route.split("/")[0]));
@@ -440,15 +541,22 @@ const Vilmo = (() => {
       <td>${p.linkedCartProductId ? "carrinho" : "—"}</td>
       <td><button class="kt-btn kt-btn-sm kt-btn-primary pub" data-sku="${esc(p.sku)}">Publicar</button></td></tr>`);
     const cartRows = cart.map(p => {
-      const thumb = (p.images || []).find(i => i.status === "Saved");
-      const img = thumb ? `<img class="cart-thumb" alt="" data-img="${esc(thumb.href)}">` : "—";
+      const saved = (p.images || []).filter(i => i.status === "Saved").sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+      const slides = encodeURIComponent(JSON.stringify(saved.map(i => i.href)));
+      const thumb = saved[0];
+      const img = thumb
+        ? `<button type="button" class="cart-thumb-btn cart-view-images" data-slides="${slides}" data-title="${esc(p.name)}" aria-label="Ver imagens"><img class="cart-thumb" alt="" data-img="${esc(thumb.href)}"></button>`
+        : "—";
+      const viewBtn = saved.length
+        ? `<button type="button" class="kt-btn kt-btn-sm kt-btn-outline cart-view-images" data-slides="${slides}" data-title="${esc(p.name)}">Ver imagens</button>`
+        : "";
       return `<tr>
         <td>${img}</td>
         <td>${esc(p.sku)}</td>
         <td>${esc(p.name)}</td>
         <td>${p.quantity}</td>
         <td>${p.unitPrice}</td>
-        <td>${p.imageCount || 0}</td>
+        <td><div class="cart-images-cell">${p.imageCount || 0}${viewBtn}</div></td>
         <td>${p.linkedProductId ? "vinculado" : "—"}</td>
         <td>
           <form class="cart-link-form flex gap-2 items-end flex-wrap" data-id="${p.id}">
@@ -684,11 +792,10 @@ const Vilmo = (() => {
       await api(`/cart-products/${form.dataset.id}/link`, { method: "POST", body: { productSku: fd.get("productSku") } });
       renderRoute();
     });
+    bindCartImageSlides();
     document.querySelectorAll("img.cart-thumb[data-img]").forEach(async (img) => {
       try {
-        const res = await fetch(API + img.dataset.img, { headers: { Authorization: `Bearer ${store.token}`, "X-Company-Id": store.companyId } });
-        if (!res.ok) return;
-        img.src = URL.createObjectURL(await res.blob());
+        img.src = await authImageBlob(img.dataset.img);
       } catch { /* ignore */ }
     });
     document.querySelectorAll(".pub").forEach(btn => btn.onclick = async () => {
