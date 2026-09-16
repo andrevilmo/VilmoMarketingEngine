@@ -338,7 +338,13 @@ public static class Endpoints
             if (ctx is IResult r) return r;
             var c = (CompanyContext)ctx;
             var p = await db.Products.AsNoTracking().FirstOrDefaultAsync(x => x.CompanyId == c.CompanyId && x.Sku == sku, ct);
-            return p is null ? Results.NotFound() : Results.Ok(p);
+            if (p is null) return Results.NotFound();
+            var imgs = await db.ProductImages.AsNoTracking().Where(i => i.ProductId == p.Id).OrderBy(i => i.SortOrder).ToListAsync(ct);
+            return Results.Ok(new
+            {
+                p.Id, p.Sku, p.Name, p.Ean, p.Ncm, p.Cfop, p.SalePrice, p.Description, p.SourceUrl, p.LinkedCartProductId,
+                images = imgs.Select(i => new { i.Id, i.SortOrder, i.ContentType, i.RelativePath, cartProductImageId = i.CartProductImageId })
+            });
         }).RequireAuthorization();
 
         app.MapPost("/advertisements", Publish).RequireAuthorization();
@@ -361,6 +367,83 @@ public static class Endpoints
             var codes = ReadCodes(body);
             var vendorId = ctx.IsVendor ? ctx.UserId : (body.TryGetProperty("vendorUserId", out var v) && Guid.TryParse(v.GetString(), out var id) ? id : ctx.UserId);
             return Results.Ok(await products.PublishAsync(ctx.RequireCompany(), vendorId, sku, codes, ct));
+        }).RequireAuthorization();
+
+        app.MapPost("/cart-imports", async (HttpContext http, AppDbContext db, CartImportService cart, CancellationToken ct) =>
+        {
+            var ctx = await NeedNotVendor(http, db, ct);
+            if (ctx is IResult r) return r;
+            var c = (CompanyContext)ctx;
+            if (!http.Request.HasFormContentType) return Results.BadRequest(new { error = "file required" });
+            var form = await http.Request.ReadFormAsync(ct);
+            var file = form.Files["file"] ?? form.Files.FirstOrDefault();
+            if (file is null) return Results.BadRequest(new { error = "file required" });
+            using var reader = new StreamReader(file.OpenReadStream());
+            var csv = await reader.ReadToEndAsync(ct);
+            return await WithIdempotency(http, db, c.RequireCompany(), async () =>
+            {
+                var result = await cart.EnqueueAsync(c.RequireCompany(), c.UserId, file.FileName, csv, ct);
+                if (result.Error is not null)
+                    return (400, (object)new { error = result.Error, message = result.Message });
+                return (202, (object)new { id = result.Id, status = result.Status, rowCount = result.RowCount });
+            }, ct);
+        }).RequireAuthorization();
+
+        app.MapGet("/cart-imports/{batchId:guid}", async (Guid batchId, HttpContext http, AppDbContext db, CartImportService cart, CancellationToken ct) =>
+        {
+            var ctx = await NeedNotVendor(http, db, ct);
+            if (ctx is IResult r) return r;
+            var c = (CompanyContext)ctx;
+            var batch = await cart.GetBatchAsync(c.RequireCompany(), batchId, ct);
+            return batch is null ? Results.NotFound() : Results.Ok(batch);
+        }).RequireAuthorization();
+
+        app.MapGet("/cart-products", async (HttpContext http, AppDbContext db, CartImportService cart, CancellationToken ct) =>
+        {
+            var ctx = await NeedNotVendor(http, db, ct);
+            if (ctx is IResult r) return r;
+            var c = (CompanyContext)ctx;
+            return Results.Ok(await cart.ListAsync(c.RequireCompany(), ct));
+        }).RequireAuthorization();
+
+        app.MapGet("/cart-products/{id:guid}", async (Guid id, HttpContext http, AppDbContext db, CartImportService cart, CancellationToken ct) =>
+        {
+            var ctx = await NeedNotVendor(http, db, ct);
+            if (ctx is IResult r) return r;
+            var c = (CompanyContext)ctx;
+            var item = await cart.GetAsync(c.RequireCompany(), id, ct);
+            return item is null ? Results.NotFound() : Results.Ok(item);
+        }).RequireAuthorization();
+
+        app.MapGet("/cart-products/{id:guid}/images/{imageId:guid}", async (Guid id, Guid imageId, HttpContext http, AppDbContext db, CartImportService cart, CancellationToken ct) =>
+        {
+            var ctx = await NeedNotVendor(http, db, ct);
+            if (ctx is IResult r) return r;
+            var c = (CompanyContext)ctx;
+            var (img, path) = await cart.GetImageFileAsync(c.RequireCompany(), id, imageId, ct);
+            if (img is null || path is null) return Results.NotFound();
+            return Results.File(path, img.ContentType ?? "application/octet-stream", enableRangeProcessing: true);
+        }).RequireAuthorization();
+
+        app.MapPost("/cart-products/{id:guid}/link", async (Guid id, JsonElement body, HttpContext http, AppDbContext db, CartImportService cart, CancellationToken ct) =>
+        {
+            var ctx = await NeedNotVendor(http, db, ct);
+            if (ctx is IResult r) return r;
+            var c = (CompanyContext)ctx;
+            var sku = body.TryGetProperty("productSku", out var s) ? s.GetString() : null;
+            var chave = body.TryGetProperty("nfeChave", out var ch) ? ch.GetString() : null;
+            int? nItem = null;
+            if (body.TryGetProperty("nItem", out var n))
+            {
+                if (n.ValueKind == JsonValueKind.Number) nItem = n.GetInt32();
+                else if (n.ValueKind == JsonValueKind.String && int.TryParse(n.GetString(), out var parsedItem)) nItem = parsedItem;
+            }
+            try
+            {
+                return Results.Ok(await cart.LinkAsync(c.RequireCompany(), id, sku, chave, nItem, ct));
+            }
+            catch (KeyNotFoundException ex) { return Results.NotFound(new { error = ex.Message }); }
+            catch (InvalidOperationException ex) { return Results.BadRequest(new { error = ex.Message }); }
         }).RequireAuthorization();
 
         app.MapPost("/nfe/chaves/{chave}/ingest", async (string chave, JsonElement body, HttpContext http, AppDbContext db, NfeIngestService nfe, CancellationToken ct) =>
@@ -411,7 +494,18 @@ public static class Endpoints
             var c = (CompanyContext)ctx;
             var digits = ChaveAcesso.Digits(chave);
             var doc = await db.NfeDocuments.AsNoTracking().FirstOrDefaultAsync(d => d.CompanyId == c.CompanyId && d.ChaveAcesso == digits, ct);
-            return doc is null ? Results.NotFound() : Results.Ok(new { doc.Id, doc.ChaveAcesso, doc.Status, doc.Error, doc.Kind });
+            if (doc is null) return Results.NotFound();
+            object? items = null;
+            if (!string.IsNullOrWhiteSpace(doc.Xml))
+            {
+                var parsed = NfeIngestService.Parse(doc.Xml);
+                items = parsed?.Items.Select(i => new { i.NItem, sku = i.CProd, ean = i.Ean, name = i.XProd, ncm = i.Ncm, cfop = i.Cfop, qty = i.Qty, unitPrice = i.VUn });
+            }
+            var links = await db.CartProducts.AsNoTracking()
+                .Where(p => p.CompanyId == c.CompanyId && p.LinkedNfeDocumentId == doc.Id)
+                .Select(p => new { p.Id, p.Sku, p.Name, p.LinkedNfeNItem, p.LinkedProductId })
+                .ToListAsync(ct);
+            return Results.Ok(new { doc.Id, doc.ChaveAcesso, doc.Status, doc.Error, doc.Kind, items, cartLinks = links });
         }).RequireAuthorization();
 
         app.MapGet("/nfe/ingest-logs", async (string? chave, Guid? runId, int? limit, HttpContext http, AppDbContext db, CancellationToken ct) =>

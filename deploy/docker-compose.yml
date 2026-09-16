@@ -14,6 +14,7 @@ x-dotnet-env: &dotnet-env
   PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-https://vilmomkt.com}
   FIRST_COMPANY_JSON: /app/seed/first-company.json
   Nfe__CertificatesDirectory: /certs
+  CART_MEDIA_ROOT: /data/cart-media
   COMPANY_68431371000161_A1_PASSWORD: ${COMPANY_68431371000161_A1_PASSWORD:-}
   COMPANY_68431371000161_A1_PASSWORD_FILE: /certs/68431371000161.pfx.pass
 
@@ -59,6 +60,7 @@ services:
       <<: *dotnet-env
     volumes:
       - ${A1_CERTS_DIR:-../.secrets/certs}:/certs:ro
+      - cart_media:/data/cart-media
     depends_on:
       postgres:
         condition: service_healthy
@@ -93,6 +95,8 @@ services:
     hostname: vilmo-worker
     environment:
       <<: *dotnet-env
+    volumes:
+      - cart_media:/data/cart-media
     depends_on:
       postgres:
         condition: service_healthy
@@ -144,3 +148,4 @@ networks:
 volumes:
   postgres_data:
   redis_data:
+  cart_media:

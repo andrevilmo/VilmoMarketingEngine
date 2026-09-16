@@ -29,6 +29,7 @@ services:
     mem_limit: 280m
     volumes:
       - /opt/vilmo/certs:/certs:ro
+      - cart_media:/data/cart-media
 
   vilmo-nfe:
     mem_limit: 220m
@@ -37,3 +38,5 @@ services:
 
   vilmo-worker:
     mem_limit: 180m
+    volumes:
+      - cart_media:/data/cart-media

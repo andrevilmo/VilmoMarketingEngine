@@ -39,6 +39,14 @@ public static class ServiceCollectionExtensions
         services.AddScoped<MarketplaceService>();
         services.AddScoped<ProvisioningService>();
         services.AddScoped<ProductService>();
+        services.AddScoped<CartImportService>();
+        services.AddSingleton<ICartMediaStore, FileCartMediaStore>();
+        services.AddHttpClient("cart-images", c =>
+        {
+            c.Timeout = TimeSpan.FromSeconds(20);
+            c.DefaultRequestHeaders.UserAgent.ParseAdd("VilmoCartImport/1.0 (+https://vilmomkt.com)");
+        });
+        services.AddSingleton<ICartImageDownloader, HttpCartImageDownloader>();
         services.AddScoped<WorkProcessor>();
         services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             .AddJwtBearer(o =>

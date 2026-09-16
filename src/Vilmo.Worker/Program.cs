@@ -8,7 +8,7 @@ builder.Services.AddHostedService(sp => new PollingWorker(
     sp.GetRequiredService<WorkProcessor>(),
     sp.GetRequiredService<ILogger<PollingWorker>>())
 {
-    Kinds = [WorkKinds.SaleImport, WorkKinds.PublishListing, WorkKinds.StockPublish, WorkKinds.UploadInvoice]
+    Kinds = [WorkKinds.SaleImport, WorkKinds.PublishListing, WorkKinds.StockPublish, WorkKinds.UploadInvoice, WorkKinds.CartImport]
 });
 var app = builder.Build();
 app.MapGet("/health", () => Results.Text("vilmo-worker\n", "text/plain"));

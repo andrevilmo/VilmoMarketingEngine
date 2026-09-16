@@ -146,6 +146,8 @@ public class Product
     public string? Cfop { get; set; }
     public decimal SalePrice { get; set; }
     public string? Description { get; set; }
+    public string? SourceUrl { get; set; }
+    public Guid? LinkedCartProductId { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
@@ -286,6 +288,81 @@ public class IdempotencyRecord
     public int StatusCode { get; set; }
     public string Body { get; set; } = "";
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public class CartImportBatch
+{
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
+    public Guid CreatedByUserId { get; set; }
+    public string FileName { get; set; } = "";
+    public string Status { get; set; } = "Queued";
+    public int RowCount { get; set; }
+    public int ImageOk { get; set; }
+    public int ImageFailed { get; set; }
+    public string? Error { get; set; }
+    public string CsvText { get; set; } = "";
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset? ProcessedAt { get; set; }
+}
+
+public class CartImportLog
+{
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
+    public Guid BatchId { get; set; }
+    public string StepCode { get; set; } = "";
+    public string Level { get; set; } = "info";
+    public string UserMessage { get; set; } = "";
+    public string TechnicalJson { get; set; } = "{}";
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public class CartProduct
+{
+    public Guid Id { get; set; }
+    public Guid CompanyId { get; set; }
+    public Guid BatchId { get; set; }
+    public string SourceId { get; set; } = "";
+    public string Sku { get; set; } = "";
+    public string Name { get; set; } = "";
+    public decimal Quantity { get; set; }
+    public decimal UnitPrice { get; set; }
+    public decimal LineTotal { get; set; }
+    public string? SourceUrl { get; set; }
+    public string? Description { get; set; }
+    public Guid? LinkedProductId { get; set; }
+    public Guid? LinkedNfeDocumentId { get; set; }
+    public int? LinkedNfeNItem { get; set; }
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public List<CartProductImage> Images { get; set; } = [];
+}
+
+public class CartProductImage
+{
+    public Guid Id { get; set; }
+    public Guid CartProductId { get; set; }
+    public Guid CompanyId { get; set; }
+    public string SourceUrl { get; set; } = "";
+    public string Kind { get; set; } = "Gallery";
+    public int SortOrder { get; set; }
+    public string? ContentType { get; set; }
+    public string RelativePath { get; set; } = "";
+    public int ByteLength { get; set; }
+    public string Status { get; set; } = "Pending";
+    public string? Error { get; set; }
+}
+
+public class ProductImage
+{
+    public Guid Id { get; set; }
+    public Guid ProductId { get; set; }
+    public Guid CompanyId { get; set; }
+    public Guid? CartProductImageId { get; set; }
+    public int SortOrder { get; set; }
+    public string RelativePath { get; set; } = "";
+    public string? ContentType { get; set; }
 }
 
 public class WebhookEvent
