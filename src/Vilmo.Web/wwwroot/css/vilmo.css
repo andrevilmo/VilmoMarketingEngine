@@ -60,19 +60,24 @@
   position: relative;
   background: #0f172a;
   border-radius: 12px;
-  min-height: 280px;
-  display: flex; align-items: center; justify-content: center;
+  height: min(70vh, 640px);
+  min-height: 360px;
   overflow: hidden;
 }
 .cart-slides-stage img {
+  position: absolute;
+  inset: 0;
   width: 100%;
-  height: 70vh;
+  height: 100%;
+  max-width: none;
+  max-height: none;
   object-fit: contain;
   display: block;
 }
 .cart-slides-stage img.is-loading { opacity: .4; }
 .cart-slides-nav {
   position: absolute; top: 50%; transform: translateY(-50%);
+  z-index: 1;
   width: 40px; height: 40px; border-radius: 999px;
   border: 0; background: rgba(255,255,255,.92); color: #111827;
   font-size: 1.7rem; line-height: 1; cursor: pointer;
