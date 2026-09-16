@@ -5,9 +5,13 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Vilmo.Domain;
 using Vilmo.Services;
+using Vilmo.Workers;
 
 namespace Vilmo.Tests;
 
@@ -106,6 +110,7 @@ public class XmlParseTests
 public class ApiFactory : WebApplicationFactory<Program>
 {
     readonly string _db = Path.Combine(Path.GetTempPath(), $"vilmo-test-{Guid.NewGuid():N}.db");
+    readonly string _media = Path.Combine(Path.GetTempPath(), $"vilmo-cart-{Guid.NewGuid():N}");
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -117,15 +122,29 @@ public class ApiFactory : WebApplicationFactory<Program>
                 ["DB_PROVIDER"] = "sqlite",
                 ["ConnectionStrings:Sqlite"] = $"Data Source={_db}",
                 ["BOOTSTRAP_ADMIN_PASSWORD"] = "VilmoAdmin!2026",
-                ["JWT_SIGNING_KEY"] = "vilmo-test-jwt-signing-key-32chars!"
+                ["JWT_SIGNING_KEY"] = "vilmo-test-jwt-signing-key-32chars!",
+                ["CART_MEDIA_ROOT"] = _media
             });
         });
+        builder.ConfigureTestServices(services =>
+        {
+            services.RemoveAll<ICartImageDownloader>();
+            services.AddSingleton<ICartImageDownloader, FakeCartImageDownloader>();
+        });
+    }
+
+    public async Task DrainCartAsync()
+    {
+        using var scope = Services.CreateScope();
+        var processor = scope.ServiceProvider.GetRequiredService<WorkProcessor>();
+        await processor.DrainAsync([WorkKinds.CartImport], CancellationToken.None);
     }
 
     protected override void Dispose(bool disposing)
     {
         base.Dispose(disposing);
         try { File.Delete(_db); } catch { /* ignore */ }
+        try { Directory.Delete(_media, true); } catch { /* ignore */ }
     }
 }
 

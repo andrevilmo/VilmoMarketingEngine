@@ -73,6 +73,7 @@ public static class WorkKinds
     public const string StockPublish = "stock.publish.requested";
     public const string UploadInvoice = "marketplace.upload_invoice";
     public const string PublishListing = "listing.publish.requested";
+    public const string CartImport = "cart.import.requested";
 }
 
 public static class NfeDocumentKinds

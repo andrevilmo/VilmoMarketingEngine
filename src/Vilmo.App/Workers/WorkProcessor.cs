@@ -5,15 +5,23 @@ using Vilmo.Services;
 
 namespace Vilmo.Workers;
 
-public sealed class WorkProcessor(AppDbContext db, NfeIngestService nfe, SalesService sales, ILogger<WorkProcessor> log)
+public sealed class WorkProcessor(AppDbContext db, NfeIngestService nfe, SalesService sales, CartImportService cart, ILogger<WorkProcessor> log)
 {
     public async Task<int> DrainAsync(string[] kinds, CancellationToken ct)
     {
-        var items = await db.WorkItems
-            .Where(w => w.Status == "Pending" && kinds.Contains(w.Kind))
-            .OrderBy(w => w.CreatedAt)
-            .Take(20)
-            .ToListAsync(ct);
+        List<WorkItem> items;
+        var pending = db.WorkItems.Where(w => w.Status == "Pending" && kinds.Contains(w.Kind));
+        if (db.Database.IsNpgsql())
+        {
+            items = await pending.OrderBy(w => w.CreatedAt).Take(20).ToListAsync(ct);
+        }
+        else
+        {
+            items = (await pending.ToListAsync(ct))
+                .OrderBy(w => w.CreatedAt)
+                .Take(20)
+                .ToList();
+        }
         foreach (var item in items)
         {
             try
@@ -67,6 +75,9 @@ public sealed class WorkProcessor(AppDbContext db, NfeIngestService nfe, SalesSe
                     ct);
                 break;
             }
+            case WorkKinds.CartImport:
+                await cart.ProcessQueuedAsync(item, ct);
+                break;
             case WorkKinds.PublishListing:
             {
                 var listingId = Guid.Parse(JsonGet(item.PayloadJson, "listingId"));
@@ -97,7 +108,7 @@ public sealed class WorkProcessor(AppDbContext db, NfeIngestService nfe, SalesSe
 
 public sealed class PollingWorker(WorkProcessor processor, ILogger<PollingWorker> log) : BackgroundService
 {
-    public string[] Kinds { get; init; } = [WorkKinds.SaleImport, WorkKinds.PublishListing, WorkKinds.StockPublish, WorkKinds.UploadInvoice];
+    public string[] Kinds { get; init; } = [WorkKinds.SaleImport, WorkKinds.PublishListing, WorkKinds.StockPublish, WorkKinds.UploadInvoice, WorkKinds.CartImport];
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {

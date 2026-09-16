@@ -37,7 +37,13 @@
 .kt-alert { padding: .75rem 1rem; border-radius: 8px; }
 .kt-alert-danger { background: #fef2f2; color: #991b1b; }
 .kt-alert-success { background: #ecfdf5; color: #065f46; }
-.kt-alert-warning { background: #fffbeb; color: #92400e; }
+.cart-thumb { width: 48px; height: 48px; object-fit: cover; border-radius: 8px; background: #f3f4f6; }
+.mt-4 { margin-top: 1rem; }
+.mt-6 { margin-top: 1.5rem; }
+.mb-4 { margin-bottom: 1rem; }
+.mb-2 { margin-bottom: 0.5rem; }
+.mb-3 { margin-bottom: 0.75rem; }
+
 .ingest-log-card { margin-top: 1rem; }
 .ingest-log-progress { margin: 0 0 0.85rem; }
 .ingest-log-progress .label { font-size: 0.9rem; margin-bottom: 0.4rem; }

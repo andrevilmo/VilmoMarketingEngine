@@ -28,6 +28,11 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<WorkItem> WorkItems => Set<WorkItem>();
     public DbSet<IdempotencyRecord> IdempotencyRecords => Set<IdempotencyRecord>();
     public DbSet<WebhookEvent> WebhookEvents => Set<WebhookEvent>();
+    public DbSet<CartImportBatch> CartImportBatches => Set<CartImportBatch>();
+    public DbSet<CartImportLog> CartImportLogs => Set<CartImportLog>();
+    public DbSet<CartProduct> CartProducts => Set<CartProduct>();
+    public DbSet<CartProductImage> CartProductImages => Set<CartProductImage>();
+    public DbSet<ProductImage> ProductImages => Set<ProductImage>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -143,6 +148,33 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         {
             e.ToTable("webhook_event");
             e.HasIndex(x => new { x.CompanyId, x.MarketplaceCode, x.EventId }).IsUnique();
+        });
+        b.Entity<CartImportBatch>(e =>
+        {
+            e.ToTable("cart_import_batch");
+            e.HasIndex(x => new { x.CompanyId, x.CreatedAt });
+        });
+        b.Entity<CartImportLog>(e =>
+        {
+            e.ToTable("cart_import_log");
+            e.HasIndex(x => new { x.BatchId, x.CreatedAt });
+        });
+        b.Entity<CartProduct>(e =>
+        {
+            e.ToTable("cart_product");
+            e.HasIndex(x => new { x.CompanyId, x.SourceId }).IsUnique();
+            e.HasIndex(x => new { x.CompanyId, x.Sku });
+            e.HasMany(x => x.Images).WithOne().HasForeignKey(i => i.CartProductId);
+        });
+        b.Entity<CartProductImage>(e =>
+        {
+            e.ToTable("cart_product_image");
+            e.HasIndex(x => new { x.CartProductId, x.SortOrder });
+        });
+        b.Entity<ProductImage>(e =>
+        {
+            e.ToTable("product_image");
+            e.HasIndex(x => new { x.ProductId, x.SortOrder });
         });
     }
 }

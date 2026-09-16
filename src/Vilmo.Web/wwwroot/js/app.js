@@ -9,6 +9,7 @@ const Vilmo = (() => {
     me: null
   };
   let ingestLogTimer = null;
+  let cartImportTimer = null;
 
   function uuid() { return crypto.randomUUID(); }
 
@@ -215,8 +216,71 @@ const Vilmo = (() => {
     }, 2000);
   }
 
+  function stopCartImportPoll() {
+    if (cartImportTimer) { clearInterval(cartImportTimer); cartImportTimer = null; }
+  }
+
+  async function loadCartImport(batchId) {
+    const el = document.getElementById("cart-import-msg");
+    if (!el || !batchId) return;
+    try {
+      const b = await api(`/cart-imports/${batchId}`);
+      const latest = (b.logs && b.logs[0]) || {};
+      el.innerHTML = `<div class="kt-alert ${b.status === "Failed" ? "kt-alert-danger" : "kt-alert-success"}">${esc(latest.userMessage || b.status)} · ${b.rowCount || 0} produto(s) · ${b.imageOk || 0} imagens</div>`;
+      if (b.status === "Done" || b.status === "Failed") {
+        stopCartImportPoll();
+        if (location.hash.replace("#/", "") === "produtos") renderRoute();
+      }
+    } catch (ex) {
+      el.innerHTML = `<div class="kt-alert kt-alert-danger">${esc(ex.message)}</div>`;
+    }
+  }
+
+  function startCartImportPoll(batchId) {
+    stopCartImportPoll();
+    loadCartImport(batchId);
+    let ticks = 0;
+    cartImportTimer = setInterval(() => {
+      ticks += 1;
+      loadCartImport(batchId);
+      if (ticks >= 40) stopCartImportPoll();
+    }, 2000);
+  }
+
+  async function loadNfeCartLink(chave) {
+    const box = document.getElementById("nfe-cart-link");
+    const body = document.getElementById("nfe-cart-link-body");
+    if (!box || !body || !chave) return;
+    try {
+      const nfe = await api(`/nfe/chaves/${chave}`);
+      const cart = await api("/cart-products");
+      const items = nfe.items || [];
+      if (!items.length) return;
+      box.classList.remove("hidden");
+      const opts = cart.map(p => `<option value="${p.id}">${esc(p.sku)} — ${esc(p.name)} (${p.imageCount || 0} img)</option>`).join("");
+      body.innerHTML = items.map(i => `
+        <form class="nfe-cart-link-form vilmo-grid cols-2 mb-3" data-nitem="${i.nItem}" data-chave="${esc(nfe.chaveAcesso)}">
+          <div class="text-sm"><b>${esc(i.sku)}</b> · ${esc(i.name)} · qtd ${i.qty}</div>
+          <div class="flex gap-2">
+            <select class="kt-select" name="cartProductId" required><option value="">Produto do carrinho</option>${opts}</select>
+            <button class="kt-btn kt-btn-primary kt-btn-sm" type="submit">Vincular</button>
+          </div>
+        </form>`).join("");
+      document.querySelectorAll(".nfe-cart-link-form").forEach(form => form.onsubmit = async (e) => {
+        e.preventDefault();
+        const fd = new FormData(form);
+        await api(`/cart-products/${fd.get("cartProductId")}/link`, {
+          method: "POST",
+          body: { nfeChave: form.dataset.chave, nItem: Number(form.dataset.nitem) }
+        });
+        form.insertAdjacentHTML("afterend", `<div class="kt-alert kt-alert-success">Vinculado ao item ${form.dataset.nitem}.</div>`);
+      });
+    } catch { /* keep hidden */ }
+  }
+
   async function renderRoute() {
     stopIngestLogPoll();
+    stopCartImportPoll();
     const view = document.getElementById("view");
     const route = (location.hash.replace("#/", "").split("?")[0] || "dashboard");
     document.querySelectorAll(".menu-link").forEach(a => a.classList.toggle("active", a.dataset.route === route.split("/")[0]));
@@ -338,6 +402,11 @@ const Vilmo = (() => {
           <div id="xml-msg"></div>
         </form>
       </div>
+      <div id="nfe-cart-link" class="vilmo-card mt-4 hidden">
+        <h2 class="font-medium mb-2">Vincular itens da NF-e ao carrinho importado</h2>
+        <p class="text-sm text-muted-foreground mb-3">Use descrição e imagens do CSV para publicar depois. O estoque da nota não muda.</p>
+        <div id="nfe-cart-link-body"></div>
+      </div>
       <div class="vilmo-card ingest-log-card">
         <div class="flex items-center justify-between gap-3 mb-3">
           <h2 class="font-medium">Andamento da ingestão</h2>
@@ -364,9 +433,43 @@ const Vilmo = (() => {
 
   async function viewProducts() {
     const list = await api("/products");
-    const rows = list.map(p => `<tr><td>${p.sku}</td><td>${p.name}</td><td>${p.ean || ""}</td><td>${p.salePrice}</td>
-      <td><button class="kt-btn kt-btn-sm kt-btn-primary pub" data-sku="${p.sku}">Publicar</button></td></tr>`);
-    return page("Produtos", "", table(["SKU", "Nome", "EAN", "Preço", ""], rows) + `
+    let cart = [];
+    try { cart = await api("/cart-products"); } catch { cart = []; }
+    const productOpts = list.map(p => `<option value="${esc(p.sku)}">${esc(p.sku)} — ${esc(p.name)}</option>`).join("");
+    const rows = list.map(p => `<tr><td>${esc(p.sku)}</td><td>${esc(p.name)}</td><td>${esc(p.ean || "")}</td><td>${p.salePrice}</td>
+      <td>${p.linkedCartProductId ? "carrinho" : "—"}</td>
+      <td><button class="kt-btn kt-btn-sm kt-btn-primary pub" data-sku="${esc(p.sku)}">Publicar</button></td></tr>`);
+    const cartRows = cart.map(p => {
+      const thumb = (p.images || []).find(i => i.status === "Saved");
+      const img = thumb ? `<img class="cart-thumb" alt="" data-img="${esc(thumb.href)}">` : "—";
+      return `<tr>
+        <td>${img}</td>
+        <td>${esc(p.sku)}</td>
+        <td>${esc(p.name)}</td>
+        <td>${p.quantity}</td>
+        <td>${p.unitPrice}</td>
+        <td>${p.imageCount || 0}</td>
+        <td>${p.linkedProductId ? "vinculado" : "—"}</td>
+        <td>
+          <form class="cart-link-form flex gap-2 items-end flex-wrap" data-id="${p.id}">
+            <select class="kt-select kt-select-sm" name="productSku"><option value="">Produto NF-e / ERP</option>${productOpts}</select>
+            <button class="kt-btn kt-btn-sm kt-btn-primary" type="submit">Vincular</button>
+          </form>
+        </td>
+      </tr>`;
+    });
+    return page("Produtos", "", `
+      <form id="cart-import-form" class="vilmo-card flex flex-col gap-3 mb-4">
+        <h3 class="font-medium">Importar carrinho (CSV)</h3>
+        <p class="text-sm text-muted-foreground">Colunas: id, sku, name, quantity, unit_price, line_total, url, cart_image, product_images, description. As imagens são baixadas e gravadas na importação.</p>
+        <label>Arquivo CSV<input class="kt-input" type="file" name="file" accept=".csv,text/csv" required></label>
+        <button class="kt-btn kt-btn-primary" type="submit">Importar e baixar imagens</button>
+        <div id="cart-import-msg"></div>
+      </form>
+      <h3 class="font-medium mb-2">Produtos do carrinho (para publicar)</h3>
+      ${table(["Foto", "SKU", "Nome", "Qtd", "Preço", "Imagens", "NF-e", "Vincular"], cartRows)}
+      <h3 class="font-medium mt-6 mb-2">Cadastro interno</h3>
+      ${table(["SKU", "Nome", "EAN", "Preço", "Origem", ""], rows)}
       <form id="product-form" class="vilmo-card vilmo-grid cols-2 mt-4">
         <h3 class="col-span-2 font-medium">Novo / atualizar produto</h3>
         <label>SKU<input class="kt-input" name="sku" required></label>
@@ -531,6 +634,7 @@ const Vilmo = (() => {
         const r = await api("/nfe/xml", { method: "POST", body: fd, headers: {} });
         if (xmlMsg) xmlMsg.innerHTML = `<div class="kt-alert ${r.error ? "kt-alert-danger" : "kt-alert-success"}">${r.message || ("XML ingerido · " + (r.status || ""))}</div>`;
         startIngestLogPoll(r.runId);
+        if (r.chave) loadNfeCartLink(r.chave);
       } catch (ex) {
         if (xmlMsg) xmlMsg.innerHTML = `<div class="kt-alert kt-alert-danger">${ex.message}</div>`;
       }
@@ -559,6 +663,34 @@ const Vilmo = (() => {
       await api("/products", { method: "POST", body: { sku: fd.get("sku"), name: fd.get("name"), ean: fd.get("ean"), ncm: fd.get("ncm"), salePrice: Number(fd.get("salePrice") || 0) } });
       renderRoute();
     };
+    if ($("#cart-import-form")) $("#cart-import-form").onsubmit = async (e) => {
+      e.preventDefault();
+      const file = e.target.file.files[0];
+      if (!file) return;
+      const fd = new FormData();
+      fd.append("file", file);
+      const msg = document.getElementById("cart-import-msg");
+      try {
+        const r = await api("/cart-imports", { method: "POST", body: fd, headers: {} });
+        if (msg) msg.innerHTML = `<div class="kt-alert kt-alert-success">Importação na fila · ${r.rowCount || 0} produto(s)</div>`;
+        startCartImportPoll(r.id);
+      } catch (ex) {
+        if (msg) msg.innerHTML = `<div class="kt-alert kt-alert-danger">${esc(ex.message)}</div>`;
+      }
+    };
+    document.querySelectorAll(".cart-link-form").forEach(form => form.onsubmit = async (e) => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      await api(`/cart-products/${form.dataset.id}/link`, { method: "POST", body: { productSku: fd.get("productSku") } });
+      renderRoute();
+    });
+    document.querySelectorAll("img.cart-thumb[data-img]").forEach(async (img) => {
+      try {
+        const res = await fetch(API + img.dataset.img, { headers: { Authorization: `Bearer ${store.token}`, "X-Company-Id": store.companyId } });
+        if (!res.ok) return;
+        img.src = URL.createObjectURL(await res.blob());
+      } catch { /* ignore */ }
+    });
     document.querySelectorAll(".pub").forEach(btn => btn.onclick = async () => {
       await api("/advertisements", { method: "POST", body: { sku: btn.dataset.sku } });
       location.hash = "#/anuncios";
