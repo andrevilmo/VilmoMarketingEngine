@@ -4,7 +4,7 @@
 
 | Artefato | Link |
 |---|---|
-| Vídeo de demonstração (YouTube não listado) | _TODO: colar URL após gravar (máx. 12 min)_ |
+| Vídeo de demonstração (YouTube não listado) | [https://www.youtube.com/watch?v=h71SVIZWeiM](https://www.youtube.com/watch?v=h71SVIZWeiM) |
 | Quadro Kanban (GitHub Project) | _TODO: colar URL do Project_ |
 | Documentação técnica | [`docs/`](./docs/) |
 | Código do agente | [`agent/`](./agent/) |
@@ -118,6 +118,8 @@ Instruções: [docs/low-code/README.md](./docs/low-code/README.md).
 Detalhes: [docs/evidencias/cenarios.md](./docs/evidencias/cenarios.md).
 
 ## 10. Análise crítica, limitações e vídeo
+
+Vídeo de demonstração: [https://www.youtube.com/watch?v=h71SVIZWeiM](https://www.youtube.com/watch?v=h71SVIZWeiM)
 
 Refinamento documentado: [docs/prompts/refinement-cycle.md](./docs/prompts/refinement-cycle.md).
 
