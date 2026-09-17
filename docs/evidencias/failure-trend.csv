@@ -1,0 +1,5 @@
+window,failures_per_10,error_rate
+T-3,1,0.10
+T-2,2,0.20
+T-1,4,0.40
+T0,5,0.50

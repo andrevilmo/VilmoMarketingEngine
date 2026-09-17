@@ -1,0 +1,32 @@
+{
+  "correlation_id": "77c696e9-d0a6-4f08-90fd-3aa0f3797853",
+  "decision": "block",
+  "risk_level": "critical",
+  "summary": "Entrada adversarial detectada. Regras da aplicação prevalecem; nenhuma ação externa executada e segredos não são revelados.",
+  "findings": [
+    "Padrões de prompt injection ou exfiltração identificados.",
+    "Padrões: ignore\\s+(all\\s+)?(previous|prior|above)\\s+instructions, reveal\\s+(your\\s+)?(system\\s+)?prompt, jwt_signing_key|openai_api_key|data_protection_key"
+  ],
+  "recommended_actions": [
+    "Rejeitar a solicitação",
+    "Registrar incidente de segurança"
+  ],
+  "blocked_actions": [
+    "delete_company",
+    "disable_auth",
+    "exfiltrate_secrets",
+    "publish_without_approval",
+    "wipe_inventory"
+  ],
+  "tools_used": [],
+  "context_snippets": [],
+  "adversarial_detected": true,
+  "requires_human_approval": false,
+  "latency_ms": 9.98,
+  "graph_path": [
+    "ingest",
+    "govern",
+    "decide",
+    "emit"
+  ]
+}

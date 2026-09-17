@@ -1,0 +1,99 @@
+{
+  "name": "Vilmo SCTEC — alerta de triagem de risco",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "vilmo-triage-alert",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [260, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.VILMO_AGENT_URL || 'http://localhost:8090'}}/triage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"message\": \"{{$json.message || 'Verificar anomalia reportada pelo SRE'}}\",\n  \"sku\": \"{{$json.sku || 'SKU-DEMO-002'}}\",\n  \"scenario\": \"risk\",\n  \"human_approved\": false\n}",
+        "options": {}
+      },
+      "id": "call-agent",
+      "name": "Call Vilmo Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [520, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.risk_level}}",
+              "operation": "notEqual",
+              "value2": "low"
+            }
+          ]
+        }
+      },
+      "id": "if-high-risk",
+      "name": "IF risk not low",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [760, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.CHATOPS_WEBHOOK_URL}}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"text\": \"[Vilmo SCTEC] risco={{$json.risk_level}} decision={{$json.decision}} corr={{$json.correlation_id}} — {{$json.summary}}\"\n}",
+        "options": {}
+      },
+      "id": "chatops-alert",
+      "name": "ChatOps Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1000, 220]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}"
+      },
+      "id": "respond",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1000, 400]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [[{ "node": "Call Vilmo Agent", "type": "main", "index": 0 }]]
+    },
+    "Call Vilmo Agent": {
+      "main": [[{ "node": "IF risk not low", "type": "main", "index": 0 }]]
+    },
+    "IF risk not low": {
+      "main": [
+        [{ "node": "ChatOps Alert", "type": "main", "index": 0 }],
+        [{ "node": "Respond", "type": "main", "index": 0 }]
+      ]
+    },
+    "ChatOps Alert": {
+      "main": [[{ "node": "Respond", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "description": "Low-code: webhook → agente LangGraph → alerta ChatOps se risco != low"
+  }
+}

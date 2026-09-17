@@ -41,6 +41,16 @@ ScaffoldingReadMe.txt
 .secrets/
 *.db
 
+# Python / SCTEC agent
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+agent/data/memory/
+agent/data/audit.jsonl
+.mypy_cache/
+
 
 # Others
 ~$*
